@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app" class="shell" hidden>
+    <nav class="side" aria-label="Main">
+      <div class="brand">
+        <svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="1" y="5" width="26" height="18" rx="5" stroke="#5FD3C6" stroke-width="2"/><path d="M12 10l6 4-6 4z" fill="#5FD3C6"/></svg>
+        <span>YouTube Control</span>
+      </div>
+      <div class="side-field">
+        <label for="channel-switch">Channel</label>
+        <select id="channel-switch"></select>
+      </div>
+      <div class="side-links">
+        <div class="side-group">Overview</div>
+        <a href="#/portfolio" data-route="portfolio">Portfolio</a>
+        <a href="#/channel" data-route="channel">Channel workspace</a>
+        <div class="side-group">Research</div>
+        <a href="#/keywords" data-route="keywords">Keyword explorer</a>
+        <a href="#/outliers" data-route="outliers">Outliers</a>
+        <a href="#/keywords?tab=trends" data-route="trends">Trends</a>
+        <a href="#/outliers?tab=competitors" data-route="competitors">Competitors</a>
+        <div class="side-group">Production</div>
+        <a href="#/ideas" data-route="ideas">Idea pipeline</a>
+        <div class="side-group">System</div>
+        <a href="#/settings" data-route="settings">Settings</a>
+      </div>
+      <button id="sign-out" class="side-signout" type="button">Sign out</button>
+    </nav>
+    <main id="view" class="main" tabindex="-1"></main>
+  </div>
+
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand dark">
+        <svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="1" y="5" width="26" height="18" rx="5" stroke="#0F6B63" stroke-width="2"/><path d="M12 10l6 4-6 4z" fill="#0F6B63"/></svg>
+        <span>YouTube Control</span>
+      </div>
+      <h1>Sign in</h1>
+      <p class="muted">We email you a one-time sign-in link. Only allow-listed accounts can see data.</p>
+      <label for="login-email">Email</label>
+      <input id="login-email" type="email" autocomplete="email" required>
+      <button type="submit" class="btn primary">Send sign-in link</button>
+      <p id="login-msg" class="muted" role="status"></p>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

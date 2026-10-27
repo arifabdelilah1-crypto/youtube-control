@@ -1,0 +1,19 @@
+name: Google Trends
+on:
+  schedule:
+    - cron: "30 7 * * *"       # daily 07:30 UTC, after research has found keywords
+  workflow_dispatch:
+concurrency: { group: trends, cancel-in-progress: false }
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: collectors/requirements.txt }
+      - run: pip install -r collectors/requirements.txt
+      - run: python collectors/trends.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
