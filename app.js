@@ -744,12 +744,48 @@ async function boot() {
   render();
 }
 
+// Email + password. "Create your password" is used once; after that you just sign in.
+let creating = false;
+function setLoginMode(create) {
+  creating = create;
+  document.getElementById("login-title").textContent = create ? "Create your password" : "Sign in";
+  document.getElementById("login-intro").textContent = create
+    ? "One-time setup. Use the email that is on the allow-list, and a password of at least 8 characters."
+    : "Only allow-listed accounts can see data.";
+  document.getElementById("confirm-wrap").hidden = !create;
+  document.getElementById("login-password2").required = create;
+  document.getElementById("login-password").autocomplete = create ? "new-password" : "current-password";
+  document.getElementById("login-submit").textContent = create ? "Create account" : "Sign in";
+  document.getElementById("login-toggle").textContent = create ? "I already have a password" : "First time? Create your password";
+  document.getElementById("login-msg").textContent = "";
+}
+document.getElementById("login-toggle").addEventListener("click", () => setLoginMode(!creating));
 document.getElementById("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const email = document.getElementById("login-email").value.trim();
+  const password = document.getElementById("login-password").value;
   const msg = document.getElementById("login-msg");
-  const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-  msg.textContent = error ? error.message : "Check your inbox for the sign-in link.";
+  const btn = document.getElementById("login-submit");
+  if (creating && password !== document.getElementById("login-password2").value) {
+    msg.textContent = "The two passwords don’t match.";
+    return;
+  }
+  btn.disabled = true;
+  msg.textContent = creating ? "Creating your account…" : "Signing in…";
+  const { data, error } = creating
+    ? await sb.auth.signUp({ email, password })
+    : await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false;
+  if (error) {
+    msg.textContent = /invalid login/i.test(error.message) ? "Wrong email or password." : error.message;
+    return;
+  }
+  if (creating && !data.session) {
+    msg.textContent = "Account created, but Supabase is waiting for email confirmation. Turn off “Confirm email” in Supabase (see setup), then sign in.";
+    setLoginMode(false);
+    return;
+  }
+  boot();
 });
 document.getElementById("sign-out").addEventListener("click", async () => { await sb.auth.signOut(); location.hash = ""; boot(); });
 document.getElementById("channel-switch").addEventListener("change", (e) => {
@@ -758,5 +794,5 @@ document.getElementById("channel-switch").addEventListener("change", (e) => {
   go(state.channel === "all" ? "#/portfolio" : `#/channel/${state.channel}`);
 });
 window.addEventListener("hashchange", () => { if (!document.getElementById("app").hidden) render(); });
-sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_IN" || event === "SIGNED_OUT") boot(); });
+sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") boot(); });
 boot();
