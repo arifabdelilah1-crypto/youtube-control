@@ -169,6 +169,29 @@ async function render() {
   }
 }
 
+const realNiches = () => state.niches.filter((n) => !n.is_explore);
+const exploreNiche = () => state.niches.find((n) => n.is_explore);
+const MARKETS = [["GLOBAL", "Global (all countries)"], ["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"],
+  ["IN", "India"], ["FR", "France"], ["BE", "Belgium"], ["CH", "Switzerland"], ["DE", "Germany"], ["AT", "Austria"], ["ES", "Spain"],
+  ["IT", "Italy"], ["NL", "Netherlands"], ["PT", "Portugal"], ["BR", "Brazil"], ["MX", "Mexico"], ["MA", "Morocco"], ["DZ", "Algeria"],
+  ["TN", "Tunisia"], ["EG", "Egypt"], ["SA", "Saudi Arabia"], ["AE", "United Arab Emirates"]];
+const LANGS = [["en", "English"], ["fr", "French"], ["de", "German"], ["es", "Spanish"], ["ar", "Arabic"], ["it", "Italian"], ["pt", "Portuguese"], ["nl", "Dutch"]];
+const marketName = (m) => (MARKETS.find(([k]) => k === m) || [m, m])[1];
+
+// Research scope: free global exploration by default; picking a channel narrows it to that channel's niche.
+function scopeOf(route) {
+  const p = route.params.get("scope");
+  if (p === "global") return { global: true, niche: exploreNiche() };
+  if (p) { const n = realNiches().find((x) => x.id === p); if (n) return { global: false, niche: n }; }
+  const ch = state.channels.find((c) => c.id === state.channel);
+  const n = ch && realNiches().find((x) => x.id === ch.niche_id);
+  return n ? { global: false, niche: n, channel: ch } : { global: true, niche: exploreNiche() };
+}
+function scopeSelect(id, route, scope) {
+  return selectEl(id, [["global", "Global (free exploration)"], ...realNiches().map((n) => [n.id, `Niche: ${n.name}`])],
+    scope.global ? "global" : scope.niche.id, (v) => setParams(route, { scope: v, kw: null, market: null }), "Scope");
+}
+
 const nicheName = (id) => state.niches.find((n) => n.id === id)?.name || "—";
 const channelTitle = (id) => state.channels.find((c) => c.id === id)?.title || "—";
 
@@ -351,7 +374,7 @@ async function viewChannel(route) {
         h("tbody", {}, cur.map((t) => h("tr", {},
           h("td", { style: "font-weight:500", text: t.term }), h("td", { class: "num", text: fmt(t.views) }),
           h("td", { class: "num" }, scorePill(sMap[t.term.toLowerCase()])),
-          h("td", {}, h("a", { href: `#/keywords?niche=${chRow?.niche_id || ""}&kw=${encodeURIComponent(t.term.toLowerCase())}`, text: "Explore" })))))))
+          h("td", {}, h("a", { href: `#/keywords?scope=${chRow?.niche_id || "global"}&kw=${encodeURIComponent(t.term.toLowerCase())}`, text: "Explore" })))))))
         : empty(ch.connected ? "No search data yet for this channel." : "Connect with Google to see the searches that bring viewers."));
   } else if (tab === "traffic") {
     const rows = await q(sb.from("channel_breakdowns").select("*").eq("channel_id", id).order("period_end", { ascending: false }).limit(60));
@@ -395,15 +418,17 @@ function prettySource(k) {
 // Keyword explorer + trends
 // ------------------------------------------------------------------
 async function viewKeywords(route) {
-  if (!state.niches.length) return [h("h1", { text: "Keyword explorer" }), empty("Add a niche in Settings first.")];
-  const nicheId = route.params.get("niche") || state.niches[0].id;
-  const niche = state.niches.find((n) => n.id === nicheId) || state.niches[0];
-  const markets = niche.markets?.length ? niche.markets : ["GLOBAL"];
-  const market = route.params.get("market") || markets[0];
+  const scope = scopeOf(route);
+  const niche = scope.niche;
+  if (!niche) return [h("h1", { text: "Keyword explorer" }), empty("The Global scope is missing. Ask Claude to re-run the explore migration.")];
+  const marketOpts = scope.global ? MARKETS : (niche.markets?.length ? niche.markets : ["GLOBAL"]).map((m) => [m, marketName(m)]);
+  const market = route.params.get("market") || marketOpts[0][0];
+  const lang = route.params.get("lang") || (scope.global ? "en" : niche.languages?.[0] || "en");
   const sort = route.params.get("sort") || "score";
   const tab = route.params.get("tab") || "keywords";
   const filter = (route.params.get("f") || "").toLowerCase();
   const selected = route.params.get("kw");
+  const scopeLink = scope.global ? "global" : niche.id;
 
   const rows = await q(sb.from("v_keyword_scores").select("*").eq("niche_id", niche.id).eq("market", market).order("score", { ascending: false }).limit(500));
 
@@ -413,7 +438,7 @@ async function viewKeywords(route) {
     if (!term) return;
     analyze.disabled = true; analyze.textContent = "Analyzing… (~100 units)";
     try {
-      const { data, error } = await sb.functions.invoke("keyword-lookup", { body: { niche_id: niche.id, market, term } });
+      const { data, error } = await sb.functions.invoke("keyword-lookup", { body: { niche_id: niche.id, market, term, language: lang } });
       if (error) throw error;
       toast(`Analyzed “${term}”: ${data?.videos ?? 0} videos, ${data?.outliers ?? 0} outliers`);
       setParams(route, { kw: term, f: null });
@@ -422,10 +447,13 @@ async function viewKeywords(route) {
 
   const head = h("header", { class: "head" },
     h("div", { class: "head-text" }, h("h1", { text: tab === "trends" ? "Trends" : "Keyword explorer" }),
-      h("p", { class: "muted", style: "margin:0", text: `${rows.length} keywords tracked in ${niche.name} · ${market}` })),
+      h("p", { class: "muted", style: "margin:0", text: scope.global
+        ? `Free exploration across all topics · ${rows.length} keywords explored in ${marketName(market)}`
+        : `Scoped to ${niche.name}${scope.channel ? ` (${scope.channel.title})` : ""} · ${rows.length} keywords in ${marketName(market)}` })),
     h("div", { class: "row", style: "align-items:flex-end" },
-      selectEl("kw-niche", state.niches.map((n) => [n.id, n.name]), niche.id, (v) => setParams(route, { niche: v, market: null, kw: null }), "Niche"),
-      selectEl("kw-market", markets.map((m) => [m, m === "GLOBAL" ? "Global" : m]), market, (v) => setParams(route, { market: v, kw: null }), "Market")));
+      scopeSelect("kw-scope", route, scope),
+      selectEl("kw-market", marketOpts, market, (v) => setParams(route, { market: v, kw: null }), "Market"),
+      scope.global ? selectEl("kw-lang", LANGS, lang, (v) => setParams(route, { lang: v }), "Language") : null));
 
   const tabBar = h("div", { class: "tabs", role: "tablist" },
     [["keywords", "Keywords"], ["trends", "Rising"]].map(([v, t]) => h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v === "keywords" ? null : v }) })));
@@ -433,10 +461,10 @@ async function viewKeywords(route) {
   if (tab === "trends") {
     const rising = rows.filter((r) => r.trends_interest !== null && r.momentum_raw !== null).sort((a, b) => b.momentum_raw - a.momentum_raw).slice(0, 18);
     return [head, tabBar, h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", { text: `Rising in ${niche.name}` }), h("span", { class: "muted small", text: "Google Trends, YouTube Search · last 7 days vs last 30 days" })),
+      h("div", { class: "card-head" }, h("h2", { text: scope.global ? "Rising in what you explored" : `Rising in ${niche.name}` }), h("span", { class: "muted small", text: "Google Trends, YouTube Search · last 7 days vs last 30 days" })),
       rising.length ? h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px" },
         rising.map((r) => { const ch = (Number(r.momentum_raw) - 1) * 100;
-          return h("a", { href: `#/keywords?niche=${niche.id}&market=${market}&kw=${encodeURIComponent(r.term)}`, style: "display:flex;align-items:center;gap:12px;border:1px solid var(--line-soft);border-radius:10px;padding:12px 14px;color:inherit;text-decoration:none" },
+          return h("a", { href: `#/keywords?scope=${scopeLink}&market=${market}&kw=${encodeURIComponent(r.term)}`, style: "display:flex;align-items:center;gap:12px;border:1px solid var(--line-soft);border-radius:10px;padding:12px 14px;color:inherit;text-decoration:none" },
             h("div", { style: "flex:1 1 auto;min-width:0" }, h("div", { style: "font-weight:500", text: r.term }), h("div", { class: "muted small", text: `Interest ${fmt(r.trends_interest)} · score ${fmt(r.score)}` })),
             h("span", { class: ch >= 0 ? "up" : "down", style: "font-size:13px", text: `${ch >= 0 ? "+" : ""}${ch.toFixed(0)}%` })); }))
         : empty("Trends data appears after the daily Trends job runs."))];
@@ -462,20 +490,23 @@ async function viewKeywords(route) {
         h("td", { class: "num", text: fmt(r.demand) }), h("td", { class: "num", text: fmt(r.momentum) }), h("td", { class: "num", text: fmt(r.competition) }),
         h("td", { class: "num", text: fmt(r.outlier_count) }), h("td", { class: "num" }, scorePill(r.score)))))))
       : empty(rows.length ? "No keyword matches the filter." : "No keywords yet. They appear after the first research run, or analyze one above."),
-    h("p", { class: "muted small", style: "margin:0", text: "Scores are percentiles inside this niche and market (0–100). Competition: lower is easier for a small channel." }));
+    h("p", { class: "muted small", style: "margin:0", text: `Scores are percentiles among the keywords ${scope.global ? "you explored" : "of this niche"} in this market (0–100). Competition: lower is easier for a small channel.` }));
 
   let detail;
   if (sel) {
-    const [hist, kids] = await Promise.all([
+    const [hist, links] = await Promise.all([
       q(sb.from("keyword_snapshots").select("captured_on,trends_avg_7d,trends_interest").eq("keyword_id", sel.keyword_id).order("captured_on")),
-      Promise.resolve(rows.filter((r) => r.term.startsWith(sel.term + " ") && r.yt_autocomplete_rank).sort((a, b) => a.yt_autocomplete_rank - b.yt_autocomplete_rank).slice(0, 10)),
+      q(sb.from("video_keywords").select("youtube_video_id").eq("keyword_id", sel.keyword_id).limit(50)),
     ]);
+    const kids = rows.filter((r) => r.term.startsWith(sel.term + " ") && r.yt_autocomplete_rank).sort((a, b) => a.yt_autocomplete_rank - b.yt_autocomplete_rank).slice(0, 10);
+    const topVids = links.length ? await q(sb.from("v_video_latest").select("youtube_video_id,title,channel_title,subscribers,views,outlier_score,is_short")
+      .in("youtube_video_id", links.map((l) => l.youtube_video_id)).order("outlier_score", { ascending: false }).limit(6)) : [];
     const part = (label, v, inputs, color) => h("div", { style: "display:flex;flex-direction:column;gap:6px" },
       h("div", { style: "display:flex;justify-content:space-between;font-size:13.5px" }, h("span", { style: "font-weight:500", text: label }), h("span", { class: "mono", text: fmt(v) })),
       bar(Number(v) || 0, color), h("div", { class: "muted small", text: inputs }));
     const pts = hist.filter((p) => p.trends_avg_7d !== null).map((p) => ({ x: p.captured_on, y: Number(p.trends_avg_7d) }));
     detail = h("section", { class: "card grow2" },
-      h("div", { class: "card-head" }, h("div", {}, h("h2", { text: `“${sel.term}”` }), h("div", { class: "muted small", text: `${niche.name} · ${market}` })),
+      h("div", { class: "card-head" }, h("div", {}, h("h2", { text: `“${sel.term}”` }), h("div", { class: "muted small", text: `${scope.global ? "Global" : niche.name} · ${marketName(market)}` })),
         h("div", { style: "text-align:right" }, h("div", { class: "mono", style: "font-size:34px;color:var(--accent)", text: fmt(sel.score) }), h("div", { class: "muted small", text: "Keyword score" }))),
       part("Demand", sel.demand, `Trends ${fmt(sel.trends_interest)} · YouTube autocomplete #${sel.yt_autocomplete_rank ?? "–"} · ${fmt(sel.outlier_count)} outliers`),
       part("Momentum", sel.momentum, sel.momentum_raw !== null && sel.trends_interest !== null ? `Last 7 d vs last 30 d: ${((sel.momentum_raw - 1) * 100).toFixed(0)}%` : "Waiting for Trends data"),
@@ -483,10 +514,15 @@ async function viewKeywords(route) {
       pts.length > 1 ? lineChart(pts, `Trends interest history for ${sel.term}`) : h("p", { class: "muted small", text: "History builds up day by day." }),
       kids.length ? h("div", {}, h("h3", { text: "What people type next", style: "margin-bottom:6px" }),
         kids.map((k) => h("div", { class: "listrow", style: "padding:8px 0" }, h("span", { class: "mono small", style: "width:28px", text: `#${k.yt_autocomplete_rank}` }),
-          h("a", { href: `#/keywords?niche=${niche.id}&market=${market}&kw=${encodeURIComponent(k.term)}`, style: "flex:1;color:inherit", text: k.term }), scorePill(k.score)))) : null,
+          h("a", { href: `#/keywords?scope=${scopeLink}&market=${market}&kw=${encodeURIComponent(k.term)}`, style: "flex:1;color:inherit", text: k.term }), scorePill(k.score)))) : null,
+      topVids.length ? h("div", {}, h("h3", { text: "Top videos on this keyword (last 14 days)", style: "margin-bottom:6px" }),
+        topVids.map((v) => h("div", { class: "listrow", style: "padding:8px 0" },
+          h("span", { class: "mono small", style: "width:52px", text: `${Number(v.outlier_score).toFixed(1)}×` }),
+          h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "flex:1 1 200px;min-width:0;color:inherit", text: v.title }),
+          h("span", { class: "muted small", text: `${fmtc(v.views)} views · ${fmtc(v.subscribers)} subs` })))) : null,
       h("div", { class: "row" },
         h("button", { class: "btn primary", type: "button", text: "Make idea", onclick: () => makeIdea({ title: sel.term, niche_id: niche.id, score: sel.score, sources: [{ type: "keyword", ref: sel.term, market }] }) }),
-        h("a", { class: "btn", href: `#/outliers?niche=${niche.id}`, text: "See outliers" })));
+        h("a", { class: "btn", href: `#/outliers?scope=${scopeLink}`, text: "See outliers" })));
   } else {
     detail = h("section", { class: "card grow2" }, h("h2", { text: "Pick a keyword" }), h("p", { class: "muted", text: "Select a row to see its score breakdown, history and what people type next." }));
   }
@@ -500,23 +536,26 @@ async function viewKeywords(route) {
 // Outliers + competitors
 // ------------------------------------------------------------------
 async function viewOutliers(route) {
-  if (!state.niches.length) return [h("h1", { text: "Outliers" }), empty("Add a niche in Settings first.")];
-  const nicheId = route.params.get("niche") || state.niches[0].id;
-  const niche = state.niches.find((n) => n.id === nicheId) || state.niches[0];
+  const scope = scopeOf(route);
+  const niche = scope.niche;
   const tab = route.params.get("tab") || "videos";
   const fmtF = route.params.get("format") || "all";
   const win = Number(route.params.get("days") || 14);
   const size = route.params.get("size") || "100000";
+  const text = (route.params.get("q") || "").trim();
+  const where = scope.global ? "everything researched or explored" : `${niche.name}${scope.channel ? ` (${scope.channel.title})` : ""}`;
 
   const head = h("header", { class: "head" },
     h("div", { class: "head-text" }, h("h1", { text: tab === "competitors" ? "Competitors" : "Outliers" }),
-      h("p", { class: "muted", style: "margin:0", text: tab === "competitors" ? "Channels that keep producing outliers in this niche." : "Videos beating their channel’s normal reach: proven topics, not big-channel reach." })),
-    selectEl("o-niche", state.niches.map((n) => [n.id, n.name]), niche.id, (v) => setParams(route, { niche: v }), "Niche"));
+      h("p", { class: "muted", style: "margin:0", text: tab === "competitors" ? `Channels that keep producing outliers · ${where}` : `Videos beating their channel’s normal reach · ${where}` })),
+    scopeSelect("o-scope", route, scope));
   const tabBar = h("div", { class: "tabs", role: "tablist" },
     [["videos", "Outlier videos"], ["competitors", "Competitor watchlist"]].map(([v, t]) => h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v === "videos" ? null : v }) })));
 
   if (tab === "competitors") {
-    const comps = await q(sb.from("v_competitors").select("*").eq("niche_id", niche.id).order("outliers_30d", { ascending: false }).limit(100));
+    let cq = sb.from("v_competitors").select("*").order("outliers_30d", { ascending: false }).limit(100);
+    if (!scope.global) cq = cq.eq("niche_id", niche.id);
+    const comps = await q(cq);
     return [head, tabBar, h("section", { class: "card" },
       comps.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:760px" },
         h("thead", {}, h("tr", {}, ["Channel", "Subs", "Uploads seen 30 d", "Outliers 30 d", "Best video seen", "Best views", "Added"].map((t, i) => h("th", { class: [1, 2, 3, 5].includes(i) ? "num" : null, text: t })))),
@@ -528,13 +567,17 @@ async function viewOutliers(route) {
         : empty("Channels with 2+ outliers in a research run are added here automatically."))];
   }
 
-  let query = sb.from("v_video_latest").select("*").eq("niche_id", niche.id).gte("outlier_score", 3)
+  let query = sb.from("v_video_latest").select("*").gte("outlier_score", 3)
     .gte("published_at", new Date(Date.now() - win * 864e5).toISOString()).order("outlier_score", { ascending: false }).limit(60);
+  if (!scope.global) query = query.eq("niche_id", niche.id);
   if (fmtF !== "all") query = query.eq("is_short", fmtF === "short");
   if (size !== "all") query = query.lte("subscribers", Number(size));
+  if (text) query = query.ilike("title", `%${text.replace(/[%_,()]/g, " ")}%`);
   const vids = await q(query);
 
   const filters = h("div", { class: "row" },
+    h("input", { class: "field", placeholder: "Title contains…", value: text, "aria-label": "Title contains", style: "flex:1 1 200px",
+      onchange: (e) => setParams(route, { q: e.target.value.trim() || null }) }),
     seg([["all", "All"], ["short", "Shorts"], ["long", "Long-form"]], fmtF, (v) => setParams(route, { format: v }), "Format"),
     selectEl("o-days", [["7", "Uploaded: last 7 days"], ["14", "Uploaded: last 14 days"], ["30", "Uploaded: last 30 days"]], String(win), (v) => setParams(route, { days: v })),
     selectEl("o-size", [["10000", "Channels under 10k subs"], ["100000", "Channels under 100k subs"], ["all", "All channel sizes"]], size, (v) => setParams(route, { size: v })));
@@ -552,7 +595,7 @@ async function viewOutliers(route) {
         h("div", {}, h("span", { text: "Engagement" }), h("span", { class: "mono", text: `${v.engagement_pct ?? "—"}%` }))),
       h("div", { class: "row", style: "margin-top:auto" },
         h("button", { class: "btn primary small", type: "button", text: "Save as idea",
-          onclick: () => makeIdea({ title: v.title, niche_id: niche.id, score: Math.min(100, Math.round(50 + Number(v.outlier_score) * 2)), sources: [{ type: "outlier", ref: v.youtube_video_id, multiple: v.outlier_score }] }) }))))))
+          onclick: () => makeIdea({ title: v.title, niche_id: v.niche_id || niche.id, score: Math.min(100, Math.round(50 + Number(v.outlier_score) * 2)), sources: [{ type: "outlier", ref: v.youtube_video_id, multiple: v.outlier_score }] }) }))))))
     : empty("No outliers match these filters yet. They appear after the research job runs.");
 
   return [head, tabBar, filters, grid];
@@ -669,7 +712,7 @@ async function viewSettings(route) {
         const slug = name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
         await q(sb.from("niches").insert({ name, slug, languages: ["en"], markets: ["GLOBAL"] })); await loadShared(); render(); } },
         h("label", { for: "new-niche", class: "sr", text: "New niche" }), newNiche, h("button", { class: "btn", type: "submit", text: "+ Add niche" }))),
-    h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px" }, state.niches.map(nicheCard)));
+    h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px" }, realNiches().map(nicheCard)));
 
   const channels = h("section", { class: "card" },
     h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("button", { class: "btn primary", type: "button", text: "+ Connect channel with Google", onclick: startOAuth })),
@@ -680,7 +723,7 @@ async function viewSettings(route) {
         h("td", { style: "font-weight:500", text: c.title }),
         h("td", {}, h("select", { class: "field", style: "min-height:36px", "aria-label": `Niche for ${c.title}`,
           onchange: async (e) => { await q(sb.from("channels").update({ niche_id: e.target.value || null }).eq("id", c.id)); await loadShared(); toast("Saved"); } },
-          h("option", { value: "", text: "No niche" }), state.niches.map((n) => h("option", { value: n.id, selected: n.id === c.niche_id, text: n.name })))),
+          h("option", { value: "", text: "No niche" }), realNiches().map((n) => h("option", { value: n.id, selected: n.id === c.niche_id, text: n.name })))),
         h("td", {}, h("input", { class: "field", style: "min-height:36px;width:70px", value: c.language || "", "aria-label": `Language for ${c.title}`,
           onchange: async (e) => { await q(sb.from("channels").update({ language: e.target.value.trim() || null }).eq("id", c.id)); toast("Saved"); } })),
         h("td", {}, h("input", { class: "field", style: "min-height:36px;width:160px", value: (c.markets || []).join(", "), "aria-label": `Markets for ${c.title}`,
@@ -791,6 +834,15 @@ document.getElementById("sign-out").addEventListener("click", async () => { awai
 document.getElementById("channel-switch").addEventListener("change", (e) => {
   state.channel = e.target.value;
   localStorage.setItem("ytc.channel", state.channel);
+  const route = parseRoute();
+  // Research pages follow the channel: its niche when one is picked, free global exploration for "All channels".
+  if (["keywords", "outliers", "ideas"].includes(route.name)) {
+    const p = new URLSearchParams(route.params);
+    ["scope", "kw", "market", "lang"].forEach((k) => p.delete(k));
+    const next = `#/${route.name}${p.toString() ? "?" + p : ""}`;
+    if (location.hash === next) render(); else go(next);
+    return;
+  }
   go(state.channel === "all" ? "#/portfolio" : `#/channel/${state.channel}`);
 });
 window.addEventListener("hashchange", () => { if (!document.getElementById("app").hidden) render(); });
