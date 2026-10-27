@@ -318,6 +318,7 @@ async function viewChannel(route) {
           ch.connected ? h("span", { class: "up", text: "Google connected" }) : h("span", { class: "flat", text: "Not connected" })))),
     h("div", { class: "row" },
       chRow?.youtube_channel_id ? h("a", { class: "btn", href: `https://studio.youtube.com/channel/${chRow.youtube_channel_id}`, target: "_blank", rel: "noopener", text: "Open YouTube Studio" }) : null,
+      h("button", { class: "btn", type: "button", text: "Refresh stats", onclick: (e) => refreshChannel(id, e.currentTarget) }),
       ch.connected ? null : h("button", { class: "btn primary", type: "button", text: "Connect with Google", onclick: startOAuth })));
 
   const tabs = [["overview", "Overview"], ["videos", "Videos"], ["search", "Search terms"], ["traffic", "Traffic and audience"], ["ideas", "Ideas"]];
@@ -715,7 +716,9 @@ async function viewSettings(route) {
     h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px" }, realNiches().map(nicheCard)));
 
   const channels = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("button", { class: "btn primary", type: "button", text: "+ Connect channel with Google", onclick: startOAuth })),
+    h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("div", { class: "row" },
+      h("button", { class: "btn", type: "button", text: "Refresh all stats", onclick: (e) => refreshChannel(null, e.currentTarget) }),
+      h("button", { class: "btn primary", type: "button", text: "+ Connect channel with Google", onclick: startOAuth }))),
     h("p", { class: "muted small", style: "margin:0", text: "Brand Account channels need one connection each: pick the channel in Google’s chooser, then repeat for the next one." }),
     state.channels.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:640px" },
       h("thead", {}, h("tr", {}, ["Channel", "Niche", "Language", "Markets", "Google"].map((t) => h("th", { text: t })))),
@@ -742,7 +745,7 @@ async function viewSettings(route) {
         h("td", { class: "muted", text: r.finished_at ? `${Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000))} s` : "—" }),
         h("td", { class: "num", text: fmt(r.units_used) }), h("td", {}, pill(r.status)))))))
       : empty("No job has run yet. Jobs start once the GitHub repo and its secrets are set."),
-    h("p", { class: "muted small", style: "margin:0", text: "Schedule (UTC): research 06:00 daily · Trends 07:30 daily · channel stats every 6 h · Blotato sync and alerts hourly." }));
+    h("p", { class: "muted small", style: "margin:0", text: "Channel stats sync on the server every 6 h and right after you connect a channel. GitHub jobs (UTC): research 06:00 · Trends 07:30 · Blotato sync and alerts hourly." }));
 
   const used = quota.filter((r) => r.api === "youtube_data");
   const total = used.reduce((a, r) => a + r.units, 0);
@@ -756,6 +759,21 @@ async function viewSettings(route) {
 
   return [h("header", { class: "head" }, h("div", { class: "head-text" }, h("h1", { text: "Settings" }), h("p", { class: "muted", style: "margin:0", text: "Niches, channels, scheduled jobs and API quota." }))),
     niches, channels, h("div", { class: "cols" }, jobs, quotaCard)];
+}
+
+async function refreshChannel(channelId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+  try {
+    const { data, error } = await sb.functions.invoke("channel-sync", { body: channelId ? { channel_id: channelId } : {} });
+    if (error) throw error;
+    const errs = Object.values(data?.details || {}).filter((d) => d.error).map((d) => d.error);
+    toast(errs.length ? `Refreshed with issues: ${errs[0]}` : "Stats refreshed");
+    await loadShared();
+    render();
+  } catch (e) {
+    toast(`Refresh failed: ${e.message || e}`);
+    if (btn) { btn.disabled = false; btn.textContent = "Refresh stats"; }
+  }
 }
 
 async function startOAuth() {
