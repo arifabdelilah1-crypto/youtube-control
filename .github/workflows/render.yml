@@ -1,0 +1,42 @@
+name: Render video
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "render_jobs.id"
+        required: true
+concurrency: { group: "render-${{ github.event.inputs.job_id }}", cancel-in-progress: false }
+env:
+  MPT_REF: fd5127e81721f36f0a85aee21b298cc5f4452f42
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: harry0703/MoneyPrinterTurbo
+          ref: ${{ env.MPT_REF }}
+          path: mpt
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: mpt/requirements.txt
+      - name: System packages (ffmpeg, Arabic font)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-noto-core >/dev/null
+          cp /usr/share/fonts/truetype/noto/NotoSansArabic-Bold.ttf mpt/resource/fonts/ || true
+      - name: Install MoneyPrinterTurbo
+        run: pip install -q -r mpt/requirements.txt
+      - name: Render
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          MPT_DIR: ${{ github.workspace }}/mpt
+          PYTHONPATH: ${{ github.workspace }}/mpt
+        run: python collectors/render_job.py "${{ github.event.inputs.job_id }}"
