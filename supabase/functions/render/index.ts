@@ -16,9 +16,9 @@ const cors = {
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 
-async function dispatch(jobId: string): Promise<string | null> {
+async function dispatch(jobId: string, workflow = "render.yml"): Promise<string | null> {
   if (!GH_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return "Render isn't set up yet: add GITHUB_TOKEN and GITHUB_REPO in Supabase Edge Function secrets.";
-  const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/render.yml/dispatches`, {
+  const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/${workflow}/dispatches`, {
     method: "POST",
     headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "youtube-control" },
     body: JSON.stringify({ ref: "main", inputs: { job_id: jobId } }),
@@ -38,10 +38,12 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     let jobId: string;
+    let workflow = "render.yml";
     if (body.retry) {
-      const { data: job } = await db.from("render_jobs").select("id,status").eq("id", body.retry).single();
+      const { data: job } = await db.from("render_jobs").select("id,status,params").eq("id", body.retry).single();
       if (!job) return json({ error: "job not found" }, 404);
       jobId = job.id;
+      if (job.params?.engine === "editor") workflow = "video.yml";
     } else {
       const p = body.params || {};
       if (typeof p.script !== "string" || p.script.trim().length < 20) return json({ error: "Write a script first (at least a couple of sentences)." }, 400);
@@ -51,7 +53,7 @@ Deno.serve(async (req) => {
       if (error) throw error;
       jobId = job.id;
     }
-    const err = await dispatch(jobId);
+    const err = await dispatch(jobId, workflow);
     await db.from("render_jobs").update(err ? { status: "failed", error: err } : { status: "dispatched", error: null }).eq("id", jobId);
     return json({ job_id: jobId, status: err ? "failed" : "dispatched", error: err }, err ? 503 : 200);
   } catch (e) {

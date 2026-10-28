@@ -1,0 +1,31 @@
+name: Prepare voice
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "video_projects.id"
+        required: true
+      scene_ids:
+        description: "Comma-separated scene ids (empty = all scenes)"
+        required: false
+        default: ""
+concurrency: { group: "prepare-${{ github.event.inputs.project_id }}", cancel-in-progress: false }
+jobs:
+  voice:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: collectors
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -q edge-tts==7.2.8 requests==2.32.3
+      - name: Generate voice-over
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+          SCENE_IDS: ${{ github.event.inputs.scene_ids }}
+        run: python collectors/prepare_job.py "$PROJECT_ID" "$SCENE_IDS"

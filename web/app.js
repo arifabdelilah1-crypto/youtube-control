@@ -125,6 +125,8 @@ const VOICES = {
   es: [["es-ES-AlvaroNeural-Male", "Álvaro (male)"], ["es-ES-ElviraNeural-Female", "Elvira (female)"]],
   de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"]],
 };
+const MOODS = [["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
+  ["emotional", "Emotional / piano"], ["lofi", "Lo-fi / chill"], ["oriental", "Oriental / Arabic"], ["latin", "Latin / Spanish guitar"], ["other", "Other"]];
 const DEFAULT_STYLE = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1, aspect: "9:16", source: "pixabay", bgm: "random", bgm_volume: 0.2,
   clip_duration: 4, captions: { enabled: true, mode: "word_by_word", position: "bottom", color: "#FFFFFF", font_size: 70, stroke_color: "#000000", stroke_width: 2, animation: "pop_spring" } };
 
@@ -180,8 +182,9 @@ async function loadShared() {
 const VIEWS = {};
 async function render() {
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  if (state.unmount) { state.unmount(); state.unmount = null; }
   const route = parseRoute();
-  const section = { keyword: "research", channel: "channels" }[route.name] || route.name;
+  const section = { keyword: "research", channel: "channels", edit: "studio" }[route.name] || route.name;
   document.querySelectorAll(".side-links a").forEach((a) =>
     a.dataset.route === section ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   const fn = VIEWS[route.name] || VIEWS.home;
@@ -584,122 +587,101 @@ function renderRow(j) {
 async function studioEditor(ideaId) {
   const idea = await q(sb.from("ideas").select("*").eq("id", ideaId).maybeSingle());
   if (!idea) return [empty("Project not found.", h("a", { class: "btn", href: "#/studio", text: "Back to Studio" }))];
-  const jobs = await q(sb.from("render_jobs").select("*").eq("idea_id", ideaId).order("created_at", { ascending: false }).limit(10));
+  const [projects, jobs] = await Promise.all([
+    q(sb.from("video_projects").select("*").eq("idea_id", ideaId).order("updated_at", { ascending: false }).limit(1)),
+    q(sb.from("render_jobs").select("*").eq("idea_id", ideaId).is("project_id", null).order("created_at", { ascending: false }).limit(5)),
+  ]);
+  const project = projects[0] || null;
   const ch = channelById(idea.channel_id);
-  const style = { ...DEFAULT_STYLE, ...(ch?.video_style || {}), captions: { ...DEFAULT_STYLE.captions, ...(ch?.video_style?.captions || {}) } };
-  const last = jobs[0]?.params;
-  if (last) Object.assign(style, { ...last, captions: { ...style.captions, ...(last.captions || {}) } });
-  let materials = [...(last?.materials || [])];
+  const style = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1.1, aspect: "9:16", ...(ch?.video_style || {}), ...(project ? { language: project.language, voice: project.voice, voice_rate: Number(project.voice_rate), aspect: project.aspect } : {}) };
 
-  // --- fields
   const f = {};
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
-  f.title = h("input", { id: "s-title", class: "field", value: idea.video_title || idea.title });
+  f.title = h("input", { id: "s-title", class: "field", dir: "auto", value: project?.title || idea.video_title || idea.title });
   f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No channel" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === idea.channel_id, text: c.title })));
-  f.script = h("textarea", { id: "s-script", class: "field script", rows: "12", placeholder: "Write the voice-over here. First line = the hook.\n\nTip: one idea per sentence, short sentences read better as captions.", value: idea.script || "" });
+  f.script = h("textarea", { id: "s-script", class: "field script", rows: "14", dir: "auto", value: idea.script || "",
+    placeholder: "One line = one scene. First line = the hook.\nAdd footage words in brackets at the end of a line:\n\nWhat if Lamine Yamal signed for Real Madrid? [football stadium night, crowd cheering]\nThe Bernabéu explodes. [stadium fireworks]" });
   const counter = h("div", { class: "muted small" });
-  const updateCount = () => { const w = f.script.value.trim().split(/\s+/).filter(Boolean).length; counter.textContent = `${w} words · about ${Math.round((w / 150) * 60)} s of voice`; };
+  const updateCount = () => {
+    const lines = f.script.value.split("\n").filter((l) => l.trim()).length;
+    const w = f.script.value.replace(/\[[^\]]*\]/g, " ").trim().split(/\s+/).filter(Boolean).length;
+    counter.textContent = `${lines} scene${lines === 1 ? "" : "s"} · ${w} words · about ${Math.round(w / 2.6)} s of voice`;
+  };
   f.script.addEventListener("input", updateCount); updateCount();
-  f.terms = h("input", { id: "s-terms", class: "field", value: (idea.search_terms || last?.terms || []).join(", "), placeholder: "e.g. football stadium, night city, car showroom" });
+  f.terms = h("input", { id: "s-terms", class: "field", value: (idea.search_terms || []).join(", "), placeholder: "e.g. football stadium, night city, car showroom" });
   f.language = h("select", { id: "s-lang", class: "field" }, LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, selected: v === style.language, text: t })));
   f.voice = h("select", { id: "s-voice", class: "field" });
-  const fillVoices = () => { const list = VOICES[f.language.value] || VOICES.en; f.voice.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === style.voice, text: t })), h("option", { value: "no-voice", selected: style.voice === "no-voice", text: "No voice" })); };
+  const fillVoices = () => { const list = VOICES[f.language.value] || VOICES.en; f.voice.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === style.voice, text: t }))); };
   f.language.addEventListener("change", fillVoices); fillVoices();
-  f.rate = h("select", { id: "s-rate", class: "field" }, [[0.9, "Slower"], [1, "Normal"], [1.1, "Faster"], [1.2, "Fast"]].map(([v, t]) => h("option", { value: v, selected: Number(style.voice_rate) === v, text: t })));
+  f.rate = h("select", { id: "s-rate", class: "field" }, [[0.9, "Slower"], [1, "Normal"], [1.1, "Shorts pace"], [1.2, "Fast"]].map(([v, t]) => h("option", { value: v, selected: Number(style.voice_rate) === v, text: t })));
   f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9)"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
-  f.source = h("select", { id: "s-source", class: "field" }, [["pixabay", "Stock: Pixabay"], ["pexels", "Stock: Pexels (existing key only)"], ["local", "My images / clips"]].map(([v, t]) => h("option", { value: v, selected: v === style.source, text: t })));
-  f.clip = h("select", { id: "s-clip", class: "field" }, [2, 3, 4, 5, 6].map((v) => h("option", { value: v, selected: Number(style.clip_duration) === v, text: `${v} s per clip` })));
-  f.capOn = h("input", { id: "s-cap", type: "checkbox", checked: style.captions.enabled !== false });
-  f.capMode = h("select", { id: "s-capmode", class: "field" }, [["word_by_word", "Word by word"], ["sentence", "Sentence"]].map(([v, t]) => h("option", { value: v, selected: v === style.captions.mode, text: t })));
-  f.capPos = h("select", { id: "s-cappos", class: "field" }, [["bottom", "Bottom"], ["center", "Center"], ["top", "Top"]].map(([v, t]) => h("option", { value: v, selected: v === style.captions.position, text: t })));
-  f.capColor = h("input", { id: "s-capcolor", type: "color", class: "color", value: style.captions.color });
-  f.capSize = h("select", { id: "s-capsize", class: "field" }, [[50, "Small"], [70, "Medium"], [90, "Large"], [110, "Huge"]].map(([v, t]) => h("option", { value: v, selected: Number(style.captions.font_size) === v, text: t })));
-  f.bgm = h("select", { id: "s-bgm", class: "field" }, [["random", "Background music on"], ["none", "No music"]].map(([v, t]) => h("option", { value: v, selected: v === style.bgm, text: t })));
-  f.desc = h("textarea", { id: "s-desc", class: "field", rows: "3", value: idea.video_description || "" });
+  f.desc = h("textarea", { id: "s-desc", class: "field", rows: "3", dir: "auto", value: idea.video_description || "" });
   f.tags = h("input", { id: "s-tags", class: "field", value: (idea.video_tags || []).join(", ") });
 
-  // --- materials (own images/clips)
-  const matList = h("div", { class: "row", style: "gap:6px" });
-  const drawMaterials = () => matList.replaceChildren(...materials.map((p, i) => h("span", { class: "chip" }, p.split("/").pop().replace(/^\d+-/, ""),
-    h("button", { type: "button", "aria-label": "Remove", text: "×", onclick: () => { materials.splice(i, 1); drawMaterials(); } }))));
-  drawMaterials();
-  const upload = h("input", { id: "s-upload", type: "file", accept: "image/*,video/mp4,video/quicktime", multiple: true, class: "field", onchange: async (e) => {
-    for (const file of e.target.files) {
-      if (file.size > 50 * 1024 * 1024) { toast(`${file.name} is over 50 MB`); continue; }
-      const path = `materials/${ideaId}/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
-      const { error } = await sb.storage.from("renders").upload(path, file, { contentType: file.type });
-      if (error) toast(`Upload failed: ${error.message}`); else materials.push(path);
-    }
-    e.target.value = ""; drawMaterials(); toast("Uploaded");
-  } });
-  const matBox = h("div", { class: "field-wrap" }, h("label", { for: "s-upload", text: "Your images / clips (used in order)" }), upload, matList);
-  const toggleSource = () => { matBox.hidden = f.source.value !== "local"; };
-  f.source.addEventListener("change", toggleSource); toggleSource();
-
-  const collect = () => ({
-    title: f.title.value.trim(), script: f.script.value.trim(),
-    terms: f.terms.value.split(",").map((t) => t.trim()).filter(Boolean),
-    language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value, source: f.source.value,
-    clip_duration: Number(f.clip.value), bgm: f.bgm.value, bgm_volume: 0.2, materials,
-    captions: { enabled: f.capOn.checked, mode: f.capMode.value, position: f.capPos.value, color: f.capColor.value, font_size: Number(f.capSize.value), stroke_color: "#000000", stroke_width: 2, animation: "pop_spring" },
-  });
+  const terms = () => f.terms.value.split(",").map((t) => t.trim()).filter(Boolean);
   const save = async (quiet) => {
-    const p = collect();
     const early = ["new", "shortlisted", "assigned"].includes(idea.stage);
-    const stage = early ? (p.script ? "scripted" : "assigned") : idea.stage;
-    await q(sb.from("ideas").update({ video_title: p.title, title: idea.title === "Untitled video" ? p.title : idea.title, channel_id: f.channel.value || null,
-      script: p.script, search_terms: p.terms, video_description: f.desc.value, video_tags: f.tags.value.split(",").map((t) => t.trim()).filter(Boolean),
-      stage }).eq("id", ideaId));
+    const stage = early ? (f.script.value.trim() ? "scripted" : "assigned") : idea.stage;
+    const title = f.title.value.trim();
+    await q(sb.from("ideas").update({ video_title: title, title: idea.title === "Untitled video" ? title : idea.title, channel_id: f.channel.value || null,
+      script: f.script.value.trim(), search_terms: terms(), video_description: f.desc.value, video_tags: f.tags.value.split(",").map((t) => t.trim()).filter(Boolean), stage }).eq("id", ideaId));
     idea.stage = stage;
     if (!quiet) toast("Saved");
-    return p;
   };
-  const renderBtn = h("button", { class: "btn primary", type: "button", text: "Render video", onclick: async () => {
-    renderBtn.disabled = true; renderBtn.textContent = "Starting…";
+  const build = async (btn) => {
+    if (!f.script.value.trim()) return toast("Write the voice-over first: one line per scene.");
+    btn.disabled = true; btn.textContent = "Building scenes…";
     try {
-      const p = await save(true);
-      const { data, error } = await sb.functions.invoke("render", { body: { idea_id: ideaId, channel_id: f.channel.value || null, params: p } });
+      await save(true);
+      const chosen = channelById(f.channel.value);
+      const { data, error } = await sb.functions.invoke("studio", { body: {
+        action: "build", project_id: project?.id || null, idea_id: ideaId, channel_id: f.channel.value || null,
+        title: f.title.value.trim(), script: f.script.value, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value,
+        settings: project?.settings || chosen?.video_style?.editor || {}, default_terms: terms(),
+      } });
       if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
-      toast(data.status === "dispatched" ? "Render started: usually 3–8 minutes" : data.error);
-    } catch (e) { toast(e.message); }
-    render();
-  } });
-  const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this channel’s default style", onclick: async () => {
+      if (data.error) toast(data.error);
+      else if (!data.footage) toast("Scenes ready. Stock clip search isn't set up yet (PIXABAY_API_KEY in Supabase).");
+      go(`#/edit/${data.project_id}`);
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = project ? "Rebuild scenes from script" : "Create scenes →"; }
+  };
+  const buildBtn = h("button", { class: `btn ${project ? "" : "primary"}`, type: "button", text: project ? "Rebuild scenes from script" : "Create scenes →", onclick: (e) => build(e.currentTarget) });
+  const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this channel’s default voice & format", onclick: async () => {
     if (!f.channel.value) return toast("Pick a channel first");
-    const { title, script, terms, materials: _m, ...styleOnly } = collect();
-    await q(sb.from("channels").update({ video_style: styleOnly }).eq("id", f.channel.value)); await loadShared(); toast("Saved as channel default");
+    const cur = channelById(f.channel.value)?.video_style || {};
+    await q(sb.from("channels").update({ video_style: { ...cur, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value } }).eq("id", f.channel.value));
+    await loadShared(); toast("Saved as channel default");
   } });
-
-  if (jobs.some((j) => ["queued", "dispatched", "running"].includes(j.status))) {
-    state.timer = setInterval(async () => {
-      const fresh = await q(sb.from("render_jobs").select("id,status").eq("idea_id", ideaId).in("status", ["queued", "dispatched", "running"]));
-      if (!fresh.length) render();
-    }, 10000);
-  }
 
   return [
-    h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: idea.video_title || idea.title })),
-      h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }), renderBtn)),
+    h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: project?.title || idea.video_title || idea.title })),
+      h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }), buildBtn,
+        project ? h("a", { class: "btn primary", href: `#/edit/${project.id}`, text: "Open editor →" }) : null)),
+    project ? h("p", { class: "muted small", style: "margin:0", text: "Rebuilding keeps the voice and clip of every line you didn't change." }) : null,
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
-        field("s-title", "Video title", f.title), field("s-script", "Voice-over", f.script), counter,
-        field("s-terms", "Footage search terms (comma-separated, English works best)", f.terms, "Each term finds matching stock clips. Use visual words: “crowd cheering”, “red sports car”."),
-        matBox),
-      h("section", { class: "card grow2" }, h("h2", { text: "Style" }),
+        field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene", f.script), counter,
+        field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
+      h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),
         field("s-channel", "Channel", f.channel),
-        h("div", { class: "form-grid" }, field("s-aspect", "Format", f.aspect), field("s-source", "Footage", f.source), field("s-lang", "Language", f.language),
-          field("s-voice", "Voice", f.voice), field("s-rate", "Voice speed", f.rate), field("s-clip", "Clip length", f.clip)),
-        h("h3", { text: "Captions" }),
-        h("label", { class: "row", style: "gap:8px" }, f.capOn, "Show captions"),
-        h("div", { class: "form-grid" }, field("s-capmode", "Style", f.capMode), field("s-cappos", "Position", f.capPos), field("s-capsize", "Size", f.capSize),
-          field("s-capcolor", "Color", f.capColor)),
-        field("s-bgm", "Music", f.bgm), saveStyle)),
-    h("section", { class: "card" }, h("h2", { text: "Renders" }), jobs.length ? jobs.map((j) => renderRow(j)) : empty("No render yet. Write the script and press Render video.")),
+        h("div", { class: "form-grid" }, field("s-lang", "Language", f.language), field("s-voice", "Voice", f.voice), field("s-rate", "Voice speed", f.rate), field("s-aspect", "Format", f.aspect)),
+        saveStyle,
+        h("p", { class: "muted small", style: "margin:0", text: "Captions, hook text, music and sound effects are set in the editor." }))),
     h("details", { class: "card" }, h("summary", { text: "Publishing details (description, tags)" }),
       field("s-desc", "Description", f.desc), field("s-tags", "Tags (comma-separated)", f.tags),
       h("p", { class: "muted small", style: "margin:0", text: "Turn on “Altered or synthetic content” when uploading videos with realistic AI visuals of real people." })),
+    jobs.length ? h("section", { class: "card" }, h("h2", { text: "Earlier quick renders" }), jobs.map((j) => renderRow(j))) : null,
   ];
 }
+
+// Video editor (React bundle, loaded on demand)
+const EDITOR_VERSION = "1";
+VIEWS.edit = async (route) => {
+  const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
+  const el = h("div", { class: "ed-root" });
+  state.unmount = mod.mountEditor(el, { sb, projectId: route.id, toast, VOICES, LANGS });
+  return el;
+};
 
 // ==================================================================
 // Channels
@@ -814,10 +796,11 @@ function prettySource(k) {
 VIEWS.settings = async (route) => {
   if (route.params.get("connected")) toast("Channel connected. Stats are loading.");
   if (route.params.get("error")) toast(`Google connection failed: ${route.params.get("error")}`);
-  const [seeds, runs, quota] = await Promise.all([
+  const [seeds, runs, quota, tracks] = await Promise.all([
     q(sb.from("seed_terms").select("*").order("created_at")),
     q(sb.from("job_runs").select("*").order("started_at", { ascending: false }).limit(150)),
     q(sb.from("api_quota_daily").select("*").eq("day", today())),
+    q(sb.from("music_tracks").select("*").order("created_at", { ascending: false })),
   ]);
 
   const nicheCard = (n) => {
@@ -880,7 +863,46 @@ VIEWS.settings = async (route) => {
     bar(total / 100, total > 9000 ? "#B42318" : null, true),
     h("p", { class: "muted small", style: "margin:0", text: `About ${Math.max(0, Math.floor((9500 - total) / 102))} keyword analyses left today. Resets at midnight Pacific time.` }));
 
-  return [pageHead("Settings", "Niches, channels and background jobs."), nichesBox, channelsBox, h("div", { class: "cols" }, jobs, quotaBox)];
+  // --- Music library
+  const moodSel = h("select", { id: "m-mood", class: "field" }, MOODS.map(([v, t]) => h("option", { value: v, text: t })));
+  const fileIn = h("input", { id: "m-file", class: "field", type: "file", accept: "audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/mp4,audio/aac,audio/ogg", multiple: true });
+  const upBtn = h("button", { class: "btn primary", type: "button", text: "Upload", onclick: async () => {
+    const files = [...fileIn.files];
+    if (!files.length) return toast("Choose one or more audio files");
+    upBtn.disabled = true; upBtn.textContent = "Uploading…";
+    for (const file of files) {
+      if (file.size > 50 * 1024 * 1024) { toast(`${file.name} is over 50 MB`); continue; }
+      const path = `music/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+      const { error } = await sb.storage.from("renders").upload(path, file, { contentType: file.type || "audio/mpeg" });
+      if (error) { toast(`Upload failed: ${error.message}`); continue; }
+      const duration = await new Promise((res) => { const a = new Audio(); a.preload = "metadata"; a.onloadedmetadata = () => res(a.duration || null); a.onerror = () => res(null); a.src = URL.createObjectURL(file); });
+      await q(sb.from("music_tracks").insert({ mood: moodSel.value, title: file.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").slice(0, 120), path, duration }));
+    }
+    toast("Music added"); render();
+  } });
+  const byMood = MOODS.map(([m, name]) => [name, tracks.filter((t) => t.mood === m)]).filter(([, list]) => list.length);
+  const musicBox = h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "Music library" }), h("span", { class: "muted small", text: `${tracks.length} track${tracks.length === 1 ? "" : "s"}` })),
+    h("p", { class: "muted small", style: "margin:0", text: "Upload tracks by mood; the editor picks from them. Safest source: YouTube Studio → Audio Library (no copyright claims). Some Pixabay tracks get Content ID claims." }),
+    h("div", { class: "row", style: "align-items:flex-end" },
+      h("div", { class: "field-wrap", style: "flex:1 1 180px" }, h("label", { for: "m-mood", text: "Mood" }), moodSel),
+      h("div", { class: "field-wrap", style: "flex:2 1 260px" }, h("label", { for: "m-file", text: "Audio files (MP3)" }), fileIn), upBtn),
+    byMood.length ? byMood.map(([name, list]) => h("div", { style: "display:flex;flex-direction:column;gap:6px" }, h("h3", { text: `${name} (${list.length})` }),
+      list.map((t) => {
+        const slot = h("span", {});
+        return h("div", { class: "listrow" },
+          h("div", { style: "flex:1 1 200px;min-width:0" }, h("div", { style: "font-weight:500", text: t.title }), h("div", { class: "muted small", text: t.duration ? `${Math.floor(t.duration / 60)}:${String(Math.round(t.duration % 60)).padStart(2, "0")}` : "" })),
+          slot,
+          h("button", { class: "btn small", type: "button", text: "Play", onclick: async (e) => {
+            const { data } = await sb.storage.from("renders").createSignedUrl(t.path, 3600);
+            if (data?.signedUrl) { slot.replaceChildren(h("audio", { src: data.signedUrl, controls: true, autoplay: true, style: "max-width:240px" })); e.currentTarget.remove(); }
+          } }),
+          h("button", { class: "btn small ghost", type: "button", text: "Delete", onclick: async () => {
+            await sb.storage.from("renders").remove([t.path]); await q(sb.from("music_tracks").delete().eq("id", t.id)); toast("Deleted"); render();
+          } }));
+      }))) : empty("No music yet. Upload a few tracks per mood (epic, phonk, oriental…)."));
+
+  return [pageHead("Settings", "Niches, channels, music and background jobs."), nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
 };
 
 // ==================================================================
