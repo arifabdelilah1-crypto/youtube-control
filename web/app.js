@@ -125,7 +125,7 @@ const VOICES = {
   es: [["es-ES-AlvaroNeural-Male", "Álvaro (male)"], ["es-ES-ElviraNeural-Female", "Elvira (female)"]],
   de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"]],
 };
-const DEFAULT_STYLE = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1, aspect: "9:16", source: "pexels", bgm: "random", bgm_volume: 0.2,
+const DEFAULT_STYLE = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1, aspect: "9:16", source: "pixabay", bgm: "random", bgm_volume: 0.2,
   clip_duration: 4, captions: { enabled: true, mode: "word_by_word", position: "bottom", color: "#FFFFFF", font_size: 70, stroke_color: "#000000", stroke_width: 2, animation: "pop_spring" } };
 
 // ==================================================================
@@ -607,7 +607,7 @@ async function studioEditor(ideaId) {
   f.language.addEventListener("change", fillVoices); fillVoices();
   f.rate = h("select", { id: "s-rate", class: "field" }, [[0.9, "Slower"], [1, "Normal"], [1.1, "Faster"], [1.2, "Fast"]].map(([v, t]) => h("option", { value: v, selected: Number(style.voice_rate) === v, text: t })));
   f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9)"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
-  f.source = h("select", { id: "s-source", class: "field" }, [["pexels", "Stock: Pexels"], ["pixabay", "Stock: Pixabay"], ["local", "My images / clips"]].map(([v, t]) => h("option", { value: v, selected: v === style.source, text: t })));
+  f.source = h("select", { id: "s-source", class: "field" }, [["pixabay", "Stock: Pixabay"], ["pexels", "Stock: Pexels (existing key only)"], ["local", "My images / clips"]].map(([v, t]) => h("option", { value: v, selected: v === style.source, text: t })));
   f.clip = h("select", { id: "s-clip", class: "field" }, [2, 3, 4, 5, 6].map((v) => h("option", { value: v, selected: Number(style.clip_duration) === v, text: `${v} s per clip` })));
   f.capOn = h("input", { id: "s-cap", type: "checkbox", checked: style.captions.enabled !== false });
   f.capMode = h("select", { id: "s-capmode", class: "field" }, [["word_by_word", "Word by word"], ["sentence", "Sentence"]].map(([v, t]) => h("option", { value: v, selected: v === style.captions.mode, text: t })));
