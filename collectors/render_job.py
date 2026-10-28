@@ -36,7 +36,7 @@ def build_args(p: dict, materials: list[str]) -> list[str]:
     if len(script) < 20:
         raise ValueError("script is empty or too short")
     terms = [t.strip() for t in (p.get("terms") or []) if isinstance(t, str) and t.strip()][:12]
-    source = choice(p.get("source"), ("pexels", "pixabay", "local"), "pexels")
+    source = choice(p.get("source"), ("pexels", "pixabay", "local"), "pixabay")
     if source != "local" and not terms:
         raise ValueError("search terms are required for stock footage")
     if source == "local" and not materials:
