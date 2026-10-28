@@ -62,6 +62,23 @@ GitHub → Actions → **Research** → *Run workflow*, then **Channel stats**, 
 Quota: each niche has a daily YouTube API budget (Settings). One search costs about 102 units;
 the project cap is 9,500 of Google's 10,000 daily units.
 
+## Studio (video rendering)
+
+Studio renders videos with [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) inside the
+`render.yml` GitHub Actions workflow (free on public repos; ~2,000 min/month on private ones).
+Flow: dashboard → `render` edge function → GitHub workflow → MP4 uploaded to the private `renders` bucket.
+
+Extra setup:
+
+| Where | Secret | Value |
+|---|---|---|
+| GitHub repo secrets | `PEXELS_API_KEY` | Free key from pexels.com/api (stock footage) |
+| GitHub repo secrets | `PIXABAY_API_KEY` | Optional, pixabay.com/api/docs |
+| Supabase Edge Function secrets | `GITHUB_TOKEN` | Fine-grained token: this repo only, permission **Actions: Read and write** |
+| Supabase Edge Function secrets | `GITHUB_REPO` | `owner/repo`, e.g. `arifabdelilah1-crypto/youtube-control` |
+
+Voices are Microsoft Edge TTS (free). Videos over 48 MB are re-encoded to fit the free Storage limit.
+
 ## Not built yet
 - Blotato sync adapter (`collectors/blotato_sync.py`): port the request/field mapping from the Réseau DE sync.
 - Write actions from the dashboard: edit titles/tags/thumbnails, reply to comments.

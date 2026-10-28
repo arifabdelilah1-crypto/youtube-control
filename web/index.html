@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YouTube Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app" class="shell" hidden>
+    <nav class="side" aria-label="Main">
+      <div class="brand">
+        <svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="1" y="5" width="26" height="18" rx="5" stroke="#5FD3C6" stroke-width="2"/><path d="M12 10l6 4-6 4z" fill="#5FD3C6"/></svg>
+        <span>YouTube Control</span>
+      </div>
+      <div class="side-field">
+        <label for="channel-switch">Working on</label>
+        <select id="channel-switch"></select>
+      </div>
+      <div class="side-links">
+        <a href="#/home" data-route="home">Home</a>
+        <a href="#/research" data-route="research">Research</a>
+        <a href="#/ideas" data-route="ideas">Ideas</a>
+        <a href="#/studio" data-route="studio">Studio</a>
+        <a href="#/channels" data-route="channels">Channels</a>
+        <a href="#/settings" data-route="settings">Settings</a>
+      </div>
+      <button id="sign-out" class="side-signout" type="button">Sign out</button>
+    </nav>
+    <main id="view" class="main" tabindex="-1"></main>
+  </div>
+
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand dark">
+        <svg aria-hidden="true" width="28" height="28" viewBox="0 0 28 28" fill="none"><rect x="1" y="5" width="26" height="18" rx="5" stroke="#0F6B63" stroke-width="2"/><path d="M12 10l6 4-6 4z" fill="#0F6B63"/></svg>
+        <span>YouTube Control</span>
+      </div>
+      <h1 id="login-title">Sign in</h1>
+      <p id="login-intro" class="muted">Only allow-listed accounts can see data.</p>
+      <label for="login-email">Email</label>
+      <input id="login-email" type="email" autocomplete="email" required>
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" minlength="8" required>
+      <div id="confirm-wrap" hidden style="display:flex;flex-direction:column;gap:12px">
+        <label for="login-password2">Repeat password</label>
+        <input id="login-password2" type="password" autocomplete="new-password" minlength="8">
+      </div>
+      <button id="login-submit" type="submit" class="btn primary">Sign in</button>
+      <button id="login-toggle" type="button" class="btn">First time? Create your password</button>
+      <p id="login-msg" class="muted" role="status"></p>
+    </form>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,4 +1,8 @@
-YouTube Control: schema, collectors, workflows, dashboard, edge functions
+Keyword engine v2, Studio with MoneyPrinterTurbo renders, simpler dashboard
+
+- keyword-lookup: page-1 volume, difficulty, score, related keywords
+- render edge function + GitHub Actions render workflow
+- dashboard: 6-item nav, search-first Research, keyword page, Studio editor
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 Claude-Session: https://claude.ai/code/session_01Px3SSXXkHqMF8FA8vr6eM5
