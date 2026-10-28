@@ -62,22 +62,33 @@ GitHub → Actions → **Research** → *Run workflow*, then **Channel stats**, 
 Quota: each niche has a daily YouTube API budget (Settings). One search costs about 102 units;
 the project cap is 9,500 of Google's 10,000 daily units.
 
-## Studio (video rendering)
+## Studio (video editor)
 
-Studio renders videos with [MoneyPrinterTurbo](https://github.com/harry0703/MoneyPrinterTurbo) inside the
-`render.yml` GitHub Actions workflow (free on public repos; ~2,000 min/month on private ones).
-Flow: dashboard → `render` edge function → GitHub workflow → MP4 uploaded to the private `renders` bucket.
+Flow: **Studio → script page** (one line = one scene, optional `[footage words]` at the end of a line) →
+**Create scenes** → **Editor** (live preview, clip per scene, captions, hook, music, sound effects) → **Render final video**.
 
-Extra setup:
+| Part | Where |
+|---|---|
+| Scenes + stock clip search | `studio` edge function (Pixabay) |
+| Voice + word timings | `prepare.yml` → `collectors/prepare_job.py` (Edge TTS) |
+| Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
+| Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the private `renders` bucket |
+
+After changing `web/`, `editor-src/` or `video/`, run `./sync-root.sh` (GitHub Pages serves the repo root).
+
+Secrets:
 
 | Where | Secret | Value |
 |---|---|---|
-| GitHub repo secrets | `PEXELS_API_KEY` | Free key from pexels.com/api (stock footage) |
-| GitHub repo secrets | `PIXABAY_API_KEY` | Optional, pixabay.com/api/docs |
-| Supabase Edge Function secrets | `GITHUB_TOKEN` | Fine-grained token: this repo only, permission **Actions: Read and write** |
-| Supabase Edge Function secrets | `GITHUB_REPO` | `owner/repo`, e.g. `arifabdelilah1-crypto/youtube-control` |
+| Supabase Edge Function secrets | `GITHUB_TOKEN` | Fine-grained token: this repo only, **Actions: Read and write** |
+| Supabase Edge Function secrets | `GITHUB_REPO` | `arifabdelilah1-crypto/youtube-control` |
+| Supabase Edge Function secrets | `PIXABAY_API_KEY` | Free key from pixabay.com/api/docs (clip search in the editor) |
+| GitHub repo secrets | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Used by the voice and render workflows |
 
-Voices are Microsoft Edge TTS (free). Videos over 48 MB are re-encoded to fit the free Storage limit.
+Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
+Sound effects in `web/sfx/` are synthesized (no license needed). Fonts in `web/fonts/` are SIL Open Font License.
+
+The older one-click renderer (MoneyPrinterTurbo, `render.yml`) still works for past jobs.
 
 ## Not built yet
 - Blotato sync adapter (`collectors/blotato_sync.py`): port the request/field mapping from the Réseau DE sync.
