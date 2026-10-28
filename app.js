@@ -1,12 +1,11 @@
-import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 
-// PKCE keeps the sign-in callback in ?code= so it doesn't collide with the #/route hash.
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "pkce", detectSessionInUrl: true, persistSession: true } });
 
-// ------------------------------------------------------------------
-// Small DOM + format helpers (all external text goes through textContent)
-// ------------------------------------------------------------------
+// ==================================================================
+// Helpers (all external text goes through textContent)
+// ==================================================================
 function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -14,14 +13,11 @@ function h(tag, attrs = {}, ...kids) {
     if (k === "class") el.className = v;
     else if (k === "text") el.textContent = v;
     else if (k === "style") el.style.cssText = v;
+    else if (k === "value") el.value = v;
     else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
     else if (v === true) el.setAttribute(k, "");
     else el.setAttribute(k, v);
   }
-  append(el, kids);
-  return el;
-}
-function append(el, kids) {
   for (const k of kids.flat(Infinity)) {
     if (k === null || k === undefined || k === false) continue;
     el.append(k instanceof Node ? k : document.createTextNode(String(k)));
@@ -35,34 +31,34 @@ function svg(tag, attrs = {}, ...kids) {
   for (const k of kids.flat()) if (k) el.append(k);
   return el;
 }
-
 const nf = new Intl.NumberFormat("en-US");
 const cf = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const fmt = (n) => (n === null || n === undefined ? "—" : nf.format(Math.round(Number(n))));
 const fmtc = (n) => (n === null || n === undefined ? "—" : cf.format(Number(n)));
 const pctOf = (a, b) => (b ? Math.max(0, Math.min(100, (Number(a) / Number(b)) * 100)) : 0);
+const today = () => new Date().toISOString().slice(0, 10);
 function ago(iso) {
   if (!iso) return "—";
   const s = (Date.now() - new Date(iso).getTime()) / 1000;
   if (s < 3600) return `${Math.max(1, Math.round(s / 60))} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} days ago`;
+  if (s < 86400 * 60) return `${Math.round(s / 86400)} days ago`;
+  if (s < 86400 * 730) return `${Math.round(s / 86400 / 30)} months ago`;
+  return `${Math.round(s / 86400 / 365)} years ago`;
 }
-function when(iso) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-GB", { weekday: "short", hour: "2-digit", minute: "2-digit" });
-}
+const when = (iso) => (iso ? new Date(iso).toLocaleString("en-GB", { weekday: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 function delta(cur, prev) {
   if (!prev) return h("span", { class: "flat", text: "no previous data" });
   const p = ((cur - prev) / prev) * 100;
-  const cls = p > 0.5 ? "up" : p < -0.5 ? "down" : "flat";
-  return h("span", { class: cls, text: `${p > 0 ? "+" : ""}${p.toFixed(0)}% vs prev.` });
+  return h("span", { class: p > 0.5 ? "up" : p < -0.5 ? "down" : "flat", text: `${p > 0 ? "+" : ""}${p.toFixed(0)}% vs previous` });
 }
-function scorePill(s) {
+function scorePill(s, big) {
   if (s === null || s === undefined) return h("span", { class: "score lo", text: "—" });
-  const cls = s >= 80 ? "hi" : s >= 60 ? "mid" : "lo";
-  return h("span", { class: `score ${cls}`, text: String(Math.round(s)) });
+  return h("span", { class: `score ${s >= 70 ? "hi" : s >= 45 ? "mid" : "lo"}${big ? " big" : ""}`, text: String(Math.round(s)) });
 }
+const volLabel = (v) => (v === null || v === undefined ? "—" : v < 20 ? "Very low" : v < 40 ? "Low" : v < 60 ? "Medium" : v < 80 ? "High" : "Very high");
+const diffLabel = (d) => (d === null || d === undefined ? "—" : d < 25 ? "Easy" : d < 50 ? "Medium" : d < 75 ? "Hard" : "Very hard");
+const diffColor = (d) => (d < 25 ? "#15803D" : d < 50 ? "#0F6B63" : d < 75 ? "#B45309" : "#B42318");
 function bar(pct, color, thick) {
   return h("div", { class: thick ? "bar thick" : "bar" }, h("div", { style: `width:${Math.max(pct, 2)}%;${color ? `background:${color}` : ""}` }));
 }
@@ -75,69 +71,100 @@ function spark(values, w = 84, hgt = 24) {
     svg("polyline", { points: pts, fill: "none", stroke: "#0F6B63", "stroke-width": "1.75" }));
 }
 function lineChart(points, label) {
-  // points: [{x: 'YYYY-MM-DD', y: number}]
-  const w = 640, ht = 220, pl = 40, pr = 10, pt = 16, pb = 30;
-  const ys = points.map((p) => p.y), max = Math.max(...ys, 1);
+  const w = 640, ht = 200, pl = 40, pr = 10, pt = 14, pb = 28;
+  const max = Math.max(...points.map((p) => p.y), 1);
   const X = (i) => pl + (i / Math.max(points.length - 1, 1)) * (w - pl - pr);
   const Y = (v) => pt + (1 - v / max) * (ht - pt - pb);
   const g = svg("svg", { viewBox: `0 0 ${w} ${ht}`, role: "img", "aria-label": label, style: "width:100%;height:auto" });
   [0, 0.5, 1].forEach((f) => {
     g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "#CFCFC8" : "#EFEFEA" }));
-    const t = svg("text", { x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end", "font-size": "11", fill: "#5C5F66" });
-    t.textContent = Math.round(max * f);
-    g.append(t);
+    const t = svg("text", { x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end", "font-size": "11", fill: "#5C5F66" }); t.textContent = Math.round(max * f); g.append(t);
   });
   [0, points.length - 1].forEach((i) => {
-    const t = svg("text", { x: X(i), y: ht - 8, "text-anchor": i ? "end" : "start", "font-size": "11", fill: "#5C5F66" });
-    t.textContent = points[i].x;
-    g.append(t);
+    const t = svg("text", { x: X(i), y: ht - 8, "text-anchor": i ? "end" : "start", "font-size": "11", fill: "#5C5F66" }); t.textContent = points[i].x; g.append(t);
   });
   g.append(svg("polyline", { fill: "none", stroke: "#0F6B63", "stroke-width": "2.5", points: points.map((p, i) => `${X(i)},${Y(p.y)}`).join(" ") }));
   return g;
 }
 function toast(msg) {
   const t = document.getElementById("toast");
-  t.textContent = msg;
-  t.hidden = false;
-  clearTimeout(toast.t);
-  toast.t = setTimeout(() => (t.hidden = true), 3200);
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toast.t); toast.t = setTimeout(() => (t.hidden = true), 4000);
 }
-async function q(p) {
-  const { data, error } = await p;
-  if (error) throw error;
-  return data;
-}
+async function q(p) { const { data, error } = await p; if (error) throw error; return data; }
 function seg(options, current, onPick, label) {
   return h("div", { class: "seg", role: "group", "aria-label": label },
     options.map(([v, text]) => h("button", { type: "button", "aria-pressed": String(v === current), onclick: () => onPick(v), text })));
 }
-function selectEl(id, options, current, onChange, label) {
-  return h("div", { class: "field-wrap" },
-    label ? h("label", { for: id, text: label }) : null,
-    h("select", { id, class: "field", onchange: (e) => onChange(e.target.value) },
-      options.map(([v, text]) => h("option", { value: v, selected: v === current, text }))));
+function selectEl(id, options, current, onChange, label, extra = {}) {
+  return h("div", { class: "field-wrap" }, label ? h("label", { for: id, text: label }) : null,
+    h("select", { id, class: "field", onchange: (e) => onChange(e.target.value), ...extra },
+      options.map(([v, text]) => h("option", { value: v, selected: String(v) === String(current), text }))));
 }
-const empty = (text) => h("div", { class: "empty", text });
+const empty = (text, action) => h("div", { class: "empty" }, h("div", { text }), action || null);
+const store = { get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } } };
 
-// ------------------------------------------------------------------
-// State, routing
-// ------------------------------------------------------------------
-const state = { period: 28, channels: [], niches: [], channel: localStorage.getItem("ytc.channel") || "all" };
+// ==================================================================
+// Constants
+// ==================================================================
+const MARKETS = [["GLOBAL", "Global"], ["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"],
+  ["IN", "India"], ["FR", "France"], ["BE", "Belgium"], ["CH", "Switzerland"], ["DE", "Germany"], ["AT", "Austria"], ["ES", "Spain"],
+  ["IT", "Italy"], ["NL", "Netherlands"], ["PT", "Portugal"], ["BR", "Brazil"], ["MX", "Mexico"], ["MA", "Morocco"], ["DZ", "Algeria"],
+  ["TN", "Tunisia"], ["EG", "Egypt"], ["SA", "Saudi Arabia"], ["AE", "UAE"]];
+const LANGS = [["en", "English"], ["fr", "French"], ["ar", "Arabic"], ["es", "Spanish"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"], ["nl", "Dutch"]];
+const marketName = (m) => (MARKETS.find(([k]) => k === m) || [m, m])[1];
+const VOICES = {
+  en: [["en-US-AndrewNeural-Male", "Andrew (US, male)"], ["en-US-BrianNeural-Male", "Brian (US, male)"], ["en-US-ChristopherNeural-Male", "Christopher (US, male)"],
+       ["en-US-GuyNeural-Male", "Guy (US, male)"], ["en-US-AvaNeural-Female", "Ava (US, female)"], ["en-US-JennyNeural-Female", "Jenny (US, female)"],
+       ["en-GB-RyanNeural-Male", "Ryan (UK, male)"], ["en-GB-SoniaNeural-Female", "Sonia (UK, female)"]],
+  fr: [["fr-FR-HenriNeural-Male", "Henri (male)"], ["fr-FR-RemyMultilingualNeural-Male", "Rémy (male)"], ["fr-FR-DeniseNeural-Female", "Denise (female)"],
+       ["fr-FR-VivienneMultilingualNeural-Female", "Vivienne (female)"]],
+  ar: [["ar-MA-JamalNeural-Male", "Jamal (Morocco, male)"], ["ar-MA-MounaNeural-Female", "Mouna (Morocco, female)"], ["ar-SA-HamedNeural-Male", "Hamed (Saudi, male)"],
+       ["ar-SA-ZariyahNeural-Female", "Zariyah (Saudi, female)"], ["ar-EG-ShakirNeural-Male", "Shakir (Egypt, male)"], ["ar-EG-SalmaNeural-Female", "Salma (Egypt, female)"]],
+  es: [["es-ES-AlvaroNeural-Male", "Álvaro (male)"], ["es-ES-ElviraNeural-Female", "Elvira (female)"]],
+  de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"]],
+};
+const DEFAULT_STYLE = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1, aspect: "9:16", source: "pexels", bgm: "random", bgm_volume: 0.2,
+  clip_duration: 4, captions: { enabled: true, mode: "word_by_word", position: "bottom", color: "#FFFFFF", font_size: 70, stroke_color: "#000000", stroke_width: 2, animation: "pop_spring" } };
+
+// ==================================================================
+// State, routing, scope
+// ==================================================================
+const state = { period: 28, channels: [], niches: [], channel: store.get("ytc.channel", "all"), timer: null };
 const view = () => document.getElementById("view");
 
 function parseRoute() {
-  const raw = location.hash.replace(/^#\/?/, "") || "portfolio";
+  const raw = location.hash.replace(/^#\/?/, "") || "home";
   const [path, qs] = raw.split("?");
   const parts = path.split("/");
-  return { name: parts[0] || "portfolio", id: parts[1], params: new URLSearchParams(qs || "") };
+  return { name: parts[0] || "home", id: parts[1] ? decodeURIComponent(parts[1]) : undefined, params: new URLSearchParams(qs || "") };
 }
-function go(hash) { location.hash = hash; }
+const go = (hash) => { location.hash = hash; };
+function link(name, params = {}) {
+  const p = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== ""));
+  return `#/${name}${p.toString() ? "?" + p : ""}`;
+}
 function setParams(route, changes) {
   const p = new URLSearchParams(route.params);
   for (const [k, v] of Object.entries(changes)) (v === null || v === undefined || v === "" ? p.delete(k) : p.set(k, v));
-  const base = route.id ? `#/${route.name}/${route.id}` : `#/${route.name}`;
-  go(`${base}${p.toString() ? "?" + p : ""}`);
+  go(`#/${route.name}${route.id ? "/" + encodeURIComponent(route.id) : ""}${p.toString() ? "?" + p : ""}`);
 }
+
+const realNiches = () => state.niches.filter((n) => !n.is_explore);
+const exploreNiche = () => state.niches.find((n) => n.is_explore);
+const nicheName = (id) => state.niches.find((n) => n.id === id)?.name || "—";
+const channelById = (id) => state.channels.find((c) => c.id === id);
+
+// Research scope: free global exploration, or the selected channel's niche.
+function scopeOf(route) {
+  const p = route.params.get("scope");
+  if (p === "global") return { global: true, niche: exploreNiche() };
+  if (p) { const n = realNiches().find((x) => x.id === p); if (n) return { global: false, niche: n }; }
+  const ch = channelById(state.channel);
+  const n = ch && realNiches().find((x) => x.id === ch.niche_id);
+  return n ? { global: false, niche: n, channel: ch } : { global: true, niche: exploreNiche() };
+}
+const scopeKey = (scope) => (scope.global ? "global" : scope.niche.id);
 
 async function loadShared() {
   [state.channels, state.niches] = await Promise.all([
@@ -145,239 +172,611 @@ async function loadShared() {
     q(sb.from("niches").select("*").order("created_at")),
   ]);
   const sel = document.getElementById("channel-switch");
-  sel.replaceChildren(
-    h("option", { value: "all", text: `All channels (${state.channels.length})` }),
-    ...state.channels.map((c) => h("option", { value: c.id, text: c.title })));
+  sel.replaceChildren(h("option", { value: "all", text: "All channels" }), ...state.channels.map((c) => h("option", { value: c.id, text: c.title })));
   sel.value = state.channels.some((c) => c.id === state.channel) ? state.channel : "all";
 }
 
+const VIEWS = {};
 async function render() {
+  if (state.timer) { clearInterval(state.timer); state.timer = null; }
   const route = parseRoute();
-  const active = route.name === "keywords" && route.params.get("tab") === "trends" ? "trends"
-    : route.name === "outliers" && route.params.get("tab") === "competitors" ? "competitors" : route.name;
+  const section = { keyword: "research", channel: "channels" }[route.name] || route.name;
   document.querySelectorAll(".side-links a").forEach((a) =>
-    a.dataset.route === active ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
-  const views = { portfolio: viewPortfolio, channel: viewChannel, keywords: viewKeywords, outliers: viewOutliers, ideas: viewIdeas, settings: viewSettings };
-  const fn = views[route.name] || viewPortfolio;
+    a.dataset.route === section ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  const fn = VIEWS[route.name] || VIEWS.home;
   view().replaceChildren(h("div", { class: "loading", text: "Loading…" }));
   try {
     const nodes = await fn(route);
-    view().replaceChildren(...[nodes].flat());
+    if (parseRoute().name === route.name) view().replaceChildren(...[nodes].flat().filter(Boolean));
   } catch (e) {
     console.error(e);
     view().replaceChildren(h("div", { class: "card" }, h("h2", { text: "Something went wrong" }), h("p", { class: "muted", text: e.message || String(e) })));
   }
 }
-
-const realNiches = () => state.niches.filter((n) => !n.is_explore);
-const exploreNiche = () => state.niches.find((n) => n.is_explore);
-const MARKETS = [["GLOBAL", "Global (all countries)"], ["US", "United States"], ["GB", "United Kingdom"], ["CA", "Canada"], ["AU", "Australia"],
-  ["IN", "India"], ["FR", "France"], ["BE", "Belgium"], ["CH", "Switzerland"], ["DE", "Germany"], ["AT", "Austria"], ["ES", "Spain"],
-  ["IT", "Italy"], ["NL", "Netherlands"], ["PT", "Portugal"], ["BR", "Brazil"], ["MX", "Mexico"], ["MA", "Morocco"], ["DZ", "Algeria"],
-  ["TN", "Tunisia"], ["EG", "Egypt"], ["SA", "Saudi Arabia"], ["AE", "United Arab Emirates"]];
-const LANGS = [["en", "English"], ["fr", "French"], ["de", "German"], ["es", "Spanish"], ["ar", "Arabic"], ["it", "Italian"], ["pt", "Portuguese"], ["nl", "Dutch"]];
-const marketName = (m) => (MARKETS.find(([k]) => k === m) || [m, m])[1];
-
-// Research scope: free global exploration by default; picking a channel narrows it to that channel's niche.
-function scopeOf(route) {
-  const p = route.params.get("scope");
-  if (p === "global") return { global: true, niche: exploreNiche() };
-  if (p) { const n = realNiches().find((x) => x.id === p); if (n) return { global: false, niche: n }; }
-  const ch = state.channels.find((c) => c.id === state.channel);
-  const n = ch && realNiches().find((x) => x.id === ch.niche_id);
-  return n ? { global: false, niche: n, channel: ch } : { global: true, niche: exploreNiche() };
+function pageHead(title, subtitle, ...right) {
+  return h("header", { class: "head" },
+    h("div", { class: "head-text" }, h("h1", { text: title }), subtitle ? h("p", { class: "muted", style: "margin:0", text: subtitle }) : null),
+    right.length ? h("div", { class: "row" }, right) : null);
 }
-function scopeSelect(id, route, scope) {
-  return selectEl(id, [["global", "Global (free exploration)"], ...realNiches().map((n) => [n.id, `Niche: ${n.name}`])],
-    scope.global ? "global" : scope.niche.id, (v) => setParams(route, { scope: v, kw: null, market: null }), "Scope");
-}
-
-const nicheName = (id) => state.niches.find((n) => n.id === id)?.name || "—";
-const channelTitle = (id) => state.channels.find((c) => c.id === id)?.title || "—";
 
 async function makeIdea({ title, niche_id, score, sources, channel_id }) {
-  await q(sb.from("ideas").insert({ title, niche_id, score, sources, channel_id: channel_id || null }));
-  toast("Saved to the idea pipeline");
+  const row = await q(sb.from("ideas").insert({ title, niche_id: niche_id || null, score, sources, channel_id: channel_id || null }).select().single());
+  toast("Saved to Ideas");
+  return row;
 }
 
-// ------------------------------------------------------------------
-// Portfolio
-// ------------------------------------------------------------------
-async function viewPortfolio() {
+// ==================================================================
+// Home
+// ==================================================================
+VIEWS.home = async () => {
   const days = state.period;
-  const now = new Date(), in7 = new Date(Date.now() + 7 * 864e5);
-  const [rows, daily, alerts, ideas, posts, kws] = await Promise.all([
+  const [rows, daily, alerts, ideas] = await Promise.all([
     q(sb.rpc("channel_overview", { p_days: days })),
     q(sb.rpc("portfolio_daily", { p_days: days })),
-    q(sb.from("alerts").select("*").is("resolved_at", null).order("created_at", { ascending: false }).limit(8)),
+    q(sb.from("alerts").select("*").is("resolved_at", null).order("created_at", { ascending: false }).limit(6)),
     q(sb.from("ideas").select("*").in("stage", ["new", "shortlisted"]).order("score", { ascending: false, nullsFirst: false }).limit(5)),
-    q(sb.from("blotato_posts").select("channel_id,scheduled_at").eq("status", "scheduled").gte("scheduled_at", now.toISOString()).lte("scheduled_at", in7.toISOString())),
-    q(sb.from("v_keyword_scores").select("keyword_id,niche_id,term,market,score,momentum_raw,outlier_count").order("score", { ascending: false }).limit(5)),
   ]);
   const sum = (k) => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
-  const anyConnected = rows.some((r) => r.connected);
-  const nichesCount = new Set(rows.map((r) => r.niche_id).filter(Boolean)).size;
-
-  const kpi = (label, value, d, series) => h("div", { class: "kpi" },
-    h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
+  const connected = rows.some((r) => r.connected);
+  const kpi = (label, value, d, series) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
     h("div", { class: "foot" }, d, series ? spark(series) : null));
-  const analyticsNote = anyConnected ? null : h("span", { class: "flat", text: "connect channels for analytics" });
+  const na = h("span", { class: "flat", text: "connect a channel" });
 
-  const head = h("header", { class: "head" },
-    h("div", { class: "head-text" }, h("h1", { text: "Portfolio" }),
-      h("p", { class: "muted", style: "margin:0", text: `${rows.length} channels · ${nichesCount} niches · last ${days} days` })),
-    h("div", { class: "row" },
-      seg([[7, "7d"], [28, "28d"], [90, "90d"]], days, (v) => { state.period = v; render(); }, "Period"),
-      h("a", { class: "btn primary", href: "#/settings", text: "+ Connect channel" })));
+  return [
+    pageHead("Home", `${rows.length} channels · last ${days} days`,
+      seg([[7, "7d"], [28, "28d"], [90, "90d"]], days, (v) => { state.period = v; render(); }, "Period")),
+    h("section", { class: "kpis" },
+      kpi("Views", fmt(sum("views")), connected ? delta(sum("views"), sum("views_prev")) : na, daily.map((d) => d.views)),
+      kpi("Watch hours", fmt(sum("watch_hours")), connected ? delta(sum("watch_hours"), sum("watch_hours_prev")) : na, daily.map((d) => d.watch_hours)),
+      kpi("Net subscribers", (sum("subs_net") >= 0 ? "+" : "") + fmt(sum("subs_net")), connected ? delta(sum("subs_net"), sum("subs_net_prev")) : na),
+      kpi("Videos published", fmt(sum("uploads")), h("span", { class: "flat", text: `last ${days} days` }))),
+    h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("a", { href: "#/channels", class: "small", text: "Manage channels" })),
+      rows.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:680px" },
+        h("thead", {}, h("tr", {}, ["Channel", "Subscribers", "Views", "Watch hours", "YPP watch hours (12 mo)", ""].map((t, i) => h("th", { class: [1, 2, 3].includes(i) ? "num" : null, text: t })))),
+        h("tbody", {}, rows.map((r) => h("tr", { class: "clickable", tabindex: "0", onclick: () => go(`#/channel/${r.channel_id}`), onkeydown: (e) => e.key === "Enter" && go(`#/channel/${r.channel_id}`) },
+          h("td", {}, h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, r.thumbnail_url ? h("img", { class: "avatar sm", src: r.thumbnail_url, alt: "" }) : h("span", { class: "avatar sm" }),
+            h("div", {}, h("div", { style: "font-weight:500", text: r.title }), h("div", { class: "muted small", text: r.niche_name || "No niche" })))),
+          h("td", { class: "num", text: fmt(r.subscribers) }),
+          h("td", { class: "num", text: r.connected ? fmt(r.views) : "—" }),
+          h("td", { class: "num", text: r.connected ? fmt(r.watch_hours) : "—" }),
+          h("td", { style: "min-width:180px" }, r.connected
+            ? [bar(pctOf(r.watch_hours_12m, 8000), null), h("div", { class: "muted small", style: "margin-top:6px", text: `${fmt(r.watch_hours_12m)} / 8,000 h` })]
+            : h("span", { class: "muted small", text: "Not connected" })),
+          h("td", {}, r.open_critical ? h("span", { class: "pill crit", text: "Needs attention" }) : null))))))
+        : empty("No channels yet.", h("a", { class: "btn primary", href: "#/channels", text: "Connect a channel" }))),
+    h("div", { class: "cols" },
+      h("section", { class: "card grow3" }, h("div", { class: "card-head" }, h("h2", { text: "Next ideas" }), h("a", { href: "#/ideas", class: "small", text: "All ideas" })),
+        ideas.length ? ideas.map((i) => h("a", { class: "listrow link", href: `#/studio/${i.id}` }, scorePill(i.score),
+          h("div", { style: "flex:1 1 220px;min-width:0" }, h("div", { style: "font-weight:500", text: i.title }), h("div", { class: "muted small", text: channelById(i.channel_id)?.title || nicheName(i.niche_id) }))))
+          : empty("Search keywords in Research and save the good ones as ideas.", h("a", { class: "btn", href: "#/research", text: "Open Research" }))),
+      h("section", { class: "card grow2" }, h("h2", { text: "Alerts" }),
+        alerts.length ? alerts.map((a) => h("div", { class: "listrow", style: "flex-wrap:nowrap;align-items:flex-start" },
+          h("span", { class: `pill ${a.severity === "critical" ? "crit" : a.severity === "warning" ? "warn" : "info"}`, text: a.severity }),
+          h("div", { style: "min-width:0" }, h("div", { style: "font-weight:500", text: a.title }), h("div", { class: "muted small", text: `${a.detail || ""} · ${ago(a.created_at)}` }))))
+          : empty("All good, nothing needs attention."))),
+  ];
+};
 
-  const kpis = h("section", { class: "kpis", "aria-label": "Totals" },
-    kpi("Views", fmt(sum("views")), anyConnected ? delta(sum("views"), sum("views_prev")) : analyticsNote, daily.map((d) => d.views)),
-    kpi("Watch hours", fmt(sum("watch_hours")), anyConnected ? delta(sum("watch_hours"), sum("watch_hours_prev")) : analyticsNote, daily.map((d) => d.watch_hours)),
-    kpi("Subscribers gained", (sum("subs_net") >= 0 ? "+" : "") + fmt(sum("subs_net")), anyConnected ? delta(sum("subs_net"), sum("subs_net_prev")) : analyticsNote, daily.map((d) => d.subs_net)),
-    kpi("Videos published", fmt(sum("uploads")), h("span", { class: "flat", text: `last ${days} days` })),
-    kpi("Open alerts", fmt(alerts.length), h("span", { class: alerts.some((a) => a.severity === "critical") ? "down" : "flat",
-      text: `${alerts.filter((a) => a.severity === "critical").length} critical` })));
-
-  const table = h("section", { class: "card", "aria-labelledby": "ch-t" },
-    h("div", { class: "card-head" }, h("h2", { id: "ch-t", text: "Channels" }),
-      h("span", { class: "muted small", text: "YPP target: 1,000 subs + 8,000 watch hours (new applicants from 1 Feb 2027)" })),
-    rows.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:980px" },
-      h("thead", {}, h("tr", {}, ["Channel", "Niche · lang", "Subs", "Views", "Watch h", "Uploads", "YPP watch hours", "Next on Blotato", "Alerts", ""]
-        .map((t, i) => h("th", { class: [2, 3, 4, 5].includes(i) ? "num" : null }, t || h("span", { class: "sr", text: "Open" }))))),
-      h("tbody", {}, rows.map((r) => h("tr", {},
-        h("td", {}, h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" },
-          r.thumbnail_url ? h("img", { class: "avatar sm", src: r.thumbnail_url, alt: "" }) : null,
-          h("span", { style: "font-weight:500", text: r.title }))),
-        h("td", { class: "muted", text: `${r.niche_name || "No niche"} · ${(r.language || "—").toUpperCase()}` }),
-        h("td", { class: "num", text: fmt(r.subscribers) }),
-        h("td", { class: "num", text: r.connected ? fmt(r.views) : "—" }),
-        h("td", { class: "num", text: r.connected ? fmt(r.watch_hours) : "—" }),
-        h("td", { class: "num", text: fmt(r.uploads) }),
-        h("td", { style: "min-width:180px" }, r.connected
-          ? [bar(pctOf(r.watch_hours_12m, 8000), pctOf(r.watch_hours_12m, 8000) >= 75 ? "#15803D" : null),
-             h("div", { class: "muted small", style: "margin-top:6px", text: `${fmt(r.watch_hours_12m)} / 8,000 h · ${Math.round(pctOf(r.watch_hours_12m, 8000))}%` })]
-          : h("span", { class: "muted small", text: "Not connected" })),
-        h("td", { text: r.next_post_at ? when(r.next_post_at) : "Nothing scheduled" }),
-        h("td", {}, r.open_critical ? h("span", { class: "pill crit", text: `${r.open_critical} critical` })
-          : r.open_warning ? h("span", { class: "pill warn", text: `${r.open_warning} warning` }) : h("span", { class: "muted", text: "None" })),
-        h("td", {}, h("a", { href: `#/channel/${r.channel_id}`, style: "font-weight:500", text: "Open" })))))))
-      : empty("No channels yet. Add one in Settings."));
-
-  const opps = h("section", { class: "card grow3", "aria-labelledby": "opp-t" },
-    h("div", { class: "card-head" }, h("h2", { id: "opp-t", text: "Top opportunities" }), h("a", { href: "#/ideas", class: "small", text: "Open idea pipeline" })),
-    ideas.length ? ideas.map((i) => h("div", { class: "listrow" }, scorePill(i.score),
-      h("div", { style: "flex:1 1 240px;min-width:0" }, h("div", { style: "font-weight:500", text: i.title }),
-        h("div", { class: "muted small", text: `${nicheName(i.niche_id)} · ${i.stage}` })),
-      h("a", { class: "btn small", href: "#/ideas", text: "Open" })))
-      : kws.length ? kws.map((k) => h("div", { class: "listrow" }, scorePill(k.score),
-        h("div", { style: "flex:1 1 240px;min-width:0" }, h("div", { style: "font-weight:500", text: k.term }),
-          h("div", { class: "muted small", text: `${nicheName(k.niche_id)} · ${k.market} · ${k.outlier_count || 0} outliers` })),
-        h("button", { class: "btn small", type: "button", text: "Make idea",
-          onclick: () => makeIdea({ title: k.term, niche_id: k.niche_id, score: k.score, sources: [{ type: "keyword", ref: k.term }] }) })))
-      : empty("Ideas appear here after the first research run."));
-
-  const alertBox = h("section", { class: "card grow2", "aria-labelledby": "al-t" }, h("h2", { id: "al-t", text: "Alerts" }),
-    alerts.length ? alerts.map((a) => h("div", { class: "listrow", style: "flex-wrap:nowrap;align-items:flex-start" },
-      h("span", { class: `pill ${a.severity === "critical" ? "crit" : a.severity === "warning" ? "warn" : "info"}`, text: a.severity[0].toUpperCase() + a.severity.slice(1) }),
-      h("div", { style: "min-width:0" }, h("div", { style: "font-weight:500", text: a.title }), h("div", { class: "muted small", text: `${a.detail || ""} · ${ago(a.created_at)}` }))))
-      : empty("No open alerts."));
-
-  // Publishing strip: posts per channel per day, next 7 days
-  const days7 = [...Array(7)].map((_, i) => new Date(Date.now() + i * 864e5));
-  const key = (d) => d.toISOString().slice(0, 10);
-  const counts = {};
-  for (const p of posts) counts[`${p.channel_id}|${p.scheduled_at.slice(0, 10)}`] = (counts[`${p.channel_id}|${p.scheduled_at.slice(0, 10)}`] || 0) + 1;
-  const strip = h("section", { class: "card", "aria-labelledby": "pub-t" },
-    h("div", { class: "card-head" }, h("h2", { id: "pub-t", text: "Publishing, next 7 days" }), h("span", { class: "muted small", text: "Synced from Blotato" })),
-    h("div", { class: "tablebox" }, h("div", { style: "display:flex;flex-direction:column;gap:8px" },
-      h("div", { class: "strip muted small" }, h("span"), days7.map((d) => h("span", { style: "text-align:center", text: d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric" }) }))),
-      rows.map((r) => h("div", { class: "strip" }, h("span", { style: "font-weight:500", text: r.title }),
-        days7.map((d) => { const n = counts[`${r.channel_id}|${key(d)}`] || 0; return h("div", { class: `cell ${n === 1 ? "one" : n > 1 ? "many" : ""}`, text: n ? String(n) : "–" }); }))))));
-
-  return [head, kpis, table, h("div", { class: "cols" }, opps, alertBox), strip];
+// ==================================================================
+// Research: search first, then a dedicated keyword page
+// ==================================================================
+function searchBar(route, scope, initial = {}) {
+  const market = initial.market || route.params.get("market") || (scope.global ? "GLOBAL" : scope.niche.markets?.[0] || "GLOBAL");
+  const lang = initial.lang || route.params.get("lang") || (scope.global ? "en" : scope.niche.languages?.[0] || "en");
+  const input = h("input", { id: "kw-q", class: "field search", type: "search", placeholder: "Search a keyword or topic, e.g. “soueast s06 prix maroc”", value: initial.term || "", autocomplete: "off" });
+  const mSel = h("select", { class: "field", "aria-label": "Market" }, MARKETS.map(([v, t]) => h("option", { value: v, selected: v === market, text: t })));
+  const lSel = h("select", { class: "field", "aria-label": "Language" }, LANGS.map(([v, t]) => h("option", { value: v, selected: v === lang, text: t })));
+  const sSel = h("select", { class: "field", "aria-label": "Scope" },
+    h("option", { value: "global", selected: scope.global, text: "Global (any topic)" }),
+    realNiches().map((n) => h("option", { value: n.id, selected: !scope.global && scope.niche.id === n.id, text: `Niche: ${n.name}` })));
+  return h("form", { class: "searchbar", role: "search", onsubmit: (e) => {
+    e.preventDefault();
+    const term = input.value.trim().toLowerCase();
+    if (term) go(link(`keyword/${encodeURIComponent(term)}`, { market: mSel.value, lang: lSel.value, scope: sSel.value }));
+  } },
+    h("label", { for: "kw-q", class: "sr", text: "Keyword" }), input, mSel, lSel, sSel, h("button", { class: "btn primary", type: "submit", text: "Analyze" }));
 }
 
-// ------------------------------------------------------------------
-// Channel workspace
-// ------------------------------------------------------------------
-async function viewChannel(route) {
-  const id = route.id || (state.channel !== "all" ? state.channel : state.channels[0]?.id);
-  if (!id) return [h("h1", { text: "Channel workspace" }), empty("No channels yet. Add one in Settings.")];
-  if (!route.id) { go(`#/channel/${id}`); return []; }
+VIEWS.research = async (route) => {
+  const scope = scopeOf(route);
+  if (!scope.niche) return [empty("The Global scope is missing.")];
+  const tab = route.params.get("tab") || "keywords";
+  const tabs = h("div", { class: "tabs", role: "tablist" },
+    [["keywords", "My searches"], ["outliers", "Outlier videos"], ["rising", "Rising"], ["competitors", "Competitors"]].map(([v, t]) =>
+      h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v === "keywords" ? null : v }) })));
+  const sub = scope.global ? "Global: explore any topic, any country" : `Scoped to ${scope.niche.name}${scope.channel ? ` (${scope.channel.title})` : ""}`;
+  const out = [pageHead("Research", sub), searchBar(route, scope), tabs];
+
+  if (tab === "keywords") {
+    const sort = route.params.get("sort") || "recent";
+    let kq = sb.from("v_keyword_metrics").select("*").eq("niche_id", scope.niche.id).limit(200);
+    kq = sort === "score" ? kq.order("kw_score", { ascending: false }) : sort === "volume" ? kq.order("volume_index", { ascending: false })
+      : sort === "easy" ? kq.order("difficulty", { ascending: true }) : kq.order("captured_on", { ascending: false });
+    const rows = await q(kq);
+    out.push(h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", { text: "Keywords you analyzed" }),
+        seg([["recent", "Recent"], ["score", "Best score"], ["volume", "Volume"], ["easy", "Easiest"]], sort, (v) => setParams(route, { sort: v }), "Sort")),
+      rows.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:640px" },
+        h("thead", {}, h("tr", {}, ["Keyword", "Market", "Volume", "Difficulty", "Score", "Analyzed"].map((t, i) => h("th", { class: i >= 2 && i <= 4 ? "num" : null, text: t })))),
+        h("tbody", {}, rows.map((r) => {
+          const href = link(`keyword/${encodeURIComponent(r.term)}`, { market: r.market, scope: scopeKey(scope) });
+          return h("tr", { class: "clickable", tabindex: "0", onclick: () => go(href), onkeydown: (e) => e.key === "Enter" && go(href) },
+            h("td", { style: "font-weight:500", text: r.term }), h("td", { class: "muted", text: marketName(r.market) }),
+            h("td", { class: "num", text: volLabel(r.volume_index) }),
+            h("td", { class: "num" }, h("span", { style: `color:${diffColor(r.difficulty)};font-weight:500`, text: diffLabel(r.difficulty) })),
+            h("td", { class: "num" }, scorePill(r.kw_score)), h("td", { class: "muted", text: r.captured_on }));
+        }))))
+        : empty("Type a keyword above and press Analyze. Every search lands here.")));
+    return out;
+  }
+
+  if (tab === "rising") {
+    const rows = (await q(sb.from("v_keyword_scores").select("term,market,trends_interest,momentum_raw,score").eq("niche_id", scope.niche.id).not("trends_interest", "is", null).limit(300)))
+      .sort((a, b) => b.momentum_raw - a.momentum_raw).slice(0, 18);
+    out.push(h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Rising searches" }), h("span", { class: "muted small", text: "Google Trends, YouTube Search · last 7 vs 30 days" })),
+      rows.length ? h("div", { class: "grid-cards" }, rows.map((r) => { const ch = (Number(r.momentum_raw) - 1) * 100;
+        return h("a", { class: "tile", href: link(`keyword/${encodeURIComponent(r.term)}`, { market: r.market, scope: scopeKey(scope) }) },
+          h("div", { style: "flex:1;min-width:0" }, h("div", { style: "font-weight:500", text: r.term }), h("div", { class: "muted small", text: `Interest ${fmt(r.trends_interest)}` })),
+          h("span", { class: ch >= 0 ? "up" : "down", text: `${ch >= 0 ? "+" : ""}${ch.toFixed(0)}%` })); }))
+        : empty(scope.global ? "Rising data comes from the daily Trends job, which runs for your niches. Pick a niche in the scope menu." : "Appears after the daily Trends job runs.")));
+    return out;
+  }
+
+  if (tab === "competitors") {
+    let cq = sb.from("v_competitors").select("*").order("outliers_30d", { ascending: false }).limit(100);
+    if (!scope.global) cq = cq.eq("niche_id", scope.niche.id);
+    const comps = await q(cq);
+    out.push(h("section", { class: "card" }, h("p", { class: "muted small", style: "margin:0", text: "Channels with repeated outlier videos are added automatically by the daily research job." }),
+      comps.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:700px" },
+        h("thead", {}, h("tr", {}, ["Channel", "Subscribers", "Outliers (30 d)", "Best video seen", "Views"].map((t, i) => h("th", { class: [1, 2, 4].includes(i) ? "num" : null, text: t })))),
+        h("tbody", {}, comps.map((c) => h("tr", {},
+          h("td", {}, h("a", { href: `https://www.youtube.com/channel/${c.youtube_channel_id}`, target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: c.title || c.youtube_channel_id })),
+          h("td", { class: "num", text: fmtc(c.subscribers) }), h("td", { class: "num", text: fmt(c.outliers_30d) }),
+          h("td", { text: c.best_title || "—" }), h("td", { class: "num", text: fmtc(c.best_views) }))))))
+        : empty("No competitors tracked yet.")));
+    return out;
+  }
+
+  // outliers
+  const fmtF = route.params.get("format") || "all", win = Number(route.params.get("days") || 30), text = (route.params.get("q") || "").trim();
+  let vq = sb.from("v_video_latest").select("*").gte("outlier_score", 3).gte("published_at", new Date(Date.now() - win * 864e5).toISOString())
+    .lte("subscribers", 100000).order("outlier_score", { ascending: false }).limit(48);
+  if (!scope.global) vq = vq.eq("niche_id", scope.niche.id);
+  if (fmtF !== "all") vq = vq.eq("is_short", fmtF === "short");
+  if (text) vq = vq.ilike("title", `%${text.replace(/[%_,()]/g, " ")}%`);
+  const vids = await q(vq);
+  out.push(h("div", { class: "row" },
+    h("input", { class: "field", placeholder: "Title contains…", value: text, "aria-label": "Title contains", style: "flex:1 1 220px", onchange: (e) => setParams(route, { q: e.target.value.trim() || null }) }),
+    seg([["all", "All"], ["short", "Shorts"], ["long", "Long"]], fmtF, (v) => setParams(route, { format: v }), "Format"),
+    selectEl("o-days", [["7", "Last 7 days"], ["30", "Last 30 days"], ["90", "Last 90 days"]], String(win), (v) => setParams(route, { days: v }))));
+  out.push(vids.length ? h("section", { class: "cards" }, vids.map((v) => videoCard(v, scope)))
+    : empty("Videos from channels under 100K subs that got at least 3× their subscriber count. They come from your searches and the daily research job."));
+  return out;
+};
+
+function videoCard(v, scope) {
+  return h("article", { class: "vcard" },
+    h("a", { class: "thumb", href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener" },
+      v.thumbnail_url ? h("img", { src: v.thumbnail_url, alt: "", loading: "lazy" }) : null,
+      h("span", { class: `pill tl ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
+      v.outlier_score ? h("span", { class: "tr", text: `${Number(v.outlier_score).toFixed(1)}×` }) : null),
+    h("div", { class: "vbody" },
+      h("h3", { text: v.title }),
+      h("div", { class: "muted small", text: `${v.channel_title || "—"} · ${fmtc(v.subscribers)} subs · ${ago(v.published_at)}` }),
+      h("div", { class: "stats3" },
+        h("div", {}, h("span", { text: "Views" }), h("span", { class: "mono", text: fmtc(v.views) })),
+        h("div", {}, h("span", { text: "Views / day" }), h("span", { class: "mono", text: fmtc(v.views_per_hour * 24) })),
+        h("div", {}, h("span", { text: "Engagement" }), h("span", { class: "mono", text: `${v.engagement_pct ?? "—"}%` }))),
+      h("button", { class: "btn small", type: "button", style: "margin-top:auto", text: "Save as idea", onclick: () => makeIdea({ title: v.title, niche_id: scope?.global ? null : v.niche_id,
+        score: Math.min(100, Math.round(40 + Number(v.outlier_score || 0) * 3)), sources: [{ type: "outlier", ref: v.youtube_video_id }] }) })));
+}
+
+VIEWS.keyword = async (route) => {
+  const term = (route.id || "").trim().toLowerCase();
+  if (!term) { go("#/research"); return []; }
+  const scope = scopeOf(route);
+  const market = route.params.get("market") || "GLOBAL";
+  const lang = route.params.get("lang") || (scope.global ? "en" : scope.niche.languages?.[0] || "en");
+
+  const loadMetrics = async () => {
+    const kw = await q(sb.from("keywords").select("id").eq("niche_id", scope.niche.id).eq("market", market).eq("term", term).maybeSingle());
+    const m = kw ? await q(sb.from("v_keyword_metrics").select("*").eq("keyword_id", kw.id).maybeSingle()) : null;
+    return { kw, m };
+  };
+  let { kw, m } = await loadMetrics();
+  const analyze = async (force) => {
+    view().replaceChildren(searchBar(route, scope, { term, market, lang }),
+      h("div", { class: "card analyzing" }, h("div", { class: "spinner", "aria-hidden": "true" }), h("div", {},
+        h("h2", { text: `Analyzing “${term}”` }), h("p", { class: "muted", style: "margin:0", text: `Reading YouTube page 1 in ${marketName(market)} and collecting related searches. About 5–10 seconds.` }))));
+    const { data, error } = await sb.functions.invoke("keyword-lookup", { body: { term, market, language: lang, niche_id: scopeKey(scope), force } });
+    if (error) {
+      let msg = error.message;
+      try { msg = (await error.context.json()).error || msg; } catch { /* keep message */ }
+      throw new Error(msg);
+    }
+    return data;
+  };
+  if (!m || m.captured_on !== today()) {
+    await analyze(false);
+    ({ kw, m } = await loadMetrics());
+  }
+  if (!m) return [searchBar(route, scope, { term, market, lang }), empty("No result for this keyword.")];
+
+  const [related, links, hist] = await Promise.all([
+    q(sb.from("keyword_related").select("term,source,rank").eq("keyword_id", kw.id)),
+    q(sb.from("video_keywords").select("youtube_video_id,rank").eq("keyword_id", kw.id).order("rank").limit(20)),
+    q(sb.from("keyword_snapshots").select("captured_on,trends_avg_7d").eq("keyword_id", kw.id).not("trends_avg_7d", "is", null).order("captured_on")),
+  ]);
+  const relTerms = [...new Set(related.map((r) => r.term))];
+  const known = relTerms.length ? await q(sb.from("v_keyword_metrics").select("term,volume_index,difficulty,kw_score").eq("niche_id", scope.niche.id).eq("market", market).in("term", relTerms.slice(0, 150))) : [];
+  const knownMap = Object.fromEntries(known.map((k) => [k.term, k]));
+  const vids = links.length ? await q(sb.from("v_video_latest").select("*").in("youtube_video_id", links.map((l) => l.youtube_video_id))) : [];
+  const rankOf = Object.fromEntries(links.map((l) => [l.youtube_video_id, l.rank]));
+  vids.sort((a, b) => rankOf[a.youtube_video_id] - rankOf[b.youtube_video_id]);
+
+  const stat = (label, valueNode, sub, meter) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), valueNode, meter || null, h("div", { class: "muted small", text: sub }));
+  const head = h("header", { class: "head" },
+    h("div", { class: "head-text" }, h("a", { href: link("research", { scope: scopeKey(scope) }), class: "small", text: "← Research" }),
+      h("h1", { text: term }), h("p", { class: "muted", style: "margin:0", text: `${marketName(market)} · ${scope.global ? "Global" : scope.niche.name} · analyzed ${m.captured_on}` })),
+    h("div", { class: "row" },
+      h("button", { class: "btn", type: "button", text: "Re-analyze", onclick: async () => { try { await analyze(true); render(); } catch (e) { toast(e.message); render(); } } }),
+      h("button", { class: "btn primary", type: "button", text: "Save as idea", onclick: async () => {
+        const idea = await makeIdea({ title: term, niche_id: scope.global ? null : scope.niche.id, score: m.kw_score, channel_id: scope.channel?.id,
+          sources: [{ type: "keyword", ref: term, market, volume: m.volume_index, difficulty: m.difficulty }] });
+        go(`#/studio/${idea.id}`);
+      } })));
+
+  const stats = h("section", { class: "stats" },
+    stat("Overall score", scorePill(m.kw_score, true), m.kw_score >= 70 ? "Strong opportunity" : m.kw_score >= 45 ? "Worth testing" : "Weak opportunity"),
+    stat("Search volume", h("div", { class: "value", text: volLabel(m.volume_index) }), `Page-1 videos get ~${fmtc(m.views_per_day)} views/day`, bar(m.volume_index, null)),
+    stat("Difficulty", h("div", { class: "value", style: `color:${diffColor(m.difficulty)}`, text: diffLabel(m.difficulty) }),
+      `Typical channel on page 1: ${fmtc(m.median_subs_top)} subs`, bar(m.difficulty, diffColor(m.difficulty))),
+    stat("Competition signals", h("div", { class: "value", text: `${Math.round((m.title_match_share || 0) * 10)}/10` }),
+      `titles target this exact keyword · ${Math.round((m.big_share || 0) * 10)}/10 from 100K+ channels · ${m.outlier_count} outliers`));
+
+  const tips = [];
+  if (m.title_match_share < 0.4) tips.push("Few page-1 titles use this exact phrase: put it at the start of your title.");
+  if (m.fresh_share < 0.3) tips.push("Most page-1 videos are older than 6 months: a fresh video can rank.");
+  if (m.outlier_count >= 2) tips.push(`${m.outlier_count} small channels beat their size here: the topic itself pulls views.`);
+  if (m.difficulty >= 75) tips.push("Page 1 is dominated by big channels: target a longer, more specific version of this keyword.");
+  if (m.volume_index < 20) tips.push("Very little demand: use it as a tag, not as the main topic.");
+
+  const groups = [["all", "All"], ["autocomplete", "Autocomplete"], ["question", "Questions"], ["az", "A–Z"], ["tag", "Tags used by top videos"]];
+  const relTab = route.params.get("rel") || "all";
+  const relRows = related.filter((r) => relTab === "all" || r.source === relTab)
+    .sort((a, b) => (a.source === "tag" ? -a.rank : a.rank) - (b.source === "tag" ? -b.rank : b.rank));
+  const seen = new Set();
+  const relList = relRows.filter((r) => (seen.has(r.term) ? false : seen.add(r.term)));
+  const relSection = h("section", { class: "card grow3" },
+    h("div", { class: "card-head" }, h("h2", { text: `Related keywords (${relTerms.length})` })),
+    h("div", { class: "chips-tabs" }, groups.map(([v, t]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(v === relTab), text: t, onclick: () => setParams(route, { rel: v === "all" ? null : v }) }))),
+    relList.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:520px" },
+      h("thead", {}, h("tr", {}, ["Keyword", "Found in", "Volume", "Difficulty", "Score"].map((t, i) => h("th", { class: i >= 2 ? "num" : null, text: t })))),
+      h("tbody", {}, relList.slice(0, 80).map((r) => {
+        const k = knownMap[r.term];
+        const href = link(`keyword/${encodeURIComponent(r.term)}`, { market, lang, scope: scopeKey(scope) });
+        return h("tr", { class: "clickable", tabindex: "0", onclick: () => go(href), onkeydown: (e) => e.key === "Enter" && go(href) },
+          h("td", { style: "font-weight:500", text: r.term }),
+          h("td", { class: "muted small", text: { autocomplete: "Autocomplete", question: "Question", az: "A–Z", tag: `Tag ×${r.rank}` }[r.source] }),
+          k ? h("td", { class: "num", text: volLabel(k.volume_index) }) : h("td", { class: "num muted small", text: "click to analyze" }),
+          h("td", { class: "num" }, k ? h("span", { style: `color:${diffColor(k.difficulty)}`, text: diffLabel(k.difficulty) }) : ""),
+          h("td", { class: "num" }, k ? scorePill(k.kw_score) : ""));
+      }))))
+      : empty("No related searches found."),
+    h("p", { class: "muted small", style: "margin:0", text: "Opening a related keyword analyzes it (about 100 of your 10,000 daily YouTube API units)." }));
+
+  const side = h("div", { class: "grow2", style: "display:flex;flex-direction:column;gap:22px;min-width:0" },
+    tips.length ? h("section", { class: "card" }, h("h2", { text: "What this means" }), h("ul", { class: "tips" }, tips.map((t) => h("li", { text: t })))) : null,
+    h("section", { class: "card" }, h("h2", { text: "Interest over time" }),
+      hist.length > 1 ? lineChart(hist.map((p) => ({ x: p.captured_on, y: Number(p.trends_avg_7d) })), `Interest over time for ${term}`)
+        : h("p", { class: "muted small", style: "margin:0", text: "Google Trends history appears for keywords in your niches once the daily Trends job has run a few times." })));
+
+  const page1 = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "YouTube page 1" }), h("span", { class: "muted small", text: "What a viewer sees when searching this keyword" })),
+    vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:720px" },
+      h("thead", {}, h("tr", {}, ["#", "Video", "Channel", "Subs", "Views", "Views/day", "Age"].map((t, i) => h("th", { class: [3, 4, 5].includes(i) ? "num" : null, text: t })))),
+      h("tbody", {}, vids.map((v) => {
+        const days = Math.max((Date.now() - new Date(v.published_at)) / 864e5, 1);
+        return h("tr", {},
+          h("td", { class: "muted", text: String(rankOf[v.youtube_video_id]) }),
+          h("td", { style: "max-width:360px" }, h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" },
+            v.thumbnail_url ? h("img", { class: "mini-thumb", src: v.thumbnail_url, alt: "", loading: "lazy" }) : null,
+            h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "color:inherit;font-weight:500", text: v.title }))),
+          h("td", { class: "muted", text: v.channel_title || "—" }), h("td", { class: "num", text: fmtc(v.subscribers) }),
+          h("td", { class: "num", text: fmtc(v.views) }), h("td", { class: "num", text: fmtc(v.views / days) }), h("td", { class: "muted", text: ago(v.published_at) }));
+      }))))
+      : empty("No videos found on page 1."));
+
+  return [searchBar(route, scope, { term, market, lang }), head, stats, h("div", { class: "cols" }, relSection, side), page1];
+};
+
+// ==================================================================
+// Ideas
+// ==================================================================
+const BOARD = [
+  ["Ideas", ["new"], "Saved from research"],
+  ["Shortlisted", ["shortlisted"], "Worth making"],
+  ["In Studio", ["assigned", "scripted"], "Script being written"],
+  ["Rendered", ["produced", "scheduled"], "Video ready"],
+  ["Published", ["published"], "Live"],
+];
+VIEWS.ideas = async () => {
+  let iq = sb.from("ideas").select("*").neq("stage", "archived").order("score", { ascending: false, nullsFirst: false });
+  if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
+  const ideas = await q(iq);
+  const update = async (id, values) => { await q(sb.from("ideas").update(values).eq("id", id)); render(); };
+  const titleIn = h("input", { id: "idea-title", class: "field", placeholder: "Add an idea…", style: "flex:1 1 260px" });
+  const add = h("form", { class: "row", onsubmit: async (e) => { e.preventDefault(); if (!titleIn.value.trim()) return;
+    await makeIdea({ title: titleIn.value.trim(), channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] }); render(); } },
+    h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn, h("button", { class: "btn", type: "submit", text: "Add" }));
+
+  const board = h("div", { class: "board" }, h("div", { class: "board-inner" }, BOARD.map(([name, stages, hint], ci) => {
+    const cards = ideas.filter((i) => stages.includes(i.stage));
+    return h("section", { class: "col", "aria-label": name },
+      h("div", { class: "col-head" }, h("h3", { style: "font-size:14px", text: name }), h("span", { class: "mono small muted", text: String(cards.length) })),
+      h("div", { class: "muted small", style: "padding:0 4px", text: hint }),
+      cards.map((i) => h("article", { class: "icard" },
+        h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:8px" }, scorePill(i.score),
+          h("span", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" })),
+        h("a", { class: "title", href: `#/studio/${i.id}`, text: i.title }),
+        h("div", { class: "acts" },
+          ci === 0 ? h("button", { class: "btn small", type: "button", text: "Shortlist", onclick: () => update(i.id, { stage: "shortlisted" }) }) : null,
+          ci >= 1 && ci <= 3 ? h("a", { class: "btn small primary", href: `#/studio/${i.id}`, text: "Open in Studio" }) : null,
+          ci === 3 ? h("button", { class: "btn small", type: "button", text: "Mark published", onclick: () => update(i.id, { stage: "published" }) }) : null,
+          h("button", { class: "btn small ghost", type: "button", text: "Archive", onclick: () => update(i.id, { stage: "archived" }) })))));
+  })));
+  return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All channels", add), board];
+};
+
+// ==================================================================
+// Studio: script -> render -> download (MoneyPrinterTurbo on GitHub Actions)
+// ==================================================================
+VIEWS.studio = async (route) => {
+  if (route.id) return studioEditor(route.id);
+  let iq = sb.from("ideas").select("*").in("stage", ["shortlisted", "assigned", "scripted", "produced", "scheduled"]).order("updated_at", { ascending: false });
+  if (state.channel !== "all") iq = iq.eq("channel_id", state.channel);
+  const [ideas, jobs] = await Promise.all([q(iq), q(sb.from("render_jobs").select("*").order("created_at", { ascending: false }).limit(15))]);
+  const newBtn = h("button", { class: "btn primary", type: "button", text: "+ New video", onclick: async () => {
+    const idea = await q(sb.from("ideas").insert({ title: "Untitled video", stage: "assigned", channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] }).select().single());
+    go(`#/studio/${idea.id}`);
+  } });
+  return [
+    pageHead("Studio", "Write the script, pick the style, render the video.", newBtn),
+    h("section", { class: "card" }, h("h2", { text: "Projects" }),
+      ideas.length ? ideas.map((i) => h("a", { class: "listrow link", href: `#/studio/${i.id}` },
+        h("span", { class: `pill ${i.stage === "produced" || i.stage === "scheduled" ? "ok" : i.script ? "info" : "warn"}`, text: i.stage === "produced" || i.stage === "scheduled" ? "Rendered" : i.script ? "Scripted" : "No script" }),
+        h("div", { style: "flex:1 1 240px;min-width:0" }, h("div", { style: "font-weight:500", text: i.video_title || i.title }), h("div", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" })),
+        h("span", { class: "muted small", text: ago(i.updated_at) })))
+        : empty("No projects yet. Shortlist an idea or start a new video.")),
+    h("section", { class: "card" }, h("h2", { text: "Recent renders" }), jobs.length ? jobs.map((j) => renderRow(j)) : empty("Nothing rendered yet.")),
+  ];
+};
+
+function renderRow(j) {
+  const cls = { done: "ok", failed: "crit", running: "info", dispatched: "info", queued: "warn" }[j.status];
+  const label = { done: "Ready", failed: "Failed", running: "Rendering…", dispatched: "Starting…", queued: "Queued" }[j.status];
+  const preview = h("div", {});
+  const row = h("div", { class: "listrow", style: "align-items:flex-start" },
+    h("span", { class: `pill ${cls}`, text: label }),
+    h("div", { style: "flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:6px" },
+      h("div", { style: "font-weight:500", text: (j.params?.title || "Video") + ` · ${j.params?.aspect || "9:16"}` }),
+      h("div", { class: "muted small", text: `${when(j.created_at)}${j.duration_s ? ` · ${Math.round(j.duration_s)} s` : ""}` }),
+      j.error ? h("pre", { class: "err", text: j.error }) : null, preview),
+    h("div", { class: "row" },
+      j.status === "done" ? h("button", { class: "btn small", type: "button", text: "Preview", onclick: async (e) => {
+        const { data } = await sb.storage.from("renders").createSignedUrl(j.output_path, 3600);
+        if (data?.signedUrl) preview.replaceChildren(h("video", { class: "player", src: data.signedUrl, controls: true, playsinline: true }));
+        e.currentTarget.remove();
+      } }) : null,
+      j.status === "done" ? h("button", { class: "btn small primary", type: "button", text: "Download", onclick: async () => {
+        const { data } = await sb.storage.from("renders").createSignedUrl(j.output_path, 3600, { download: `${(j.params?.title || "video").replace(/[^\w-]+/g, "_").slice(0, 60)}.mp4` });
+        if (data?.signedUrl) location.href = data.signedUrl;
+      } }) : null,
+      j.status === "failed" ? h("button", { class: "btn small", type: "button", text: "Retry", onclick: async () => {
+        const { error } = await sb.functions.invoke("render", { body: { retry: j.id } }); toast(error ? "Retry failed" : "Render restarted"); render();
+      } }) : null,
+      j.run_url ? h("a", { class: "btn small ghost", href: j.run_url, target: "_blank", rel: "noopener", text: "Log" }) : null));
+  return row;
+}
+
+async function studioEditor(ideaId) {
+  const idea = await q(sb.from("ideas").select("*").eq("id", ideaId).maybeSingle());
+  if (!idea) return [empty("Project not found.", h("a", { class: "btn", href: "#/studio", text: "Back to Studio" }))];
+  const jobs = await q(sb.from("render_jobs").select("*").eq("idea_id", ideaId).order("created_at", { ascending: false }).limit(10));
+  const ch = channelById(idea.channel_id);
+  const style = { ...DEFAULT_STYLE, ...(ch?.video_style || {}), captions: { ...DEFAULT_STYLE.captions, ...(ch?.video_style?.captions || {}) } };
+  const last = jobs[0]?.params;
+  if (last) Object.assign(style, { ...last, captions: { ...style.captions, ...(last.captions || {}) } });
+  let materials = [...(last?.materials || [])];
+
+  // --- fields
+  const f = {};
+  const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
+  f.title = h("input", { id: "s-title", class: "field", value: idea.video_title || idea.title });
+  f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No channel" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === idea.channel_id, text: c.title })));
+  f.script = h("textarea", { id: "s-script", class: "field script", rows: "12", placeholder: "Write the voice-over here. First line = the hook.\n\nTip: one idea per sentence, short sentences read better as captions.", value: idea.script || "" });
+  const counter = h("div", { class: "muted small" });
+  const updateCount = () => { const w = f.script.value.trim().split(/\s+/).filter(Boolean).length; counter.textContent = `${w} words · about ${Math.round((w / 150) * 60)} s of voice`; };
+  f.script.addEventListener("input", updateCount); updateCount();
+  f.terms = h("input", { id: "s-terms", class: "field", value: (idea.search_terms || last?.terms || []).join(", "), placeholder: "e.g. football stadium, night city, car showroom" });
+  f.language = h("select", { id: "s-lang", class: "field" }, LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, selected: v === style.language, text: t })));
+  f.voice = h("select", { id: "s-voice", class: "field" });
+  const fillVoices = () => { const list = VOICES[f.language.value] || VOICES.en; f.voice.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === style.voice, text: t })), h("option", { value: "no-voice", selected: style.voice === "no-voice", text: "No voice" })); };
+  f.language.addEventListener("change", fillVoices); fillVoices();
+  f.rate = h("select", { id: "s-rate", class: "field" }, [[0.9, "Slower"], [1, "Normal"], [1.1, "Faster"], [1.2, "Fast"]].map(([v, t]) => h("option", { value: v, selected: Number(style.voice_rate) === v, text: t })));
+  f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9)"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
+  f.source = h("select", { id: "s-source", class: "field" }, [["pexels", "Stock footage: Pexels"], ["pixabay", "Stock footage: Pixabay"], ["local", "My own images / clips"]].map(([v, t]) => h("option", { value: v, selected: v === style.source, text: t })));
+  f.clip = h("select", { id: "s-clip", class: "field" }, [2, 3, 4, 5, 6].map((v) => h("option", { value: v, selected: Number(style.clip_duration) === v, text: `${v} s per clip` })));
+  f.capOn = h("input", { id: "s-cap", type: "checkbox", checked: style.captions.enabled !== false });
+  f.capMode = h("select", { id: "s-capmode", class: "field" }, [["word_by_word", "Word by word"], ["sentence", "Sentence"]].map(([v, t]) => h("option", { value: v, selected: v === style.captions.mode, text: t })));
+  f.capPos = h("select", { id: "s-cappos", class: "field" }, [["bottom", "Bottom"], ["center", "Center"], ["top", "Top"]].map(([v, t]) => h("option", { value: v, selected: v === style.captions.position, text: t })));
+  f.capColor = h("input", { id: "s-capcolor", type: "color", class: "color", value: style.captions.color });
+  f.capSize = h("select", { id: "s-capsize", class: "field" }, [[50, "Small"], [70, "Medium"], [90, "Large"], [110, "Huge"]].map(([v, t]) => h("option", { value: v, selected: Number(style.captions.font_size) === v, text: t })));
+  f.bgm = h("select", { id: "s-bgm", class: "field" }, [["random", "Background music on"], ["none", "No music"]].map(([v, t]) => h("option", { value: v, selected: v === style.bgm, text: t })));
+  f.desc = h("textarea", { id: "s-desc", class: "field", rows: "3", value: idea.video_description || "" });
+  f.tags = h("input", { id: "s-tags", class: "field", value: (idea.video_tags || []).join(", ") });
+
+  // --- materials (own images/clips)
+  const matList = h("div", { class: "row", style: "gap:6px" });
+  const drawMaterials = () => matList.replaceChildren(...materials.map((p, i) => h("span", { class: "chip" }, p.split("/").pop().replace(/^\d+-/, ""),
+    h("button", { type: "button", "aria-label": "Remove", text: "×", onclick: () => { materials.splice(i, 1); drawMaterials(); } }))));
+  drawMaterials();
+  const upload = h("input", { id: "s-upload", type: "file", accept: "image/*,video/mp4,video/quicktime", multiple: true, class: "field", onchange: async (e) => {
+    for (const file of e.target.files) {
+      if (file.size > 50 * 1024 * 1024) { toast(`${file.name} is over 50 MB`); continue; }
+      const path = `materials/${ideaId}/${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+      const { error } = await sb.storage.from("renders").upload(path, file, { contentType: file.type });
+      if (error) toast(`Upload failed: ${error.message}`); else materials.push(path);
+    }
+    e.target.value = ""; drawMaterials(); toast("Uploaded");
+  } });
+  const matBox = h("div", { class: "field-wrap" }, h("label", { for: "s-upload", text: "Your images / clips (used in order)" }), upload, matList);
+  const toggleSource = () => { matBox.hidden = f.source.value !== "local"; };
+  f.source.addEventListener("change", toggleSource); toggleSource();
+
+  const collect = () => ({
+    title: f.title.value.trim(), script: f.script.value.trim(),
+    terms: f.terms.value.split(",").map((t) => t.trim()).filter(Boolean),
+    language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value, source: f.source.value,
+    clip_duration: Number(f.clip.value), bgm: f.bgm.value, bgm_volume: 0.2, materials,
+    captions: { enabled: f.capOn.checked, mode: f.capMode.value, position: f.capPos.value, color: f.capColor.value, font_size: Number(f.capSize.value), stroke_color: "#000000", stroke_width: 2, animation: "pop_spring" },
+  });
+  const save = async (quiet) => {
+    const p = collect();
+    const early = ["new", "shortlisted", "assigned"].includes(idea.stage);
+    const stage = early ? (p.script ? "scripted" : "assigned") : idea.stage;
+    await q(sb.from("ideas").update({ video_title: p.title, title: idea.title === "Untitled video" ? p.title : idea.title, channel_id: f.channel.value || null,
+      script: p.script, search_terms: p.terms, video_description: f.desc.value, video_tags: f.tags.value.split(",").map((t) => t.trim()).filter(Boolean),
+      stage }).eq("id", ideaId));
+    idea.stage = stage;
+    if (!quiet) toast("Saved");
+    return p;
+  };
+  const renderBtn = h("button", { class: "btn primary", type: "button", text: "Render video", onclick: async () => {
+    renderBtn.disabled = true; renderBtn.textContent = "Starting…";
+    try {
+      const p = await save(true);
+      const { data, error } = await sb.functions.invoke("render", { body: { idea_id: ideaId, channel_id: f.channel.value || null, params: p } });
+      if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+      toast(data.status === "dispatched" ? "Render started: usually 3–8 minutes" : data.error);
+    } catch (e) { toast(e.message); }
+    render();
+  } });
+  const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this channel’s default style", onclick: async () => {
+    if (!f.channel.value) return toast("Pick a channel first");
+    const { title, script, terms, materials: _m, ...styleOnly } = collect();
+    await q(sb.from("channels").update({ video_style: styleOnly }).eq("id", f.channel.value)); await loadShared(); toast("Saved as channel default");
+  } });
+
+  if (jobs.some((j) => ["queued", "dispatched", "running"].includes(j.status))) {
+    state.timer = setInterval(async () => {
+      const fresh = await q(sb.from("render_jobs").select("id,status").eq("idea_id", ideaId).in("status", ["queued", "dispatched", "running"]));
+      if (!fresh.length) render();
+    }, 10000);
+  }
+
+  return [
+    h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: idea.video_title || idea.title })),
+      h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }), renderBtn)),
+    h("div", { class: "cols" },
+      h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
+        field("s-title", "Video title", f.title), field("s-script", "Voice-over", f.script), counter,
+        field("s-terms", "Footage search terms (comma-separated, English works best)", f.terms, "Each term finds matching stock clips. Use visual words: “crowd cheering”, “red sports car”."),
+        matBox),
+      h("section", { class: "card grow2" }, h("h2", { text: "Style" }),
+        field("s-channel", "Channel", f.channel),
+        h("div", { class: "form-grid" }, field("s-aspect", "Format", f.aspect), field("s-source", "Footage", f.source), field("s-lang", "Language", f.language),
+          field("s-voice", "Voice", f.voice), field("s-rate", "Voice speed", f.rate), field("s-clip", "Clip length", f.clip)),
+        h("h3", { text: "Captions" }),
+        h("label", { class: "row", style: "gap:8px" }, f.capOn, "Show captions"),
+        h("div", { class: "form-grid" }, field("s-capmode", "Style", f.capMode), field("s-cappos", "Position", f.capPos), field("s-capsize", "Size", f.capSize),
+          field("s-capcolor", "Color", f.capColor)),
+        field("s-bgm", "Music", f.bgm), saveStyle)),
+    h("section", { class: "card" }, h("h2", { text: "Renders" }), jobs.length ? jobs.map((j) => renderRow(j)) : empty("No render yet. Write the script and press Render video.")),
+    h("details", { class: "card" }, h("summary", { text: "Publishing details (description, tags)" }),
+      field("s-desc", "Description", f.desc), field("s-tags", "Tags (comma-separated)", f.tags),
+      h("p", { class: "muted small", style: "margin:0", text: "Turn on “Altered or synthetic content” when uploading videos with realistic AI visuals of real people." })),
+  ];
+}
+
+// ==================================================================
+// Channels
+// ==================================================================
+VIEWS.channels = async () => {
+  const rows = await q(sb.rpc("channel_overview", { p_days: 28 }));
+  return [
+    pageHead("Channels", "Connect each channel once with Google. Brand-account channels are connected one at a time.",
+      h("button", { class: "btn", type: "button", text: "Refresh stats", onclick: (e) => refreshChannel(null, e.currentTarget) }),
+      h("button", { class: "btn primary", type: "button", text: "+ Connect channel", onclick: startOAuth })),
+    rows.length ? h("section", { class: "grid-cards wide" }, rows.map((r) => h("a", { class: "ch-card", href: `#/channel/${r.channel_id}` },
+      h("div", { class: "row", style: "gap:12px;flex-wrap:nowrap" }, r.thumbnail_url ? h("img", { class: "avatar", src: r.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
+        h("div", { style: "min-width:0" }, h("div", { style: "font-weight:600", text: r.title }), h("div", { class: "muted small", text: `${r.niche_name || "No niche"} · ${(r.language || "—").toUpperCase()}` }))),
+      h("div", { class: "stats3" },
+        h("div", {}, h("span", { text: "Subscribers" }), h("span", { class: "mono", text: fmt(r.subscribers) })),
+        h("div", {}, h("span", { text: "Views 28 d" }), h("span", { class: "mono", text: r.connected ? fmtc(r.views) : "—" })),
+        h("div", {}, h("span", { text: "Uploads 28 d" }), h("span", { class: "mono", text: fmt(r.uploads) }))),
+      h("span", { class: `pill ${r.connected ? "ok" : "warn"}`, text: r.connected ? "Connected" : "Public stats only" }))))
+      : empty("No channels yet.", h("button", { class: "btn primary", type: "button", text: "Connect a channel", onclick: startOAuth })),
+  ];
+};
+
+VIEWS.channel = async (route) => {
+  const id = route.id;
   const tab = route.params.get("tab") || "overview";
   const [overview, daily] = await Promise.all([q(sb.rpc("channel_overview", { p_days: 28 })), q(sb.rpc("portfolio_daily", { p_days: 28, p_channel: id }))]);
   const ch = overview.find((r) => r.channel_id === id);
   if (!ch) return [empty("Channel not found.")];
-  const chRow = state.channels.find((c) => c.id === id);
-
+  const chRow = channelById(id);
   const header = h("header", { class: "head" },
-    h("div", { class: "row", style: "gap:16px" },
-      ch.thumbnail_url ? h("img", { class: "avatar", src: ch.thumbnail_url, alt: "" }) : h("div", { class: "avatar" }),
-      h("div", { class: "head-text" }, h("h1", { style: "font-size:26px", text: ch.title }),
-        h("div", { class: "muted small" }, `${ch.handle || ""} · ${ch.niche_name || "No niche"} · ${(ch.language || "—").toUpperCase()} · `,
-          ch.connected ? h("span", { class: "up", text: "Google connected" }) : h("span", { class: "flat", text: "Not connected" })))),
+    h("div", { class: "row", style: "gap:16px;flex-wrap:nowrap" }, ch.thumbnail_url ? h("img", { class: "avatar", src: ch.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
+      h("div", { class: "head-text" }, h("a", { href: "#/channels", class: "small", text: "← Channels" }), h("h1", { style: "font-size:26px", text: ch.title }),
+        h("div", { class: "muted small" }, `${ch.niche_name || "No niche"} · `, ch.connected ? h("span", { class: "up", text: "Connected" }) : h("span", { class: "flat", text: "Public stats only" })))),
     h("div", { class: "row" },
-      chRow?.youtube_channel_id ? h("a", { class: "btn", href: `https://studio.youtube.com/channel/${chRow.youtube_channel_id}`, target: "_blank", rel: "noopener", text: "Open YouTube Studio" }) : null,
-      h("button", { class: "btn", type: "button", text: "Refresh stats", onclick: (e) => refreshChannel(id, e.currentTarget) }),
+      h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this channel" }),
+      h("button", { class: "btn", type: "button", text: "Refresh", onclick: (e) => refreshChannel(id, e.currentTarget) }),
       ch.connected ? null : h("button", { class: "btn primary", type: "button", text: "Connect with Google", onclick: startOAuth })));
-
-  const tabs = [["overview", "Overview"], ["videos", "Videos"], ["search", "Search terms"], ["traffic", "Traffic and audience"], ["ideas", "Ideas"]];
-  const tabBar = h("div", { class: "tabs", role: "tablist", "aria-label": "Channel sections" },
-    tabs.map(([v, t]) => h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v }) })));
-
+  const tabs = h("div", { class: "tabs", role: "tablist" },
+    [["overview", "Overview"], ["videos", "Videos"], ["search", "Search terms"], ["audience", "Audience"]].map(([v, t]) =>
+      h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v }) })));
   let body;
   if (tab === "overview") {
     const vids = await q(sb.from("v_own_video_latest").select("*").eq("channel_id", id).order("published_at", { ascending: false }).limit(6));
     const k = (label, value, d) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", style: "font-size:24px", text: value }), d);
     body = [
-      h("section", { class: "kpis" },
-        k("Subscribers", fmt(ch.subscribers), null),
+      h("section", { class: "kpis" }, k("Subscribers", fmt(ch.subscribers)),
         k("Views (28 d)", ch.connected ? fmt(ch.views) : "—", ch.connected ? delta(ch.views, ch.views_prev) : null),
         k("Watch hours (28 d)", ch.connected ? fmt(ch.watch_hours) : "—", ch.connected ? delta(ch.watch_hours, ch.watch_hours_prev) : null),
-        k("Net subscribers (28 d)", ch.connected ? fmt(ch.subs_net) : "—", ch.connected ? delta(ch.subs_net, ch.subs_net_prev) : null),
-        k("Uploads (28 d)", fmt(ch.uploads), null)),
+        k("Uploads (28 d)", fmt(ch.uploads))),
       h("div", { class: "cols" },
-        h("section", { class: "card grow2" }, h("h2", { text: "Monetization progress" }),
-          yppRow("Subscribers", ch.subscribers, 1000, ""),
-          ch.connected ? yppRow("Watch hours, 12 months", ch.watch_hours_12m, 8000, " h") : h("p", { class: "muted small", text: "Connect with Google to track watch hours and Shorts views." }),
-          ch.connected ? yppRow("Shorts views, 90 days", ch.shorts_views_90d, 20000000, "") : null,
+        h("section", { class: "card grow2" }, h("h2", { text: "Monetization" }), yppRow("Subscribers", ch.subscribers, 1000, ""),
+          ch.connected ? yppRow("Watch hours, 12 months", ch.watch_hours_12m, 8000, " h") : h("p", { class: "muted small", text: "Connect with Google to track watch hours." }),
           daily.length > 1 ? h("div", {}, h("div", { class: "muted small", text: "Daily views, 28 days" }), spark(daily.map((d) => d.views), 300, 48)) : null),
-        h("section", { class: "card grow3" }, h("h2", { text: "Recent videos vs channel baseline" }),
-          vids.length ? vids.map((v) => h("div", { class: "listrow" },
-            h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
+        h("section", { class: "card grow3" }, h("h2", { text: "Latest videos vs channel average" }),
+          vids.length ? vids.map((v) => h("div", { class: "listrow" }, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
             h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "flex:1 1 220px;min-width:0;font-weight:500;color:inherit", text: v.title }),
-            h("span", { class: "mono small", text: fmt(v.views) }),
-            multPill(v.vs_baseline))) : empty("Videos appear after the first channel stats run."))),
+            h("span", { class: "mono small", text: fmt(v.views) }), multPill(v.vs_baseline))) : empty("No videos yet."))),
     ];
   } else if (tab === "videos") {
     const vids = await q(sb.from("v_own_video_latest").select("*").eq("channel_id", id).order("published_at", { ascending: false }).limit(100));
-    body = h("section", { class: "card" },
-      h("p", { class: "muted small", style: "margin:0", text: "Baseline = median views of this channel’s videos of the same format. Editing titles, tags and thumbnails from here comes with the write-access build." }),
-      vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:720px" },
-        h("thead", {}, h("tr", {}, ["Video", "Type", "Published", "Views", "Likes", "Comments", "vs baseline"].map((t, i) => h("th", { class: i > 2 ? "num" : null, text: t })))),
-        h("tbody", {}, vids.map((v) => h("tr", {},
-          h("td", {}, h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: v.title })),
-          h("td", {}, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" })),
-          h("td", { class: "muted", text: v.published_at ? new Date(v.published_at).toLocaleDateString("en-GB") : "—" }),
-          h("td", { class: "num", text: fmt(v.views) }), h("td", { class: "num", text: fmt(v.likes) }), h("td", { class: "num", text: fmt(v.comments) }),
-          h("td", { class: "num" }, multPill(v.vs_baseline)))))))
-        : empty("Videos appear after the first channel stats run."));
+    body = h("section", { class: "card" }, vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:640px" },
+      h("thead", {}, h("tr", {}, ["Video", "Type", "Published", "Views", "Likes", "vs average"].map((t, i) => h("th", { class: i > 2 ? "num" : null, text: t })))),
+      h("tbody", {}, vids.map((v) => h("tr", {},
+        h("td", {}, h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: v.title })),
+        h("td", {}, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" })),
+        h("td", { class: "muted", text: v.published_at ? new Date(v.published_at).toLocaleDateString("en-GB") : "—" }),
+        h("td", { class: "num", text: fmt(v.views) }), h("td", { class: "num", text: fmt(v.likes) }), h("td", { class: "num" }, multPill(v.vs_baseline)))))))
+      : empty("No videos yet."));
   } else if (tab === "search") {
     const terms = await q(sb.from("channel_search_terms").select("*").eq("channel_id", id).order("period_end", { ascending: false }).order("views", { ascending: false }).limit(60));
-    const latest = terms[0]?.period_end;
-    const cur = terms.filter((t) => t.period_end === latest);
-    const scores = chRow?.niche_id ? await q(sb.from("v_keyword_scores").select("term,score").eq("niche_id", chRow.niche_id).in("term", cur.map((t) => t.term.toLowerCase()).slice(0, 100))) : [];
-    const sMap = Object.fromEntries(scores.map((s) => [s.term, s.score]));
-    body = h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", { text: "YouTube searches that brought viewers" }), h("span", { class: "muted small", text: latest ? `28 days to ${latest}` : "" })),
-      cur.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:560px" },
-        h("thead", {}, h("tr", {}, h("th", { text: "Search term" }), h("th", { class: "num", text: "Views" }), h("th", { class: "num", text: "Keyword score" }), h("th", {}, h("span", { class: "sr", text: "Explore" })))),
-        h("tbody", {}, cur.map((t) => h("tr", {},
-          h("td", { style: "font-weight:500", text: t.term }), h("td", { class: "num", text: fmt(t.views) }),
-          h("td", { class: "num" }, scorePill(sMap[t.term.toLowerCase()])),
-          h("td", {}, h("a", { href: `#/keywords?scope=${chRow?.niche_id || "global"}&kw=${encodeURIComponent(t.term.toLowerCase())}`, text: "Explore" })))))))
-        : empty(ch.connected ? "No search data yet for this channel." : "Connect with Google to see the searches that bring viewers."));
-  } else if (tab === "traffic") {
+    const latest = terms[0]?.period_end, cur = terms.filter((t) => t.period_end === latest);
+    body = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Searches that brought viewers" }), h("span", { class: "muted small", text: latest ? `28 days to ${latest}` : "" })),
+      cur.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:420px" },
+        h("thead", {}, h("tr", {}, h("th", { text: "Search term" }), h("th", { class: "num", text: "Views" }))),
+        h("tbody", {}, cur.map((t) => { const href = link(`keyword/${encodeURIComponent(t.term.toLowerCase())}`, { scope: chRow?.niche_id || "global", market: chRow?.markets?.[0] || "GLOBAL" });
+          return h("tr", { class: "clickable", tabindex: "0", onclick: () => go(href), onkeydown: (e) => e.key === "Enter" && go(href) },
+            h("td", { style: "font-weight:500", text: t.term }), h("td", { class: "num", text: fmt(t.views) })); }))))
+        : empty(ch.connected ? "YouTube shows search terms once the channel gets search traffic." : "Connect with Google to see this."));
+  } else {
     const rows = await q(sb.from("channel_breakdowns").select("*").eq("channel_id", id).order("period_end", { ascending: false }).limit(60));
     const latest = rows[0]?.period_end;
     const part = (kind, title) => {
@@ -386,381 +785,105 @@ async function viewChannel(route) {
       return h("section", { class: "card grow1" }, h("h2", { text: title }),
         items.length ? items.map((r) => h("div", { style: "display:grid;grid-template-columns:150px minmax(0,1fr) 52px;gap:12px;align-items:center" },
           h("span", { text: prettySource(r.key) }), bar(pctOf(r.views, total), null, true), h("span", { class: "num mono", text: `${Math.round(pctOf(r.views, total))}%` })))
-          : empty(ch.connected ? "No data yet." : "Connect with Google to see this."));
+          : empty(ch.connected ? "Appears once the channel has enough views." : "Connect with Google to see this."));
     };
-    body = h("div", { class: "cols" }, part("traffic_source", "Traffic sources"), part("country", "Top countries"));
-  } else {
-    const ideas = await q(sb.from("ideas").select("*").eq("channel_id", id).neq("stage", "archived").order("score", { ascending: false }));
-    body = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Ideas assigned to this channel" }), h("a", { href: "#/ideas", class: "small", text: "Open idea pipeline" })),
-      ideas.length ? ideas.map((i) => h("div", { class: "listrow" }, scorePill(i.score), h("span", { style: "flex:1 1 260px;font-weight:500", text: i.title }), h("span", { class: "pill info", text: i.stage })))
-        : empty("No ideas assigned yet."));
+    body = h("div", { class: "cols" }, part("traffic_source", "Where views come from"), part("country", "Top countries"));
   }
-  return [header, tabBar, body].flat();
-}
+  return [header, tabs, body].flat();
+};
 function yppRow(label, val, target, unit) {
   const p = pctOf(val, target);
   return h("div", { style: "display:flex;flex-direction:column;gap:6px" },
-    h("div", { style: "display:flex;justify-content:space-between;font-size:13.5px" }, h("span", { style: "font-weight:500", text: label }),
-      h("span", { class: "mono", text: `${fmtc(val)} / ${fmtc(target)}${unit}` })),
+    h("div", { style: "display:flex;justify-content:space-between;font-size:13.5px" }, h("span", { style: "font-weight:500", text: label }), h("span", { class: "mono", text: `${fmtc(val)} / ${fmtc(target)}${unit}` })),
     bar(p, p >= 100 ? "#15803D" : null, true));
 }
 function multPill(m) {
   if (m === null || m === undefined) return h("span", { class: "flat", text: "—" });
-  const cls = m >= 1.5 ? "up" : m < 0.6 ? "down" : "flat";
-  return h("span", { class: cls, text: `${Number(m).toFixed(1)}×` });
+  return h("span", { class: m >= 1.5 ? "up" : m < 0.6 ? "down" : "flat", text: `${Number(m).toFixed(1)}×` });
 }
 function prettySource(k) {
-  const map = { SHORTS: "Shorts feed", YT_SEARCH: "YouTube search", RELATED_VIDEO: "Suggested videos", SUBSCRIBER: "Browse / subscriptions",
-    YT_CHANNEL: "Channel pages", EXT_URL: "External", PLAYLIST: "Playlists", NO_LINK_OTHER: "Direct / unknown", NOTIFICATION: "Notifications", END_SCREEN: "End screens" };
-  return map[k] || k;
+  return { SHORTS: "Shorts feed", YT_SEARCH: "YouTube search", RELATED_VIDEO: "Suggested videos", SUBSCRIBER: "Browse / subscriptions", YT_CHANNEL: "Channel page",
+    EXT_URL: "External sites", PLAYLIST: "Playlists", NO_LINK_OTHER: "Direct / unknown", NOTIFICATION: "Notifications", END_SCREEN: "End screens" }[k] || k;
 }
 
-// ------------------------------------------------------------------
-// Keyword explorer + trends
-// ------------------------------------------------------------------
-async function viewKeywords(route) {
-  const scope = scopeOf(route);
-  const niche = scope.niche;
-  if (!niche) return [h("h1", { text: "Keyword explorer" }), empty("The Global scope is missing. Ask Claude to re-run the explore migration.")];
-  const marketOpts = scope.global ? MARKETS : (niche.markets?.length ? niche.markets : ["GLOBAL"]).map((m) => [m, marketName(m)]);
-  const market = route.params.get("market") || marketOpts[0][0];
-  const lang = route.params.get("lang") || (scope.global ? "en" : niche.languages?.[0] || "en");
-  const sort = route.params.get("sort") || "score";
-  const tab = route.params.get("tab") || "keywords";
-  const filter = (route.params.get("f") || "").toLowerCase();
-  const selected = route.params.get("kw");
-  const scopeLink = scope.global ? "global" : niche.id;
-
-  const rows = await q(sb.from("v_keyword_scores").select("*").eq("niche_id", niche.id).eq("market", market).order("score", { ascending: false }).limit(500));
-
-  const lookupInput = h("input", { id: "kw-new", class: "field", placeholder: "Analyze a new keyword…", style: "flex:1 1 240px" });
-  const analyze = h("button", { class: "btn primary", type: "button", text: "Analyze now", onclick: async () => {
-    const term = lookupInput.value.trim().toLowerCase();
-    if (!term) return;
-    analyze.disabled = true; analyze.textContent = "Analyzing… (~100 units)";
-    try {
-      const { data, error } = await sb.functions.invoke("keyword-lookup", { body: { niche_id: niche.id, market, term, language: lang } });
-      if (error) throw error;
-      toast(`Analyzed “${term}”: ${data?.videos ?? 0} videos, ${data?.outliers ?? 0} outliers`);
-      setParams(route, { kw: term, f: null });
-    } catch (e) { toast(`Lookup failed: ${e.message || e}`); analyze.disabled = false; analyze.textContent = "Analyze now"; }
-  } });
-
-  const head = h("header", { class: "head" },
-    h("div", { class: "head-text" }, h("h1", { text: tab === "trends" ? "Trends" : "Keyword explorer" }),
-      h("p", { class: "muted", style: "margin:0", text: scope.global
-        ? `Free exploration across all topics · ${rows.length} keywords explored in ${marketName(market)}`
-        : `Scoped to ${niche.name}${scope.channel ? ` (${scope.channel.title})` : ""} · ${rows.length} keywords in ${marketName(market)}` })),
-    h("div", { class: "row", style: "align-items:flex-end" },
-      scopeSelect("kw-scope", route, scope),
-      selectEl("kw-market", marketOpts, market, (v) => setParams(route, { market: v, kw: null }), "Market"),
-      scope.global ? selectEl("kw-lang", LANGS, lang, (v) => setParams(route, { lang: v }), "Language") : null));
-
-  const tabBar = h("div", { class: "tabs", role: "tablist" },
-    [["keywords", "Keywords"], ["trends", "Rising"]].map(([v, t]) => h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v === "keywords" ? null : v }) })));
-
-  if (tab === "trends") {
-    const rising = rows.filter((r) => r.trends_interest !== null && r.momentum_raw !== null).sort((a, b) => b.momentum_raw - a.momentum_raw).slice(0, 18);
-    return [head, tabBar, h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", { text: scope.global ? "Rising in what you explored" : `Rising in ${niche.name}` }), h("span", { class: "muted small", text: "Google Trends, YouTube Search · last 7 days vs last 30 days" })),
-      rising.length ? h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px" },
-        rising.map((r) => { const ch = (Number(r.momentum_raw) - 1) * 100;
-          return h("a", { href: `#/keywords?scope=${scopeLink}&market=${market}&kw=${encodeURIComponent(r.term)}`, style: "display:flex;align-items:center;gap:12px;border:1px solid var(--line-soft);border-radius:10px;padding:12px 14px;color:inherit;text-decoration:none" },
-            h("div", { style: "flex:1 1 auto;min-width:0" }, h("div", { style: "font-weight:500", text: r.term }), h("div", { class: "muted small", text: `Interest ${fmt(r.trends_interest)} · score ${fmt(r.score)}` })),
-            h("span", { class: ch >= 0 ? "up" : "down", style: "font-size:13px", text: `${ch >= 0 ? "+" : ""}${ch.toFixed(0)}%` })); }))
-        : empty("Trends data appears after the daily Trends job runs."))];
-  }
-
-  let list = rows.filter((r) => !filter || r.term.includes(filter));
-  const sorters = { score: (a, b) => b.score - a.score, momentum: (a, b) => b.momentum - a.momentum, easiest: (a, b) => a.competition - b.competition };
-  list = list.sort(sorters[sort] || sorters.score);
-  const sel = rows.find((r) => r.term === selected) || null;
-
-  const filterInput = h("input", { class: "field", placeholder: "Filter tracked keywords", value: filter, "aria-label": "Filter keywords", style: "flex:1 1 200px",
-    onchange: (e) => setParams(route, { f: e.target.value.trim().toLowerCase() || null }) });
-
-  const table = h("section", { class: "card grow3" },
-    h("div", { class: "card-head" }, h("h2", { text: "Keywords" }),
-      seg([["score", "Score"], ["momentum", "Momentum"], ["easiest", "Easiest"]], sort, (v) => setParams(route, { sort: v }), "Sort by")),
-    h("div", { class: "row" }, filterInput),
-    list.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:620px" },
-      h("thead", {}, h("tr", {}, ["Keyword", "Demand", "Momentum", "Competition", "Outliers", "Score"].map((t, i) => h("th", { class: i ? "num" : null, text: t })))),
-      h("tbody", {}, list.slice(0, 200).map((r) => h("tr", { class: `clickable ${sel?.keyword_id === r.keyword_id ? "selected" : ""}`, tabindex: "0",
-        onclick: () => setParams(route, { kw: r.term }), onkeydown: (e) => e.key === "Enter" && setParams(route, { kw: r.term }) },
-        h("td", { style: "font-weight:500", text: r.term }),
-        h("td", { class: "num", text: fmt(r.demand) }), h("td", { class: "num", text: fmt(r.momentum) }), h("td", { class: "num", text: fmt(r.competition) }),
-        h("td", { class: "num", text: fmt(r.outlier_count) }), h("td", { class: "num" }, scorePill(r.score)))))))
-      : empty(rows.length ? "No keyword matches the filter." : "No keywords yet. They appear after the first research run, or analyze one above."),
-    h("p", { class: "muted small", style: "margin:0", text: `Scores are percentiles among the keywords ${scope.global ? "you explored" : "of this niche"} in this market (0–100). Competition: lower is easier for a small channel.` }));
-
-  let detail;
-  if (sel) {
-    const [hist, links] = await Promise.all([
-      q(sb.from("keyword_snapshots").select("captured_on,trends_avg_7d,trends_interest").eq("keyword_id", sel.keyword_id).order("captured_on")),
-      q(sb.from("video_keywords").select("youtube_video_id").eq("keyword_id", sel.keyword_id).limit(50)),
-    ]);
-    const kids = rows.filter((r) => r.term.startsWith(sel.term + " ") && r.yt_autocomplete_rank).sort((a, b) => a.yt_autocomplete_rank - b.yt_autocomplete_rank).slice(0, 10);
-    const topVids = links.length ? await q(sb.from("v_video_latest").select("youtube_video_id,title,channel_title,subscribers,views,outlier_score,is_short")
-      .in("youtube_video_id", links.map((l) => l.youtube_video_id)).order("outlier_score", { ascending: false }).limit(6)) : [];
-    const part = (label, v, inputs, color) => h("div", { style: "display:flex;flex-direction:column;gap:6px" },
-      h("div", { style: "display:flex;justify-content:space-between;font-size:13.5px" }, h("span", { style: "font-weight:500", text: label }), h("span", { class: "mono", text: fmt(v) })),
-      bar(Number(v) || 0, color), h("div", { class: "muted small", text: inputs }));
-    const pts = hist.filter((p) => p.trends_avg_7d !== null).map((p) => ({ x: p.captured_on, y: Number(p.trends_avg_7d) }));
-    detail = h("section", { class: "card grow2" },
-      h("div", { class: "card-head" }, h("div", {}, h("h2", { text: `“${sel.term}”` }), h("div", { class: "muted small", text: `${scope.global ? "Global" : niche.name} · ${marketName(market)}` })),
-        h("div", { style: "text-align:right" }, h("div", { class: "mono", style: "font-size:34px;color:var(--accent)", text: fmt(sel.score) }), h("div", { class: "muted small", text: "Keyword score" }))),
-      part("Demand", sel.demand, `Trends ${fmt(sel.trends_interest)} · YouTube autocomplete #${sel.yt_autocomplete_rank ?? "–"} · ${fmt(sel.outlier_count)} outliers`),
-      part("Momentum", sel.momentum, sel.momentum_raw !== null && sel.trends_interest !== null ? `Last 7 d vs last 30 d: ${((sel.momentum_raw - 1) * 100).toFixed(0)}%` : "Waiting for Trends data"),
-      part("Competition", sel.competition, `${fmt(sel.big_channel_uploads)} uploads from channels over 100k · ${fmt(sel.recent_uploads)} recent uploads found`, "#B45309"),
-      pts.length > 1 ? lineChart(pts, `Trends interest history for ${sel.term}`) : h("p", { class: "muted small", text: "History builds up day by day." }),
-      kids.length ? h("div", {}, h("h3", { text: "What people type next", style: "margin-bottom:6px" }),
-        kids.map((k) => h("div", { class: "listrow", style: "padding:8px 0" }, h("span", { class: "mono small", style: "width:28px", text: `#${k.yt_autocomplete_rank}` }),
-          h("a", { href: `#/keywords?scope=${scopeLink}&market=${market}&kw=${encodeURIComponent(k.term)}`, style: "flex:1;color:inherit", text: k.term }), scorePill(k.score)))) : null,
-      topVids.length ? h("div", {}, h("h3", { text: "Top videos on this keyword (last 14 days)", style: "margin-bottom:6px" }),
-        topVids.map((v) => h("div", { class: "listrow", style: "padding:8px 0" },
-          h("span", { class: "mono small", style: "width:52px", text: `${Number(v.outlier_score).toFixed(1)}×` }),
-          h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "flex:1 1 200px;min-width:0;color:inherit", text: v.title }),
-          h("span", { class: "muted small", text: `${fmtc(v.views)} views · ${fmtc(v.subscribers)} subs` })))) : null,
-      h("div", { class: "row" },
-        h("button", { class: "btn primary", type: "button", text: "Make idea", onclick: () => makeIdea({ title: sel.term, niche_id: niche.id, score: sel.score, sources: [{ type: "keyword", ref: sel.term, market }] }) }),
-        h("a", { class: "btn", href: `#/outliers?scope=${scopeLink}`, text: "See outliers" })));
-  } else {
-    detail = h("section", { class: "card grow2" }, h("h2", { text: "Pick a keyword" }), h("p", { class: "muted", text: "Select a row to see its score breakdown, history and what people type next." }));
-  }
-
-  return [head, tabBar, h("section", { class: "card" }, h("h2", { text: "Analyze a keyword now" }), h("div", { class: "row" }, h("label", { for: "kw-new", class: "sr", text: "Keyword" }), lookupInput, analyze),
-    h("p", { class: "muted small", style: "margin:0", text: "Runs a live YouTube search and autocomplete check, costs about 100 of the 10,000 daily API units." })),
-    h("div", { class: "cols" }, table, detail)];
-}
-
-// ------------------------------------------------------------------
-// Outliers + competitors
-// ------------------------------------------------------------------
-async function viewOutliers(route) {
-  const scope = scopeOf(route);
-  const niche = scope.niche;
-  const tab = route.params.get("tab") || "videos";
-  const fmtF = route.params.get("format") || "all";
-  const win = Number(route.params.get("days") || 14);
-  const size = route.params.get("size") || "100000";
-  const text = (route.params.get("q") || "").trim();
-  const where = scope.global ? "everything researched or explored" : `${niche.name}${scope.channel ? ` (${scope.channel.title})` : ""}`;
-
-  const head = h("header", { class: "head" },
-    h("div", { class: "head-text" }, h("h1", { text: tab === "competitors" ? "Competitors" : "Outliers" }),
-      h("p", { class: "muted", style: "margin:0", text: tab === "competitors" ? `Channels that keep producing outliers · ${where}` : `Videos beating their channel’s normal reach · ${where}` })),
-    scopeSelect("o-scope", route, scope));
-  const tabBar = h("div", { class: "tabs", role: "tablist" },
-    [["videos", "Outlier videos"], ["competitors", "Competitor watchlist"]].map(([v, t]) => h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v === "videos" ? null : v }) })));
-
-  if (tab === "competitors") {
-    let cq = sb.from("v_competitors").select("*").order("outliers_30d", { ascending: false }).limit(100);
-    if (!scope.global) cq = cq.eq("niche_id", niche.id);
-    const comps = await q(cq);
-    return [head, tabBar, h("section", { class: "card" },
-      comps.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:760px" },
-        h("thead", {}, h("tr", {}, ["Channel", "Subs", "Uploads seen 30 d", "Outliers 30 d", "Best video seen", "Best views", "Added"].map((t, i) => h("th", { class: [1, 2, 3, 5].includes(i) ? "num" : null, text: t })))),
-        h("tbody", {}, comps.map((c) => h("tr", {},
-          h("td", {}, h("a", { href: `https://www.youtube.com/channel/${c.youtube_channel_id}`, target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: c.title || c.youtube_channel_id })),
-          h("td", { class: "num", text: fmtc(c.subscribers) }), h("td", { class: "num", text: fmt(c.uploads_30d_seen) }), h("td", { class: "num", text: fmt(c.outliers_30d) }),
-          h("td", { text: c.best_title || "—" }), h("td", { class: "num", text: fmtc(c.best_views) }),
-          h("td", {}, h("span", { class: `pill ${c.source === "manual" ? "dark" : "info"}`, text: c.source })))))))
-        : empty("Channels with 2+ outliers in a research run are added here automatically."))];
-  }
-
-  let query = sb.from("v_video_latest").select("*").gte("outlier_score", 3)
-    .gte("published_at", new Date(Date.now() - win * 864e5).toISOString()).order("outlier_score", { ascending: false }).limit(60);
-  if (!scope.global) query = query.eq("niche_id", niche.id);
-  if (fmtF !== "all") query = query.eq("is_short", fmtF === "short");
-  if (size !== "all") query = query.lte("subscribers", Number(size));
-  if (text) query = query.ilike("title", `%${text.replace(/[%_,()]/g, " ")}%`);
-  const vids = await q(query);
-
-  const filters = h("div", { class: "row" },
-    h("input", { class: "field", placeholder: "Title contains…", value: text, "aria-label": "Title contains", style: "flex:1 1 200px",
-      onchange: (e) => setParams(route, { q: e.target.value.trim() || null }) }),
-    seg([["all", "All"], ["short", "Shorts"], ["long", "Long-form"]], fmtF, (v) => setParams(route, { format: v }), "Format"),
-    selectEl("o-days", [["7", "Uploaded: last 7 days"], ["14", "Uploaded: last 14 days"], ["30", "Uploaded: last 30 days"]], String(win), (v) => setParams(route, { days: v })),
-    selectEl("o-size", [["10000", "Channels under 10k subs"], ["100000", "Channels under 100k subs"], ["all", "All channel sizes"]], size, (v) => setParams(route, { size: v })));
-
-  const grid = vids.length ? h("section", { class: "cards", "aria-label": "Outlier videos" }, vids.map((v) => h("article", { class: "vcard" },
-    h("div", { class: "thumb" }, v.thumbnail_url ? h("img", { src: v.thumbnail_url, alt: "", loading: "lazy" }) : null,
-      h("span", { class: `pill tl ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
-      h("span", { class: "tr", text: `${Number(v.outlier_score).toFixed(1)}×` })),
-    h("div", { class: "vbody" },
-      h("h3", {}, h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "color:inherit;text-decoration:none", text: v.title })),
-      h("div", { class: "muted small", text: `${v.channel_title || "—"} · ${fmtc(v.subscribers)} subs · ${ago(v.published_at)}` }),
-      h("div", { class: "stats3" },
-        h("div", {}, h("span", { text: "Views" }), h("span", { class: "mono", text: fmtc(v.views) })),
-        h("div", {}, h("span", { text: "Views / hour" }), h("span", { class: "mono", text: fmtc(v.views_per_hour) })),
-        h("div", {}, h("span", { text: "Engagement" }), h("span", { class: "mono", text: `${v.engagement_pct ?? "—"}%` }))),
-      h("div", { class: "row", style: "margin-top:auto" },
-        h("button", { class: "btn primary small", type: "button", text: "Save as idea",
-          onclick: () => makeIdea({ title: v.title, niche_id: v.niche_id || niche.id, score: Math.min(100, Math.round(50 + Number(v.outlier_score) * 2)), sources: [{ type: "outlier", ref: v.youtube_video_id, multiple: v.outlier_score }] }) }))))))
-    : empty("No outliers match these filters yet. They appear after the research job runs.");
-
-  return [head, tabBar, filters, grid];
-}
-
-// ------------------------------------------------------------------
-// Idea pipeline
-// ------------------------------------------------------------------
-const STAGES = [
-  ["new", "New", "Auto-added or saved from research", "Shortlist"],
-  ["shortlisted", "Shortlisted", "Worth making", "Assign"],
-  ["assigned", "Assigned", "Channel picked", "Mark scripted"],
-  ["scripted", "Scripted", "Script, titles, prompts ready", "Mark produced"],
-  ["produced", "Produced", "Videos rendered", "Mark scheduled"],
-  ["scheduled", "Scheduled", "Queued in Blotato", "Mark published"],
-  ["published", "Published", "Live, results tracked", null],
-];
-async function viewIdeas() {
-  const ideas = await q(sb.from("ideas").select("*").neq("stage", "archived").order("score", { ascending: false, nullsFirst: false }));
-  const update = async (id, values) => { await q(sb.from("ideas").update(values).eq("id", id)); render(); };
-
-  const titleIn = h("input", { id: "idea-title", class: "field", placeholder: "New idea title", style: "flex:1 1 260px" });
-  const nicheSel = h("select", { class: "field", "aria-label": "Niche" }, state.niches.map((n) => h("option", { value: n.id, text: n.name })));
-  const add = h("form", { class: "row", onsubmit: async (e) => {
-    e.preventDefault();
-    if (!titleIn.value.trim()) return;
-    await makeIdea({ title: titleIn.value.trim(), niche_id: nicheSel.value || null, score: null, sources: [{ type: "manual" }] });
-    render();
-  } }, h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn, nicheSel, h("button", { class: "btn", type: "submit", text: "+ Add idea" }));
-
-  const board = h("div", { class: "board" }, h("div", { class: "board-inner" }, STAGES.map(([stage, name, hint, action], si) => {
-    const cards = ideas.filter((i) => i.stage === stage);
-    return h("section", { class: "col", "aria-label": name },
-      h("div", { class: "col-head" }, h("h3", { style: "font-size:14px", text: name }), h("span", { class: "mono small muted", text: String(cards.length) })),
-      h("div", { class: "muted small", style: "padding:0 4px", text: hint }),
-      cards.map((i) => {
-        const chSel = h("select", { class: "field", style: "min-height:36px;font-size:13px", "aria-label": "Channel",
-          onchange: (e) => update(i.id, { channel_id: e.target.value || null }) },
-          h("option", { value: "", text: "No channel" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === i.channel_id, text: c.title })));
-        return h("article", { class: "icard" },
-          h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:8px" }, scorePill(i.score), h("span", { class: "muted small", text: nicheName(i.niche_id) })),
-          h("div", { class: "title", text: i.title }),
-          h("div", { class: "muted small", text: (i.sources || []).map((s) => s.type).join(", ") || "manual" }),
-          si >= 1 ? chSel : null,
-          h("div", { class: "acts" },
-            si > 0 ? h("button", { class: "btn small", type: "button", "aria-label": "Move back", text: "◀", onclick: () => update(i.id, { stage: STAGES[si - 1][0] }) }) : null,
-            action ? h("button", { class: "btn small", type: "button", text: action, onclick: () => {
-              if (STAGES[si + 1][0] === "assigned" && !i.channel_id) return toast("Pick a channel first");
-              update(i.id, { stage: STAGES[si + 1][0] });
-            } }) : null,
-            h("button", { class: "btn small", type: "button", text: "Archive", onclick: () => update(i.id, { stage: "archived" }) })));
-      }));
-  })));
-  return [h("header", { class: "head" }, h("div", { class: "head-text" }, h("h1", { text: "Idea pipeline" }),
-    h("p", { class: "muted", style: "margin:0", text: "From research to published: every idea keeps its score, sources and channel." })), add), board];
-}
-
-// ------------------------------------------------------------------
-// Settings: niches, channels, jobs, quota
-// ------------------------------------------------------------------
-async function viewSettings(route) {
-  if (route.params.get("connected")) toast("Channel connected");
+// ==================================================================
+// Settings
+// ==================================================================
+VIEWS.settings = async (route) => {
+  if (route.params.get("connected")) toast("Channel connected. Stats are loading.");
   if (route.params.get("error")) toast(`Google connection failed: ${route.params.get("error")}`);
-  const today = new Date().toISOString().slice(0, 10);
   const [seeds, runs, quota] = await Promise.all([
     q(sb.from("seed_terms").select("*").order("created_at")),
     q(sb.from("job_runs").select("*").order("started_at", { ascending: false }).limit(150)),
-    q(sb.from("api_quota_daily").select("*").eq("day", today)),
+    q(sb.from("api_quota_daily").select("*").eq("day", today())),
   ]);
 
   const nicheCard = (n) => {
     const w = n.weights || {};
-    const f = (id, label, value, type = "text") => h("div", { class: "field-wrap", style: "flex:1 1 120px" },
-      h("label", { for: `${id}-${n.id}`, text: label }), h("input", { id: `${id}-${n.id}`, class: "field", type, value: value ?? "" }));
-    const fields = {
-      langs: f("langs", "Languages (comma)", (n.languages || []).join(", ")),
-      markets: f("markets", "Markets (comma, GLOBAL or US, GB, MA…)", (n.markets || []).join(", ")),
-      d: f("wd", "Demand %", Math.round((w.demand ?? 0.4) * 100), "number"),
-      m: f("wm", "Momentum %", Math.round((w.momentum ?? 0.35) * 100), "number"),
-      c: f("wc", "Competition %", Math.round((w.competition ?? 0.25) * 100), "number"),
-      budget: f("budget", "Daily API units", n.daily_unit_budget, "number"),
-      anchor: f("anchor", "Trends anchor term", n.trends_anchor || n.name.toLowerCase()),
-    };
-    const val = (k) => fields[k].querySelector("input").value;
+    const inp = (id, label, value, type = "text") => { const el = h("input", { id: `${id}-${n.id}`, class: "field", type, value: value ?? "" }); return [el, h("div", { class: "field-wrap", style: "flex:1 1 130px" }, h("label", { for: el.id, text: label }), el)]; };
+    const [langs, langsW] = inp("langs", "Languages", (n.languages || []).join(", "));
+    const [mk, mkW] = inp("markets", "Countries (e.g. GLOBAL, US, MA)", (n.markets || []).join(", "));
+    const [budget, budgetW] = inp("budget", "Daily API units", n.daily_unit_budget, "number");
     const nSeeds = seeds.filter((s) => s.niche_id === n.id);
-    const seedIn = h("input", { class: "field", placeholder: "Add seed term", "aria-label": "Seed term", style: "flex:1 1 180px" });
-    const kindSel = h("select", { class: "field", "aria-label": "Seed type" }, [["entity", "Entity"], ["format", "Format"], ["topic", "Topic"]].map(([v, t]) => h("option", { value: v, text: t })));
+    const seedIn = h("input", { class: "field", placeholder: "Add a seed keyword", "aria-label": "Seed keyword", style: "flex:1 1 180px" });
     return h("div", { class: "card", style: "padding:16px" },
-      h("div", { class: "card-head" }, h("h3", { text: n.name }), h("span", { class: "muted small", text: `${state.channels.filter((c) => c.niche_id === n.id).map((c) => c.title).join(", ") || "No channels"}` })),
-      h("div", { class: "row", style: "align-items:flex-end" }, fields.langs, fields.markets),
-      h("div", { class: "row", style: "align-items:flex-end" }, fields.d, fields.m, fields.c),
-      h("div", { class: "row", style: "align-items:flex-end" }, fields.budget, fields.anchor),
-      h("div", { class: "row", style: "gap:6px" }, nSeeds.map((s) => h("span", { class: "chip" }, s.term, h("span", { class: "muted", text: `· ${s.kind}` }),
+      h("div", { class: "card-head" }, h("h3", { text: n.name }), h("span", { class: "muted small", text: state.channels.filter((c) => c.niche_id === n.id).map((c) => c.title).join(", ") || "No channels" })),
+      h("div", { class: "row", style: "align-items:flex-end" }, langsW, mkW, budgetW),
+      h("div", { class: "muted small", text: "Seed keywords: the daily research job searches these every day." }),
+      h("div", { class: "row", style: "gap:6px" }, nSeeds.map((s) => h("span", { class: "chip" }, s.term,
         h("button", { type: "button", "aria-label": `Remove ${s.term}`, text: "×", onclick: async () => { await q(sb.from("seed_terms").delete().eq("id", s.id)); render(); } })))),
       h("form", { class: "row", onsubmit: async (e) => { e.preventDefault(); const t = seedIn.value.trim().toLowerCase(); if (!t) return;
-        await q(sb.from("seed_terms").insert({ niche_id: n.id, term: t, kind: kindSel.value })); render(); } }, seedIn, kindSel, h("button", { class: "btn small", type: "submit", text: "Add" })),
-      h("div", { class: "row" }, h("button", { class: "btn primary small", type: "button", text: "Save niche", onclick: async () => {
-        const d = Number(val("d")), m = Number(val("m")), c = Number(val("c"));
-        if (Math.round(d + m + c) !== 100) return toast("Weights must add up to 100");
+        await q(sb.from("seed_terms").insert({ niche_id: n.id, term: t, kind: "topic" })); render(); } }, seedIn, h("button", { class: "btn small", type: "submit", text: "Add" })),
+      h("div", { class: "row" }, h("button", { class: "btn primary small", type: "button", text: "Save", onclick: async () => {
         const list = (s) => s.split(",").map((x) => x.trim()).filter(Boolean);
-        await q(sb.from("niches").update({
-          languages: list(val("langs")), markets: list(val("markets")).map((x) => x.toUpperCase()),
-          weights: { demand: d / 100, momentum: m / 100, competition: c / 100 },
-          daily_unit_budget: Number(val("budget")) || 2500, trends_anchor: val("anchor").trim() || null,
-        }).eq("id", n.id));
-        await loadShared(); toast("Niche saved");
+        await q(sb.from("niches").update({ languages: list(langs.value), markets: list(mk.value).map((x) => x.toUpperCase()), daily_unit_budget: Number(budget.value) || 2500, weights: w }).eq("id", n.id));
+        await loadShared(); toast("Saved");
       } })));
   };
-
-  const newNiche = h("input", { id: "new-niche", class: "field", placeholder: "Niche name, e.g. Recipes DE", style: "flex:1 1 220px" });
-  const niches = h("section", { class: "card" },
+  const newNiche = h("input", { id: "new-niche", class: "field", placeholder: "New niche, e.g. Cars Morocco", style: "flex:1 1 220px" });
+  const nichesBox = h("section", { class: "card" },
     h("div", { class: "card-head" }, h("h2", { text: "Niches" }),
       h("form", { class: "row", onsubmit: async (e) => { e.preventDefault(); const name = newNiche.value.trim(); if (!name) return;
         const slug = name.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
         await q(sb.from("niches").insert({ name, slug, languages: ["en"], markets: ["GLOBAL"] })); await loadShared(); render(); } },
-        h("label", { for: "new-niche", class: "sr", text: "New niche" }), newNiche, h("button", { class: "btn", type: "submit", text: "+ Add niche" }))),
-    h("div", { style: "display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px" }, realNiches().map(nicheCard)));
+        h("label", { for: "new-niche", class: "sr", text: "New niche" }), newNiche, h("button", { class: "btn", type: "submit", text: "Add niche" }))),
+    realNiches().length ? h("div", { class: "grid-cards wide" }, realNiches().map(nicheCard)) : empty("No niches yet."));
 
-  const channels = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("div", { class: "row" },
-      h("button", { class: "btn", type: "button", text: "Refresh all stats", onclick: (e) => refreshChannel(null, e.currentTarget) }),
-      h("button", { class: "btn primary", type: "button", text: "+ Connect channel with Google", onclick: startOAuth }))),
-    h("p", { class: "muted small", style: "margin:0", text: "Brand Account channels need one connection each: pick the channel in Google’s chooser, then repeat for the next one." }),
-    state.channels.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:640px" },
-      h("thead", {}, h("tr", {}, ["Channel", "Niche", "Language", "Markets", "Google"].map((t) => h("th", { text: t })))),
+  const channelsBox = h("section", { class: "card" }, h("h2", { text: "Channel settings" }),
+    state.channels.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:600px" },
+      h("thead", {}, h("tr", {}, ["Channel", "Niche", "Language", "Countries"].map((t) => h("th", { text: t })))),
       h("tbody", {}, state.channels.map((c) => h("tr", {},
         h("td", { style: "font-weight:500", text: c.title }),
-        h("td", {}, h("select", { class: "field", style: "min-height:36px", "aria-label": `Niche for ${c.title}`,
-          onchange: async (e) => { await q(sb.from("channels").update({ niche_id: e.target.value || null }).eq("id", c.id)); await loadShared(); toast("Saved"); } },
+        h("td", {}, h("select", { class: "field", style: "min-height:36px", "aria-label": `Niche for ${c.title}`, onchange: async (e) => { await q(sb.from("channels").update({ niche_id: e.target.value || null }).eq("id", c.id)); await loadShared(); toast("Saved"); } },
           h("option", { value: "", text: "No niche" }), realNiches().map((n) => h("option", { value: n.id, selected: n.id === c.niche_id, text: n.name })))),
         h("td", {}, h("input", { class: "field", style: "min-height:36px;width:70px", value: c.language || "", "aria-label": `Language for ${c.title}`,
           onchange: async (e) => { await q(sb.from("channels").update({ language: e.target.value.trim() || null }).eq("id", c.id)); toast("Saved"); } })),
-        h("td", {}, h("input", { class: "field", style: "min-height:36px;width:160px", value: (c.markets || []).join(", "), "aria-label": `Markets for ${c.title}`,
-          onchange: async (e) => { await q(sb.from("channels").update({ markets: e.target.value.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean) }).eq("id", c.id)); toast("Saved"); } })),
-        h("td", {}, c.connected ? h("span", { class: "pill ok", text: "Connected" }) : h("span", { class: "pill warn", text: "Public stats only" })))))))
+        h("td", {}, h("input", { class: "field", style: "min-height:36px;width:160px", value: (c.markets || []).join(", "), "aria-label": `Countries for ${c.title}`,
+          onchange: async (e) => { await q(sb.from("channels").update({ markets: e.target.value.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean) }).eq("id", c.id)); toast("Saved"); } })))))))
       : empty("No channels yet."));
 
   const latest = {};
-  for (const r of runs) if (!latest[r.job]) latest[r.job] = r;
+  for (const r of runs) if (!latest[r.job.split(":")[0]]) latest[r.job.split(":")[0]] = r;
   const pill = (s) => h("span", { class: `pill ${s === "ok" ? "ok" : s === "failed" ? "crit" : s === "running" ? "info" : "warn"}`, text: s });
-  const jobs = h("section", { class: "card grow3" }, h("h2", { text: "Scheduled jobs" }),
-    Object.keys(latest).length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:560px" },
-      h("thead", {}, h("tr", {}, ["Job", "Last run", "Duration", "Units", "Status"].map((t, i) => h("th", { class: i === 3 ? "num" : null, text: t })))),
-      h("tbody", {}, Object.values(latest).map((r) => h("tr", {},
-        h("td", { style: "font-weight:500", text: r.job }), h("td", { class: "muted", text: ago(r.started_at) }),
-        h("td", { class: "muted", text: r.finished_at ? `${Math.max(1, Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000))} s` : "—" }),
+  const jobs = h("section", { class: "card grow3" }, h("h2", { text: "Background jobs" }),
+    Object.keys(latest).length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:460px" },
+      h("thead", {}, h("tr", {}, ["Job", "Last run", "API units", "Status"].map((t, i) => h("th", { class: i === 2 ? "num" : null, text: t })))),
+      h("tbody", {}, Object.entries(latest).map(([name, r]) => h("tr", {}, h("td", { style: "font-weight:500", text: name.replace("_", " ") }), h("td", { class: "muted", text: ago(r.started_at) }),
         h("td", { class: "num", text: fmt(r.units_used) }), h("td", {}, pill(r.status)))))))
-      : empty("No job has run yet. Jobs start once the GitHub repo and its secrets are set."),
-    h("p", { class: "muted small", style: "margin:0", text: "Channel stats sync on the server every 6 h and right after you connect a channel. GitHub jobs (UTC): research 06:00 · Trends 07:30 · Blotato sync and alerts hourly." }));
-
-  const used = quota.filter((r) => r.api === "youtube_data");
-  const total = used.reduce((a, r) => a + r.units, 0);
-  const byBucket = {};
-  for (const r of used) byBucket[r.bucket] = (byBucket[r.bucket] || 0) + r.units;
-  const quotaCard = h("section", { class: "card grow2" }, h("h2", { text: "YouTube API quota today" }),
+      : empty("No job has run yet."),
+    h("p", { class: "muted small", style: "margin:0", text: "Channel stats: on the server every 6 h. Research (06:00 UTC), Trends (07:30 UTC) and renders run on GitHub Actions." }));
+  const used = quota.filter((r) => r.api === "youtube_data"), total = used.reduce((a, r) => a + r.units, 0);
+  const quotaBox = h("section", { class: "card grow2" }, h("h2", { text: "YouTube API today" }),
     h("div", { style: "display:flex;justify-content:space-between" }, h("span", { text: `${fmt(total)} of 10,000 units` }), h("span", { class: "mono", text: `${Math.round(total / 100)}%` })),
     bar(total / 100, total > 9000 ? "#B42318" : null, true),
-    Object.entries(byBucket).map(([b, u]) => h("div", { style: "display:flex;justify-content:space-between;font-size:13px" }, h("span", { text: b }), h("span", { class: "mono", text: fmt(u) }))),
-    h("p", { class: "muted small", style: "margin:0", text: "Resets at midnight Pacific time. Each niche has its own daily budget above." }));
+    h("p", { class: "muted small", style: "margin:0", text: `About ${Math.max(0, Math.floor((9500 - total) / 102))} keyword analyses left today. Resets at midnight Pacific time.` }));
 
-  return [h("header", { class: "head" }, h("div", { class: "head-text" }, h("h1", { text: "Settings" }), h("p", { class: "muted", style: "margin:0", text: "Niches, channels, scheduled jobs and API quota." }))),
-    niches, channels, h("div", { class: "cols" }, jobs, quotaCard)];
-}
+  return [pageHead("Settings", "Niches, channels and background jobs."), nichesBox, channelsBox, h("div", { class: "cols" }, jobs, quotaBox)];
+};
 
+// ==================================================================
+// Actions
+// ==================================================================
 async function refreshChannel(channelId, btn) {
   if (btn) { btn.disabled = true; btn.textContent = "Refreshing…"; }
   try {
@@ -768,51 +891,38 @@ async function refreshChannel(channelId, btn) {
     if (error) throw error;
     const errs = Object.values(data?.details || {}).filter((d) => d.error).map((d) => d.error);
     toast(errs.length ? `Refreshed with issues: ${errs[0]}` : "Stats refreshed");
-    await loadShared();
-    render();
-  } catch (e) {
-    toast(`Refresh failed: ${e.message || e}`);
-    if (btn) { btn.disabled = false; btn.textContent = "Refresh stats"; }
-  }
+    await loadShared(); render();
+  } catch (e) { toast(`Refresh failed: ${e.message || e}`); if (btn) { btn.disabled = false; btn.textContent = "Refresh"; } }
 }
-
 async function startOAuth() {
   try {
     const { data, error } = await sb.functions.invoke("google-oauth", { body: { action: "start", return_to: location.origin + location.pathname } });
     if (error) throw error;
     location.href = data.url;
-  } catch (e) {
-    toast(`Google connection isn’t ready yet: ${e.message || e}`);
-  }
+  } catch (e) { toast(`Google connection isn’t ready: ${e.message || e}`); }
 }
 
-// ------------------------------------------------------------------
-// Boot
-// ------------------------------------------------------------------
+// ==================================================================
+// Boot + sign-in (email + password; password created once)
+// ==================================================================
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   const app = document.getElementById("app"), login = document.getElementById("login");
   if (!session) { app.hidden = true; login.hidden = false; return; }
-  const allowed = await q(sb.rpc("am_i_allowed"));
-  if (!allowed) {
+  if (!(await q(sb.rpc("am_i_allowed")))) {
     app.hidden = true; login.hidden = false;
     document.getElementById("login-msg").textContent = `${session.user.email} is not on the allow-list.`;
-    await sb.auth.signOut();
-    return;
+    await sb.auth.signOut(); return;
   }
   login.hidden = true; app.hidden = false;
   await loadShared();
   render();
 }
-
-// Email + password. "Create your password" is used once; after that you just sign in.
 let creating = false;
 function setLoginMode(create) {
   creating = create;
   document.getElementById("login-title").textContent = create ? "Create your password" : "Sign in";
-  document.getElementById("login-intro").textContent = create
-    ? "One-time setup. Use the email that is on the allow-list, and a password of at least 8 characters."
-    : "Only allow-listed accounts can see data.";
+  document.getElementById("login-intro").textContent = create ? "One-time setup. Use the allow-listed email and a password of at least 8 characters." : "Only allow-listed accounts can see data.";
   document.getElementById("confirm-wrap").hidden = !create;
   document.getElementById("login-password2").required = create;
   document.getElementById("login-password").autocomplete = create ? "new-password" : "current-password";
@@ -823,45 +933,23 @@ function setLoginMode(create) {
 document.getElementById("login-toggle").addEventListener("click", () => setLoginMode(!creating));
 document.getElementById("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const email = document.getElementById("login-email").value.trim();
-  const password = document.getElementById("login-password").value;
-  const msg = document.getElementById("login-msg");
-  const btn = document.getElementById("login-submit");
-  if (creating && password !== document.getElementById("login-password2").value) {
-    msg.textContent = "The two passwords don’t match.";
-    return;
-  }
-  btn.disabled = true;
-  msg.textContent = creating ? "Creating your account…" : "Signing in…";
-  const { data, error } = creating
-    ? await sb.auth.signUp({ email, password })
-    : await sb.auth.signInWithPassword({ email, password });
+  const email = document.getElementById("login-email").value.trim(), password = document.getElementById("login-password").value;
+  const msg = document.getElementById("login-msg"), btn = document.getElementById("login-submit");
+  if (creating && password !== document.getElementById("login-password2").value) { msg.textContent = "The two passwords don’t match."; return; }
+  btn.disabled = true; msg.textContent = creating ? "Creating your account…" : "Signing in…";
+  const { data, error } = creating ? await sb.auth.signUp({ email, password }) : await sb.auth.signInWithPassword({ email, password });
   btn.disabled = false;
-  if (error) {
-    msg.textContent = /invalid login/i.test(error.message) ? "Wrong email or password." : error.message;
-    return;
-  }
-  if (creating && !data.session) {
-    msg.textContent = "Account created, but Supabase is waiting for email confirmation. Turn off “Confirm email” in Supabase (see setup), then sign in.";
-    setLoginMode(false);
-    return;
-  }
+  if (error) { msg.textContent = /invalid login/i.test(error.message) ? "Wrong email or password." : error.message; return; }
+  if (creating && !data.session) { msg.textContent = "Account created but waiting for email confirmation. Turn off “Confirm email” in Supabase, then sign in."; setLoginMode(false); return; }
   boot();
 });
 document.getElementById("sign-out").addEventListener("click", async () => { await sb.auth.signOut(); location.hash = ""; boot(); });
 document.getElementById("channel-switch").addEventListener("change", (e) => {
-  state.channel = e.target.value;
-  localStorage.setItem("ytc.channel", state.channel);
+  state.channel = e.target.value; store.set("ytc.channel", state.channel);
   const route = parseRoute();
-  // Research pages follow the channel: its niche when one is picked, free global exploration for "All channels".
-  if (["keywords", "outliers", "ideas"].includes(route.name)) {
-    const p = new URLSearchParams(route.params);
-    ["scope", "kw", "market", "lang"].forEach((k) => p.delete(k));
-    const next = `#/${route.name}${p.toString() ? "?" + p : ""}`;
-    if (location.hash === next) render(); else go(next);
-    return;
-  }
-  go(state.channel === "all" ? "#/portfolio" : `#/channel/${state.channel}`);
+  if (route.name === "research" || route.name === "keyword") { go("#/research"); return; }
+  if (route.name === "channel" && state.channel !== "all") { go(`#/channel/${state.channel}`); return; }
+  render();
 });
 window.addEventListener("hashchange", () => { if (!document.getElementById("app").hidden) render(); });
 sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") boot(); });
