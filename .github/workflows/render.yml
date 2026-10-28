@@ -39,4 +39,13 @@ jobs:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           MPT_DIR: ${{ github.workspace }}/mpt
           PYTHONPATH: ${{ github.workspace }}/mpt
+          RENDER_BACKUP: ${{ github.workspace }}/render-output.mp4
         run: python collectors/render_job.py "${{ github.event.inputs.job_id }}"
+      - name: Keep a backup copy of the video (7 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.event.inputs.job_id }}
+          path: render-output.mp4
+          if-no-files-found: ignore
+          retention-days: 7

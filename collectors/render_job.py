@@ -111,25 +111,84 @@ def probe_duration(path: str) -> float | None:
         return None
 
 
-def fit_size(path: str, duration: float | None) -> str:
-    """Re-encode when the file is over the storage limit, aiming just under it."""
-    if os.path.getsize(path) <= MAX_UPLOAD_BYTES or not duration:
+def shrink(path: str, duration: float | None) -> str:
+    """Re-encode to a Shorts-friendly bitrate (YouTube re-encodes anyway), then make sure it fits the storage limit."""
+    out = str(Path(path).with_name("final.mp4"))
+    # ~5 Mbps cap: a 60 s 1080x1920 video lands around 20-35 MB instead of 30-80 MB.
+    cmd = ["ffmpeg", "-y", "-i", path, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+           "-maxrate", "5M", "-bufsize", "10M", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+           "-movflags", "+faststart", out]
+    if duration:  # hard cap so the file always fits under the per-file limit
+        kbps = max(int(MAX_UPLOAD_BYTES * 8 / duration / 1000 * 0.9) - 128, 300)
+        if kbps < 5000:
+            cmd[cmd.index("5M")] = f"{kbps}k"
+            cmd[cmd.index("10M")] = f"{2 * kbps}k"
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=1800)
+    except subprocess.SubprocessError as e:
+        log(f"re-encode failed, uploading the original: {e}")
         return path
-    kbps = int(MAX_UPLOAD_BYTES * 8 / duration / 1000 * 0.92) - 128
-    out = str(Path(path).with_name("compressed.mp4"))
-    subprocess.run(["ffmpeg", "-y", "-i", path, "-c:v", "libx264", "-preset", "veryfast", "-b:v", f"{max(kbps, 300)}k",
-                    "-maxrate", f"{max(kbps, 300)}k", "-bufsize", f"{2 * max(kbps, 300)}k", "-c:a", "aac", "-b:a", "128k",
-                    "-movflags", "+faststart", out], check=True, capture_output=True, timeout=1800)
+    if os.path.getsize(out) >= os.path.getsize(path):
+        return path
     return out
 
 
-def upload(path: str, object_path: str) -> None:
+TUS_CHUNK = 6 * 1024 * 1024  # Supabase resumable uploads require 6 MB chunks
+
+
+def upload(path: str, object_path: str, content_type: str = "video/mp4") -> None:
+    """Resumable (TUS) upload in 6 MB chunks with retries, so a slow link can't kill a finished render."""
+    import base64
+    import time
+
+    size = os.path.getsize(path)
+    if size > MAX_UPLOAD_BYTES + 2 * 1024 * 1024:
+        raise RuntimeError(f"video is {size / 1048576:.1f} MB, over the 50 MB storage limit")
+    b64 = lambda s: base64.b64encode(s.encode()).decode()  # noqa: E731
+    auth = {"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY, "Tus-Resumable": "1.0.0"}
+
+    def with_retry(fn, what):
+        for attempt in range(5):
+            try:
+                r = fn()
+                if r.status_code < 500 and r.status_code != 429:
+                    return r
+                err = f"{r.status_code}: {r.text[:200]}"
+            except Exception as e:  # noqa: BLE001 — network errors are retried
+                err = f"{type(e).__name__}: {e}"
+            log(f"{what} attempt {attempt + 1} failed ({err}); retrying")
+            time.sleep(5 * (attempt + 1))
+        raise RuntimeError(f"{what} failed after 5 attempts: {err}")
+
+    r = with_retry(lambda: HTTP.post(
+        f"{SUPABASE_URL}/storage/v1/upload/resumable",
+        headers={**auth, "Upload-Length": str(size), "x-upsert": "true",
+                 "Upload-Metadata": f"bucketName {b64('renders')},objectName {b64(object_path)},"
+                                    f"contentType {b64(content_type)},cacheControl {b64('3600')}"},
+        timeout=(30, 120)), "upload start")
+    if r.status_code >= 400 or not r.headers.get("Location"):
+        raise RuntimeError(f"upload start failed {r.status_code}: {r.text[:300]}")
+    location = r.headers["Location"]
+    if location.startswith("/"):
+        location = SUPABASE_URL + location
+
+    offset = 0
     with open(path, "rb") as f:
-        r = HTTP.post(f"{SUPABASE_URL}/storage/v1/object/renders/{object_path}", data=f,
-                      headers={"Authorization": f"Bearer {SUPABASE_KEY}", "apikey": SUPABASE_KEY,
-                               "Content-Type": "video/mp4", "x-upsert": "true"}, timeout=600)
-    if r.status_code >= 400:
-        raise RuntimeError(f"upload failed {r.status_code}: {r.text[:300]}")
+        while offset < size:
+            f.seek(offset)
+            chunk = f.read(TUS_CHUNK)
+            r = with_retry(lambda: HTTP.patch(
+                location, data=chunk,
+                headers={**auth, "Upload-Offset": str(offset), "Content-Type": "application/offset+octet-stream"},
+                timeout=(30, 300)), f"upload chunk at {offset // 1048576} MB")
+            if r.status_code == 409:  # offset mismatch: ask the server where it is and resume from there
+                head = HTTP.head(location, headers=auth, timeout=(30, 60))
+                offset = int(head.headers.get("Upload-Offset", offset))
+                continue
+            if r.status_code >= 400:
+                raise RuntimeError(f"upload chunk failed {r.status_code}: {r.text[:300]}")
+            offset = int(r.headers.get("Upload-Offset", offset + len(chunk)))
+    log(f"Uploaded {size / 1048576:.1f} MB to renders/{object_path}")
 
 
 def main() -> int:
@@ -167,7 +226,8 @@ def main() -> int:
         if not os.path.isabs(video):
             video = str(MPT_DIR / video)
         duration = probe_duration(video)
-        video = fit_size(video, duration)
+        video = shrink(video, duration)
+        shutil.copy(video, os.environ.get("RENDER_BACKUP", "render-output.mp4"))  # kept as a GitHub artifact too
         object_path = f"videos/{job_id}.mp4"
         upload(video, object_path)
         db.update("render_jobs", {"id": f"eq.{job_id}"},
