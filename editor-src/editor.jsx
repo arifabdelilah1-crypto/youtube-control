@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
-import { DEFAULT_SETTINGS, buildProps, mergeSettings, preRenderCheck, sceneSeconds } from "../video/layout.js";
+import { DEFAULT_SETTINGS, buildProps, creditsText, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
   ["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
@@ -48,29 +48,66 @@ function Field({ label, children, hint }) {
 }
 
 // ------------------------------------------------------------------
+const FOOTAGE = [["video", "Videos"], ["image", "Photos"], ["both", "Videos + photos"]];
+const hex6 = (c, fallback) => {
+  const h = String(c || "").replace("#", "");
+  if (/^[0-9a-f]{6}$/i.test(h)) return `#${h}`;
+  return /^[0-9a-f]{3}$/i.test(h) ? `#${h.split("").map((x) => x + x).join("")}` : fallback;
+};
+
+// Animated name / stat card shown over the scene, e.g. "Lamine Yamal · 19 goals" in club colours.
+function CardEditor({ card, index, onChange }) {
+  const [name, setName] = useState(card?.name || "");
+  const [stat, setStat] = useState(card?.stat || "");
+  useEffect(() => { setName(card?.name || ""); setStat(card?.stat || ""); }, [card?.name, card?.stat]);
+  const c1 = hex6(card?.colors?.[0], "#FFE600");
+  const c2 = hex6(card?.colors?.[1], "#111111");
+  const save = (patch = {}) => {
+    const next = { name: name.trim().slice(0, 40), stat: stat.trim().slice(0, 30), colors: card?.colors || [], ...patch };
+    if (next.name && JSON.stringify(next) !== JSON.stringify(card)) onChange(next);
+  };
+  return (
+    <details className="ed-more" open={!!card}>
+      <summary>Name / stat card{card ? `: ${card.name}` : ""}</summary>
+      <div className="form-grid">
+        <Field label="Name"><input className="field" dir="auto" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} onBlur={() => save()} placeholder="Lamine Yamal" aria-label={`Scene ${index + 1} card name`} /></Field>
+        <Field label="Stat (optional)" hint="Starts with a number? It counts up."><input className="field" dir="auto" value={stat} maxLength={30} onChange={(e) => setStat(e.target.value)} onBlur={() => save()} placeholder="19 goals · €180M" aria-label={`Scene ${index + 1} card stat`} /></Field>
+        <Field label="Colour 1"><input type="color" className="color" value={c1} onChange={(e) => save({ colors: [e.target.value.toUpperCase(), c2.toUpperCase()] })} aria-label={`Scene ${index + 1} card colour 1`} /></Field>
+        <Field label="Colour 2"><input type="color" className="color" value={c2} onChange={(e) => save({ colors: [c1.toUpperCase(), e.target.value.toUpperCase()] })} aria-label={`Scene ${index + 1} card colour 2`} /></Field>
+      </div>
+      {card ? <button type="button" className="btn small ghost" onClick={() => { setName(""); setStat(""); onChange(null); }}>Remove card</button> : <span className="muted small">Type a name to add the card. Use team colours, never logos.</span>}
+    </details>
+  );
+}
+
 function SceneCard({ scene, index, count, project, active, signed, onChange, onPick, onSearch, onUpload, onMove, onDelete, onAdd, onSeek, searching }) {
   const [text, setText] = useState(scene.text);
   const [terms, setTerms] = useState((scene.terms || []).join(", "));
+  const [title, setTitle] = useState(scene.title || "");
   const [results, setResults] = useState(null);
   useEffect(() => { setText(scene.text); }, [scene.text]);
   useEffect(() => { setTerms((scene.terms || []).join(", ")); }, [scene.terms]);
+  useEffect(() => { setTitle(scene.title || ""); }, [scene.title]);
   const clip = scene.clip || { type: "card" };
+  const footage = scene.footage || "video";
   const voiceState = !scene.voice_path ? ["warn", "No voice"] : scene.voice_text !== scene.text ? ["warn", "Voice outdated"] : ["ok", fmtS(scene.voice_duration)];
   const thumb = clip.type === "card" ? null : clip.path ? (clip.type === "image" ? signed.get(clip.path) : null) : clip.thumb || clip.preview;
   const list = results ?? scene.candidates ?? [];
   const fileRef = useRef(null);
 
   const commitText = () => { if (text.trim() && text.trim() !== scene.text) onChange({ text: text.trim() }); };
+  const commitTitle = () => { const t = title.trim().slice(0, 80) || null; if (t !== (scene.title || null)) onChange({ title: t }); };
   const commitTerms = () => {
     const t = terms.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 4);
     if (JSON.stringify(t) !== JSON.stringify(scene.terms || [])) onChange({ terms: t });
     return t;
   };
-  const search = async () => {
+  const search = async (kind = footage) => {
     const t = commitTerms();
     const q = t[0] || text;
-    setResults(await onSearch(q, t.slice(1)));
+    setResults(await onSearch(q, t.slice(1), kind));
   };
+  const credit = (c) => (c.source === "wikimedia" ? `${c.tags} · ${c.author} · ${c.license}` : c.tags);
 
   return (
     <article className={`ed-scene${active ? " active" : ""}`} aria-label={`Scene ${index + 1}`}>
@@ -81,7 +118,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         </button>
         <div className="ed-scene-meta">
           <span className={`pill ${voiceState[0]}`}>{voiceState[1]}</span>
-          <span className="muted small">{clip.type === "card" ? "No clip" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}`}</span>
+          <span className="muted small">{clip.type === "card" ? "No clip" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license ? ` · ${clip.license}` : ""}`}</span>
         </div>
         <div className="ed-scene-tools">
           <button type="button" className="btn small ghost" disabled={index === 0} onClick={() => onMove(-1)} aria-label="Move up">↑</button>
@@ -91,23 +128,30 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         </div>
       </div>
       <textarea className="field ed-text" rows={2} value={text} dir="auto" onChange={(e) => setText(e.target.value)} onBlur={commitText} aria-label={`Scene ${index + 1} voice-over text`} />
+      <input className="field" dir="auto" value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} onBlur={commitTitle}
+        placeholder="On-screen title (optional), e.g. YAMAL TO MADRID?" aria-label={`Scene ${index + 1} on-screen title`} />
       <div className="ed-search">
+        <select className="field ed-kind" value={footage} onChange={(e) => { onChange({ footage: e.target.value }); search(e.target.value); }} aria-label={`Scene ${index + 1} footage type`}>
+          {FOOTAGE.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+        </select>
         <input className="field" value={terms} onChange={(e) => setTerms(e.target.value)} onBlur={commitTerms}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); search(); } }}
-          placeholder="Footage search, e.g. stadium crowd night" aria-label={`Scene ${index + 1} footage search`} />
-        <button type="button" className="btn small" onClick={search} disabled={searching}>{searching ? "Searching…" : "Find clips"}</button>
+          placeholder={footage === "video" ? "Footage search, e.g. stadium crowd night" : "e.g. Lamine Yamal, Santiago Bernabéu"} aria-label={`Scene ${index + 1} footage search`} />
+        <button type="button" className="btn small" onClick={() => search()} disabled={searching}>{searching ? "Searching…" : "Find clips"}</button>
       </div>
+      {footage !== "video" ? <span className="muted small">Photos come from Wikimedia Commons (real people, places, cars; credit needed) and Pixabay.</span> : null}
       {list.length ? (
         <div className="ed-cands" role="list">
           {list.map((c) => (
             <button type="button" role="listitem" key={`${c.source}-${c.id}`} className={`ed-cand${clip.id === c.id && clip.source === c.source ? " on" : ""}`}
-              onClick={() => onPick({ ...c, trim: 0 })} title={c.tags}>
+              onClick={() => onPick({ ...c, trim: 0 })} title={credit(c)}>
               <img src={c.thumb || c.preview} alt={c.tags || "clip"} loading="lazy" />
-              {c.duration ? <i>{Math.round(c.duration)}s</i> : null}
+              {c.duration ? <i>{Math.round(c.duration)}s</i> : c.source === "wikimedia" ? <i>{c.license}</i> : null}
             </button>
           ))}
         </div>
       ) : <div className="muted small">No clips found yet. Try another search (English works best).</div>}
+      <CardEditor card={scene.card} index={index} onChange={(card) => onChange({ card })} />
       <div className="row">
         <button type="button" className="btn small ghost" onClick={() => fileRef.current?.click()}>Upload image / clip</button>
         <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onUpload(f); }} />
@@ -183,6 +227,7 @@ function StylePanel({ project, ctx, onProject, onSettings }) {
       <Field label="Hook text" hint="Empty = the video title">
         <input className="field" dir="auto" value={s.hook.text} onChange={(e) => set("hook", { text: e.target.value })} placeholder={project.title} />
       </Field>
+      <label className="row ed-check"><input type="checkbox" checked={s.titles.enabled} onChange={(e) => set("titles", { enabled: e.target.checked })} /> Scene titles (big text set per scene, in the current-word colour)</label>
       <label className="row ed-check"><input type="checkbox" checked={s.progress.enabled} onChange={(e) => set("progress", { enabled: e.target.checked })} /> Progress bar</label>
       <label className="row ed-check"><input type="checkbox" checked={s.sfx.enabled} onChange={(e) => set("sfx", { enabled: e.target.checked })} /> Sound effects (whoosh on cuts, hit on the hook)</label>
     </div>
@@ -237,6 +282,37 @@ function MusicPanel({ project, tracks, signed, sign, onSettings }) {
 }
 
 // ------------------------------------------------------------------
+async function saveCredits(sb, ideaId, credits) {
+  const { data, error } = await sb.from("ideas").select("video_description").eq("id", ideaId).maybeSingle();
+  if (error || !data) return error?.message || "idea not found";
+  const next = withCredits(data.video_description || "", credits);
+  if (next === (data.video_description || "")) return null;
+  return (await sb.from("ideas").update({ video_description: next }).eq("id", ideaId)).error?.message || null;
+}
+
+function Credits({ sb, project, scenes, toast }) {
+  const text = creditsText(scenes);
+  if (!text) return null;
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); toast("Credits copied"); } catch { toast("Copy failed: select the text and copy it"); }
+  };
+  const add = async () => { const err = await saveCredits(sb, project.idea_id, text); toast(err ? `Not saved: ${err}` : "Credits are in the description"); };
+  return (
+    <section className="card">
+      <h2>Photo credits</h2>
+      <p className="muted small" style={{ margin: 0 }}>
+        The licences of these Wikimedia photos ask for a credit line in the video description.
+        {project.idea_id ? " They're added to the description automatically when you render." : " Paste them into the description when you upload."}
+      </p>
+      <pre className="note">{text}</pre>
+      <div className="row">
+        <button type="button" className="btn small" onClick={copy}>Copy credits</button>
+        {project.idea_id ? <button type="button" className="btn small ghost" onClick={add}>Add to description now</button> : null}
+      </div>
+    </section>
+  );
+}
+
 function Renders({ sb, jobs, onRetry }) {
   const [urls, setUrls] = useState({});
   if (!jobs.length) return null;
@@ -362,12 +438,12 @@ function Editor({ ctx }) {
       sb.from("project_scenes").update({ voice_text: null }).eq("project_id", project.id).then(() => {});
     }
   };
-  const searchFor = async (sceneId, q, more) => {
+  const searchFor = async (sceneId, q, more, kind) => {
     setSearching(sceneId);
     try {
-      let { results, configured } = await invoke(sb, { action: "search", q, aspect: project.aspect });
-      for (const m of more) { if (results.length >= 8) break; results = results.concat((await invoke(sb, { action: "search", q: m, aspect: project.aspect })).results); }
-      if (!configured) toast("Stock search isn't set up: add PIXABAY_API_KEY in Supabase Edge Function secrets.");
+      let { results, configured } = await invoke(sb, { action: "search", q, kind, aspect: project.aspect });
+      for (const m of more) { if (results.length >= 8) break; results = results.concat((await invoke(sb, { action: "search", q: m, kind, aspect: project.aspect })).results); }
+      if (!configured && !results.length) toast("Stock search isn't set up: add PIXABAY_API_KEY in Supabase Edge Function secrets.");
       const uniq = [...new Map(results.map((r) => [`${r.source}-${r.id}`, r])).values()].slice(0, 12);
       if (uniq.length) await patchScene(sceneId, { candidates: uniq });
       else toast("No clips for that search. Try simpler English words.");
@@ -383,11 +459,14 @@ function Editor({ ctx }) {
     setBusy("");
     if (error) return toast(`Upload failed: ${error.message}`);
     let duration = null;
+    let size = [null, null];   // image size decides between full-frame and blurred-backdrop framing
     if (kind === "video") {
       duration = await new Promise((res) => { const v = document.createElement("video"); v.preload = "metadata"; v.onloadedmetadata = () => res(v.duration || null); v.onerror = () => res(null); v.src = URL.createObjectURL(file); });
+    } else {
+      size = await new Promise((res) => { const im = new Image(); im.onload = () => res([im.naturalWidth, im.naturalHeight]); im.onerror = () => res([null, null]); im.src = URL.createObjectURL(file); });
     }
     await sign([path]);
-    await patchScene(scene.id, { clip: { type: kind, source: "upload", id: path, path, duration, trim: 0 } });
+    await patchScene(scene.id, { clip: { type: kind, source: "upload", id: path, path, duration, width: size[0], height: size[1], trim: 0 } });
   };
   const addAfter = async (i) => {
     const { data, error } = await sb.from("project_scenes").insert({ project_id: project.id, idx: i + 1, text: "New line…", terms: [], clip: { type: "card" } }).select().single();
@@ -414,7 +493,10 @@ function Editor({ ctx }) {
     setBusy("Starting render…");
     try {
       await invoke(sb, { action: "render", project_id: project.id });
-      toast("Final render started: usually 3–6 minutes"); setCheck(null); await load();
+      const credits = creditsText(scenes);
+      const err = credits && project.idea_id ? await saveCredits(sb, project.idea_id, credits) : null;
+      toast(err ? `Render started, but the photo credits weren't saved to the description: ${err}` : "Final render started: usually 3–6 minutes");
+      setCheck(null); await load();
     } catch (e) { toast(e.message); } finally { setBusy(""); }
   };
   const retry = async (j) => {
@@ -496,7 +578,7 @@ function Editor({ ctx }) {
                   searching={searching === s.id}
                   onChange={(patch) => patchScene(s.id, patch)}
                   onPick={(clip) => patchScene(s.id, { clip })}
-                  onSearch={(q, more) => searchFor(s.id, q, more)}
+                  onSearch={(q, more, kind) => searchFor(s.id, q, more, kind)}
                   onUpload={(f) => upload(s, f)}
                   onMove={(d) => move(i, d)} onDelete={() => remove(i)} onAdd={() => addAfter(i)}
                   onSeek={() => { const p = props.scenes[i]; if (p && player.current) { player.current.seekTo(p.from); player.current.play(); } }} />
@@ -508,6 +590,7 @@ function Editor({ ctx }) {
         </section>
       </div>
 
+      <Credits sb={sb} project={project} scenes={scenes} toast={toast} />
       <Renders sb={sb} jobs={jobs} onRetry={retry} />
     </div>
   );

@@ -600,12 +600,14 @@ async function studioEditor(ideaId) {
   f.title = h("input", { id: "s-title", class: "field", dir: "auto", value: project?.title || idea.video_title || idea.title });
   f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No channel" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === idea.channel_id, text: c.title })));
   f.script = h("textarea", { id: "s-script", class: "field script", rows: "14", dir: "auto", value: idea.script || "",
-    placeholder: "One line = one scene. First line = the hook.\nAdd footage words in brackets at the end of a line:\n\nWhat if Lamine Yamal signed for Real Madrid? [football stadium night, crowd cheering]\nThe Bernabéu explodes. [stadium fireworks]" });
+    placeholder: "One line = one scene. First line = the hook.\nAdd footage words in brackets at the end of a line:\n\nWhat if Lamine Yamal signed for Real Madrid? [football stadium night, crowd cheering]\nThe Bernabéu explodes. [stadium fireworks]\n\nOr one block per scene (every line but VO is optional):\n\nTITLE: YAMAL TO MADRID?\nVO: What if Lamine Yamal signed for Real Madrid?\nFOOTAGE: image: Lamine Yamal | video: football stadium night\nCARD: Lamine Yamal | 19 goals | #A50044 #004D98" });
   const counter = h("div", { class: "muted small" });
   const updateCount = () => {
-    const lines = f.script.value.split("\n").filter((l) => l.trim()).length;
-    const w = f.script.value.replace(/\[[^\]]*\]/g, " ").trim().split(/\s+/).filter(Boolean).length;
-    counter.textContent = `${lines} scene${lines === 1 ? "" : "s"} · ${w} words · about ${Math.round(w / 2.6)} s of voice`;
+    // voice lines only: VO: lines and plain lines; TITLE / FOOTAGE / CARD lines are not spoken
+    const voice = f.script.value.split("\n").map((l) => l.trim()).filter((l) => l && !/^(TITLE|FOOTAGE|CARD)\s*:/i.test(l))
+      .map((l) => l.replace(/^(VO|VOICE)\s*:\s*/i, "").replace(/\[[^\]]*\]\s*$/, "")).filter((l) => l.trim());
+    const w = voice.join(" ").trim().split(/\s+/).filter(Boolean).length;
+    counter.textContent = `${voice.length} scene${voice.length === 1 ? "" : "s"} · ${w} words · about ${Math.round(w / 2.6)} s of voice`;
   };
   f.script.addEventListener("input", updateCount); updateCount();
   f.terms = h("input", { id: "s-terms", class: "field", value: (idea.search_terms || []).join(", "), placeholder: "e.g. football stadium, night city, car showroom" });
@@ -660,7 +662,8 @@ async function studioEditor(ideaId) {
     project ? h("p", { class: "muted small", style: "margin:0", text: "Rebuilding keeps the voice and clip of every line you didn't change." }) : null,
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
-        field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene", f.script), counter,
+        field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
+        h("p", { class: "muted small", style: "margin:0", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
         field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
       h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),
         field("s-channel", "Channel", f.channel),
@@ -675,7 +678,7 @@ async function studioEditor(ideaId) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "2";
+const EDITOR_VERSION = "3";
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });

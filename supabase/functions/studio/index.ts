@@ -1,12 +1,14 @@
 // Video editor backend.
 // POST {action:"build", project_id?, idea_id?, channel_id?, title, script, language, voice, voice_rate, aspect, settings, default_terms?}
-//      -> splits the script into scenes (one line = one scene, optional "[term, term]" at the end of a line),
-//         finds stock clips per scene, starts the voice job. Returns {project_id}.
+//      -> splits the script into scenes (see script.ts: one line per scene, or TITLE/VO/FOOTAGE/CARD blocks),
+//         finds footage per scene, starts the voice job. Returns {project_id}.
 // POST {action:"voice", project_id, scene_ids?}   -> regenerate voice for some/all scenes
-// POST {action:"search", q, kind?: "video"|"image", aspect?, page?} -> stock footage candidates
+// POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates ("image: …" in q overrides kind)
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
 // Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { type Footage, parseScript, parseTerm } from "./script.ts";
+import { type Candidate, searchStock } from "./stock.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -33,26 +35,6 @@ async function dispatch(workflow: string, inputs: Record<string, string>): Promi
   return r.ok ? null : `GitHub dispatch failed (${r.status}): ${(await r.text()).slice(0, 300)}`;
 }
 
-// ---------- script -> scenes ----------
-type ParsedScene = { text: string; terms: string[] };
-export function parseScript(script: string): ParsedScene[] {
-  const lines = script.replace(/\r/g, "").split("\n").map((l) => l.trim()).filter(Boolean);
-  const out: ParsedScene[] = [];
-  for (const line of lines) {
-    const m = line.match(/^(.*?)\s*\[([^\]]*)\]\s*$/);
-    const text = (m ? m[1] : line).trim();
-    const terms = m ? m[2].split(",").map((t) => t.trim()).filter(Boolean).slice(0, 4) : [];
-    if (!text) continue;
-    const words = text.split(/\s+/).length;
-    if (words > 60) {
-      // long paragraph: one scene per sentence
-      const parts = text.match(/[^.!?…؟]+[.!?…؟]*/g)?.map((p) => p.trim()).filter(Boolean) ?? [text];
-      for (const p of parts) out.push({ text: p, terms });
-    } else out.push({ text, terms });
-  }
-  return out.slice(0, 120);   // long videos: ~120 scenes ≈ 25 min
-}
-
 const STOP = new Set(("the a an and or but if then of to in on at for with from by is are was were be been it its this that these those he she they we you i his her their our your " +
   "what when where who why how not no yes so very just can will would could should do does did has have had one two now than more most into out up down over after before " +
   "every each all any some him them me my mine about like").split(" "));
@@ -63,56 +45,35 @@ function autoTerm(text: string, language: string): string | null {
 }
 
 // ---------- stock footage ----------
-type Candidate = { type: "video" | "image"; source: string; id: string; url: string; preview: string; thumb: string; duration: number | null; width: number; height: number; tags: string; page: string };
-async function pixabay(q: string, kind: "video" | "image", aspect: string, page = 1): Promise<Candidate[]> {
-  if (!PIXABAY || !q.trim()) return [];
-  const params = new URLSearchParams({ key: PIXABAY, q: q.slice(0, 100), safesearch: "true", per_page: "20", page: String(page) });
-  if (kind === "image") { params.set("image_type", "photo"); if (aspect === "9:16") params.set("orientation", "vertical"); }
-  const r = await fetch(`https://pixabay.com/api/${kind === "video" ? "videos/" : ""}?${params}`);
-  if (!r.ok) return [];
-  const data = await r.json();
-  const vertical = aspect === "9:16";
-  const hits: Candidate[] = (data.hits || []).map((h: any) => {
-    if (kind === "video") {
-      const v = h.videos || {};
-      const big = v.large?.url ? v.large : v.medium;
-      const small = v.tiny?.url ? v.tiny : v.small;
-      if (!big?.url) return null;
-      return { type: "video", source: "pixabay", id: String(h.id), url: big.url, preview: small?.url || big.url, thumb: v.medium?.thumbnail || v.small?.thumbnail || big.thumbnail || "",
-        duration: h.duration ?? null, width: big.width, height: big.height, tags: h.tags || "", page: h.pageURL || "" };
-    }
-    return { type: "image", source: "pixabay", id: String(h.id), url: h.largeImageURL, preview: h.webformatURL, thumb: h.previewURL, duration: null,
-      width: h.imageWidth, height: h.imageHeight, tags: h.tags || "", page: h.pageURL || "" };
-  }).filter(Boolean);
-  // orientation that matches the video first
-  return hits.sort((a, b) => Number((b.height > b.width) === vertical) - Number((a.height > a.width) === vertical));
-}
-
+const FOOTAGE = new Set(["video", "image", "both"]);
 const searchCache = new Map<string, Promise<Candidate[]>>();
 let budget = 80;  // max Pixabay calls per request, stays under the per-minute limit
-function cachedSearch(t: string, aspect: string): Promise<Candidate[]> {
-  const key = `${aspect}|${t.toLowerCase()}`;
+function cachedSearch(term: string, footage: Footage, aspect: string): Promise<Candidate[]> {
+  const { kind, q } = parseTerm(term, footage);
+  const key = `${aspect}|${kind}|${q.toLowerCase()}`;
   if (!searchCache.has(key)) {
-    if (budget <= 0) return Promise.resolve([]);
-    budget--;
-    searchCache.set(key, pixabay(t, "video", aspect));
+    const calls = kind === "both" ? 2 : 1;
+    if (budget < calls) return Promise.resolve([]);
+    budget -= calls;
+    searchCache.set(key, searchStock(PIXABAY, q, kind, aspect));
   }
   return searchCache.get(key)!;
 }
 
-async function candidatesFor(terms: string[], aspect: string, need: number): Promise<Candidate[]> {
+async function candidatesFor(terms: string[], footage: Footage, aspect: string, need: number): Promise<Candidate[]> {
   const seen = new Set<string>();
   const out: Candidate[] = [];
   for (const t of terms) {
     if (out.length >= 8) break;
-    for (const c of await cachedSearch(t, aspect)) {
-      if (seen.has(c.id)) continue;
-      seen.add(c.id); out.push(c);
+    for (const c of await cachedSearch(t, footage, aspect)) {
+      if (seen.has(`${c.source}-${c.id}`)) continue;
+      seen.add(`${c.source}-${c.id}`); out.push(c);
       if (out.length >= 8) break;
     }
   }
-  // long enough clips first, keep orientation order otherwise
-  return out.sort((a, b) => Number((b.duration ?? 0) >= need) - Number((a.duration ?? 0) >= need));
+  // videos too short for the line go last; photos stretch to any length; otherwise keep the script's term order
+  const short = (c: Candidate) => Number(c.type === "video" && (c.duration ?? 0) < need);
+  return out.sort((a, b) => short(a) - short(b));
 }
 
 // ---------- handlers ----------
@@ -127,8 +88,8 @@ Deno.serve(async (req) => {
     const body = await req.json();
 
     if (body.action === "search") {
-      const kind = body.kind === "image" ? "image" : "video";
-      const results = await pixabay(String(body.q || ""), kind, String(body.aspect || "9:16"), Math.min(Math.max(Number(body.page) || 1, 1), 10));
+      const { kind, q } = parseTerm(String(body.q || ""), FOOTAGE.has(body.kind) ? body.kind : "video");
+      const results = await searchStock(PIXABAY, q, kind, String(body.aspect || "9:16"), Math.min(Math.max(Number(body.page) || 1, 1), 10));
       return json({ results, configured: !!PIXABAY });
     }
 
@@ -181,12 +142,16 @@ Deno.serve(async (req) => {
         const terms = p.terms.length ? p.terms : (prev?.terms?.length ? prev.terms : [autoTerm(p.text, language)].filter(Boolean) as string[]);
         const searchTerms = [...terms, ...defaults.slice(idx % Math.max(defaults.length, 1)), ...defaults].filter(Boolean);
         const need = p.text.split(/\s+/).length / 2.6;
-        const keepClip = prev?.clip && (!p.terms.length || JSON.stringify(p.terms) === JSON.stringify(prev.terms));
-        const candidates = keepClip ? (prev.candidates || []) : await candidatesFor([...new Set(searchTerms)], aspect, need);
+        // fields the script doesn't mention keep what was set in the editor
+        const footage: Footage = p.footage ?? (FOOTAGE.has(prev?.footage) ? prev.footage : "video");
+        const title = p.title !== undefined ? p.title : prev?.title ?? null;
+        const card = p.card !== undefined ? p.card : prev?.card ?? null;
+        const keepClip = prev?.clip && (!p.terms.length || JSON.stringify(p.terms) === JSON.stringify(prev.terms)) && footage === prev.footage;
+        const candidates = keepClip ? (prev.candidates || []) : await candidatesFor([...new Set(searchTerms)], footage, aspect, need);
         const clip = keepClip ? prev.clip : null;  // picked below so scenes don't repeat the same clip
         const keepVoice = sameVoice && prev?.voice_path && prev.voice_text === p.text;
         return {
-          project_id: projectId, idx, text: p.text, terms, clip, candidates,
+          project_id: projectId, idx, text: p.text, terms, title, footage, card, clip, candidates,
           voice_path: keepVoice ? prev.voice_path : null, voice_text: keepVoice ? prev.voice_text : null,
           voice_duration: keepVoice ? prev.voice_duration : null, words: keepVoice ? prev.words : null,
         };

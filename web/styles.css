@@ -216,6 +216,10 @@ td.num.plain { font-family: inherit; }
 .ed-cand i { position: absolute; right: 3px; bottom: 3px; font-style: normal; font-size: 10px; color: #fff; background: rgba(0,0,0,.6); border-radius: 4px; padding: 0 4px; }
 .ed-cand.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 .ed-trim { width: 80px; min-height: 36px !important; }
+.ed-search .ed-kind { flex: 0 0 auto; width: auto; }
+.ed-more { border-top: 1px solid var(--line-soft); padding-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+.ed-more > summary { cursor: pointer; font-size: 13.5px; font-weight: 500; color: var(--muted); min-height: 32px; display: flex; align-items: center; }
+.ed-more[open] > summary { color: var(--ink); }
 .ed-panel { display: flex; flex-direction: column; gap: 12px; }
 .ed-panel h3 { margin-top: 6px; }
 .ed-label { font-size: 12.5px; color: var(--muted); }

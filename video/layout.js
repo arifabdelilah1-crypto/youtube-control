@@ -10,6 +10,7 @@ export const WORDS_PER_SECOND = 2.6;
 export const DEFAULT_SETTINGS = {
   captions: { enabled: true, position: "bottom", color: "#FFFFFF", highlight: "#FFE600", size: 84, uppercase: true, words: 3 },
   hook: { enabled: true, text: "" },
+  titles: { enabled: true },
   progress: { enabled: true, color: "#FFE600" },
   sfx: { enabled: true, volume: 0.5 },
   music: { mood: "none", track_id: null, volume: 0.22, start: 0 },
@@ -20,10 +21,47 @@ export function mergeSettings(s = {}) {
   return {
     captions: { ...d.captions, ...(s.captions || {}) },
     hook: { ...d.hook, ...(s.hook || {}) },
+    titles: { ...d.titles, ...(s.titles || {}) },
     progress: { ...d.progress, ...(s.progress || {}) },
     sfx: { ...d.sfx, ...(s.sfx || {}) },
     music: { ...d.music, ...(s.music || {}) },
   };
+}
+
+/**
+ * "€180M market value" -> {pre: "€", value: 180, decimals: 0, grouped: false, suf: "M", label: "market value"}.
+ * value is null when the stat doesn't start with a number (then it is shown as plain text).
+ */
+export function parseStat(stat = "") {
+  const m = String(stat).trim().match(/^([^\d\s]{0,2})\s?(\d[\d,.]*)([^\s\d]{0,3})\s*(.*)$/);
+  if (!m) return { pre: "", value: null, decimals: 0, grouped: false, suf: "", label: String(stat).trim() };
+  const [, pre, digits, suf, label] = m;
+  const grouped = /^\d{1,3}(,\d{3})+$/.test(digits);   // "2,000"; "1,5" is a decimal comma
+  const clean = grouped ? digits.replace(/,/g, "") : digits.replace(/,/g, ".");
+  const decimals = clean.includes(".") ? clean.split(".").pop().length : 0;
+  const value = Number(clean);
+  return Number.isFinite(value) ? { pre, value, decimals, grouped, suf, label } : { pre: "", value: null, decimals: 0, grouped: false, suf: "", label: String(stat).trim() };
+}
+
+/** Credit lines for photos whose licence asks for one (Wikimedia Commons). Empty string when none. */
+export function creditsText(scenes) {
+  const seen = new Set();
+  const lines = [];
+  for (const s of [...scenes].sort((a, b) => a.idx - b.idx)) {
+    const c = s.clip;
+    if (!c || c.source !== "wikimedia" || seen.has(c.page || c.id)) continue;
+    seen.add(c.page || c.id);
+    lines.push(`- "${c.tags || "Photo"}" by ${c.author || "unknown author"}, ${c.license || "see file page"}, via Wikimedia Commons: ${c.page}`);
+  }
+  return lines.length ? `Credits:\n${lines.join("\n")}` : "";
+}
+
+/** Description with its "Credits:" block replaced (or added at the end, or removed when there are no credits). */
+export function withCredits(description = "", credits = "") {
+  const i = description.search(/(^|\n)Credits:\n/);
+  const base = (i >= 0 ? description.slice(0, i) : description).replace(/\s+$/, "");
+  if (!credits) return base;
+  return base ? `${base}\n\n${credits}` : credits;
 }
 
 const RTL_LANGS = new Set(["ar", "he", "fa", "ur"]);
@@ -70,8 +108,11 @@ export function buildProps(project, scenes, urls = {}) {
     const dur = Math.max(1, Math.round(secs * FPS));
     const words = voiceOk && Array.isArray(s.words) && s.words.length ? s.words : estimatedWords(s.text, sceneSeconds(s));
     const clip = s.clip || { type: "card" };
+    const card = s.card?.name ? { name: s.card.name, stat: parseStat(s.card.stat), colors: (s.card.colors || []).filter(Boolean).slice(0, 2) } : null;
     const scene = {
       id: s.id, from, dur, text: s.text,
+      title: settings.titles.enabled && s.title ? s.title : null,
+      card,
       voiceUrl: voiceOk ? urls.voice[s.id] : null,
       groups: captionGroups(words, settings.captions.words || 3),
       clip: {
@@ -79,6 +120,8 @@ export function buildProps(project, scenes, urls = {}) {
         url: clip.path ? urls.media?.[clip.path] || null : clip.url || null,
         trim: Number(clip.trim || 0),
         duration: clip.duration ? Number(clip.duration) : null,
+        width: Number(clip.width) || null,
+        height: Number(clip.height) || null,
       },
     };
     from += dur;
@@ -110,6 +153,8 @@ export function preRenderCheck(project, scenes) {
   if (outdated) issues.push({ level: "block", text: `${outdated} scene(s) were edited after their voice was made. Press “Update voice”.` });
   const cards = ordered.filter((s) => !s.clip || s.clip.type === "card").length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
+  const wiki = ordered.filter((s) => s.clip?.source === "wikimedia").length;
+  if (wiki) issues.push({ level: "warn", text: `${wiki} scene(s) use Wikimedia photos. Their licences need the credit lines below in the video description.` });
   const total = ordered.reduce((t, s) => t + sceneSeconds(s) + SCENE_GAP, 0) + TAIL;
   if (project.aspect === "9:16" && total > 180) issues.push({ level: "block", text: `Video is ${Math.round(total)} s. Shorts can be 3 minutes at most.` });
   else if (project.aspect === "9:16" && total > 60) issues.push({ level: "warn", text: `Video is ${Math.round(total)} s. Allowed, but Shorts under 60 s usually keep viewers better.` });

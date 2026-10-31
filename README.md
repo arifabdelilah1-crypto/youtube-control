@@ -64,12 +64,26 @@ the project cap is 9,500 of Google's 10,000 daily units.
 
 ## Studio (video editor)
 
-Flow: **Studio → script page** (one line = one scene, optional `[footage words]` at the end of a line) →
-**Create scenes** → **Editor** (live preview, clip per scene, captions, hook, music, sound effects) → **Render final video**.
+Flow: **Studio → script page** → **Create scenes** → **Editor** (live preview, clip or photo per scene, scene titles,
+name/stat cards, captions, hook, music, sound effects) → **Render final video**.
+
+Script formats (mixable):
+
+    What if Lamine Yamal signed for Real Madrid? [football stadium night, crowd cheering]
+
+    TITLE: YAMAL TO MADRID?
+    VO: What if Lamine Yamal signed for Real Madrid?
+    FOOTAGE: image: Lamine Yamal | video: football stadium night
+    CARD: Lamine Yamal | 19 goals | #A50044 #004D98
+
+Only `VO:` is required. `image:` terms search photos (Wikimedia Commons for real people, places and cars, plus Pixabay),
+`video:` terms search Pixabay clips. Photos get a slow zoom/pan; photos much wider than the frame sit on a blurred copy
+of themselves instead of being cropped. Wikimedia photos need a credit: the editor shows the lines and adds them to
+the idea's description when you render.
 
 | Part | Where |
 |---|---|
-| Scenes + stock clip search | `studio` edge function (Pixabay) |
+| Scenes + footage search | `studio` edge function: `script.ts` (parser), `stock.ts` (Pixabay, Wikimedia Commons) |
 | Voice + word timings | `prepare.yml` → `collectors/prepare_job.py` (Edge TTS) |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
 | Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the private `renders` bucket |
