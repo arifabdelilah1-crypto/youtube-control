@@ -42,6 +42,11 @@ Then add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` as Supabase **Edge Functi
 (Supabase → Edge Functions → Secrets). The consent screen must be **In production**, otherwise
 Google expires the connection after 7 days.
 
+Impressions and CTR: also enable the **YouTube Reporting API** in the same Google Cloud project. The Analytics API
+has no impressions metric, so `channel-sync` creates a daily reach report per connected channel
+(`channel_reach_basic_a1`) and imports it. First numbers arrive about 2 days after the first sync, then daily,
+about 2 days behind. Views, likes and comments are live at every **Refresh now**.
+
 ### 3. Supabase Auth
 Supabase → Authentication → URL Configuration: set **Site URL** to your dashboard URL
 (e.g. `https://<user>.github.io/youtube-control/`) and add it to **Redirect URLs**.

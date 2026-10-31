@@ -707,6 +707,20 @@ VIEWS.channels = async () => {
   ];
 };
 
+// Impressions come from YouTube's daily reports: say why they're missing instead of showing an empty number.
+function reachNotice(c) {
+  if (!c?.connected || !c.reach_error) return null;
+  const url = c.reach_error.match(/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s"]+/)?.[0]?.replace(/[.,)]+$/, "");
+  const disabled = /has not been used|is disabled|SERVICE_DISABLED/i.test(c.reach_error);
+  return h("section", { class: "card", style: "border-color:#E8C27A" },
+    h("h2", { text: disabled ? "Impressions need one setting in Google Cloud" : "Impressions couldn't be imported" }),
+    h("p", { class: "muted small", style: "margin:0", text: disabled
+      ? "Enable the “YouTube Reporting API” in the Google Cloud project used for sign-in, then press Refresh now. YouTube then takes about 2 days to prepare the first impressions file."
+      : c.reach_error }),
+    url ? h("div", {}, h("a", { class: "btn small", href: url, target: "_blank", rel: "noopener", text: "Open Google Cloud" })) : null);
+}
+const ctrText = (c) => (c === null || c === undefined ? "—" : `${(Number(c) * 100).toFixed(1)}%`);
+
 VIEWS.channel = async (route) => {
   const id = route.id;
   const tab = route.params.get("tab") || "overview";
@@ -720,20 +734,33 @@ VIEWS.channel = async (route) => {
         h("div", { class: "muted small" }, `${ch.niche_name || "No niche"} · `, ch.connected ? h("span", { class: "up", text: "Connected" }) : h("span", { class: "flat", text: "Public stats only" })))),
     h("div", { class: "row" },
       h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this channel" }),
-      h("button", { class: "btn", type: "button", text: "Refresh", onclick: (e) => refreshChannel(id, e.currentTarget) }),
+      h("span", { class: "muted small", title: chRow?.stats_synced_at ? when(chRow.stats_synced_at) : "", text: `Updated ${chRow?.stats_synced_at ? ago(chRow.stats_synced_at) : "—"}` }),
+      h("button", { class: "btn", type: "button", text: "Refresh now", onclick: (e) => refreshChannel(id, e.currentTarget) }),
       ch.connected ? null : h("button", { class: "btn primary", type: "button", text: "Connect with Google", onclick: startOAuth })));
+  const statLine = (v) => [`${fmtc(v.views)} views`, `${fmtc(v.likes)} likes`, v.impressions_28d !== null && v.impressions_28d !== undefined ? `${fmtc(v.impressions_28d)} impr.` : null].filter(Boolean).join(" · ");
   const tabs = h("div", { class: "tabs", role: "tablist" },
     [["overview", "Overview"], ["videos", "Videos"], ["search", "Search terms"], ["audience", "Audience"]].map(([v, t]) =>
       h("button", { role: "tab", type: "button", "aria-selected": String(v === tab), text: t, onclick: () => setParams(route, { tab: v }) })));
   let body;
   if (tab === "overview") {
-    const vids = await q(sb.from("v_own_video_latest").select("*").eq("channel_id", id).order("published_at", { ascending: false }).limit(6));
+    const since = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+    const [vids, reach] = await Promise.all([
+      q(sb.from("v_own_video_latest").select("*").eq("channel_id", id).order("published_at", { ascending: false }).limit(6)),
+      q(sb.from("channel_daily_stats").select("day,impressions,impressions_ctr").eq("channel_id", id).gt("day", since).not("impressions", "is", null)),
+    ]);
+    const impressions = reach.reduce((a, r) => a + Number(r.impressions), 0);
+    const clicked = reach.filter((r) => r.impressions_ctr !== null);
+    const ctr = clicked.length ? clicked.reduce((a, r) => a + Number(r.impressions) * Number(r.impressions_ctr), 0) / (clicked.reduce((a, r) => a + Number(r.impressions), 0) || 1) : null;
+    const lastReach = reach.map((r) => r.day).sort().pop();
     const k = (label, value, d) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", style: "font-size:24px", text: value }), d);
     body = [
       h("section", { class: "kpis" }, k("Subscribers", fmt(ch.subscribers)),
         k("Views (28 d)", ch.connected ? fmt(ch.views) : "—", ch.connected ? delta(ch.views, ch.views_prev) : null),
+        k("Impressions (28 d)", reach.length ? fmt(impressions) : "—",
+          h("span", { class: "flat", text: reach.length ? `CTR ${ctrText(ctr)} · to ${lastReach}` : !ch.connected ? "Connect with Google to see this" : chRow?.reach_error ? "Needs setup, see below" : "First numbers about 2 days after the first refresh" })),
         k("Watch hours (28 d)", ch.connected ? fmt(ch.watch_hours) : "—", ch.connected ? delta(ch.watch_hours, ch.watch_hours_prev) : null),
         k("Uploads (28 d)", fmt(ch.uploads))),
+      reachNotice(chRow),
       h("div", { class: "cols" },
         h("section", { class: "card grow2" }, h("h2", { text: "Monetization" }), yppRow("Subscribers", ch.subscribers, 1000, ""),
           ch.connected ? yppRow("Watch hours, 12 months", ch.watch_hours_12m, 8000, " h") : h("p", { class: "muted small", text: "Connect with Google to track watch hours." }),
@@ -741,18 +768,22 @@ VIEWS.channel = async (route) => {
         h("section", { class: "card grow3" }, h("h2", { text: "Latest videos vs channel average" }),
           vids.length ? vids.map((v) => h("div", { class: "listrow" }, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
             h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "flex:1 1 220px;min-width:0;font-weight:500;color:inherit", text: v.title }),
-            h("span", { class: "mono small", text: fmt(v.views) }), multPill(v.vs_baseline))) : empty("No videos yet."))),
+            h("span", { class: "mono small", text: statLine(v) }), multPill(v.vs_baseline))) : empty("No videos yet."))),
     ];
   } else if (tab === "videos") {
     const vids = await q(sb.from("v_own_video_latest").select("*").eq("channel_id", id).order("published_at", { ascending: false }).limit(100));
-    body = h("section", { class: "card" }, vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:640px" },
-      h("thead", {}, h("tr", {}, ["Video", "Type", "Published", "Views", "Likes", "vs average"].map((t, i) => h("th", { class: i > 2 ? "num" : null, text: t })))),
+    body = [reachNotice(chRow), h("section", { class: "card" },
+      h("p", { class: "muted small", style: "margin:0", text: "Views, likes and comments are YouTube’s live counts at the last refresh. Impressions and CTR cover the last 28 days of YouTube’s daily reports, about 2 days behind; Shorts swiped in the Shorts feed don’t count as thumbnail impressions." }),
+      vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:860px" },
+      h("thead", {}, h("tr", {}, ["Video", "Type", "Published", "Views", "Likes", "Comments", "Impressions", "CTR", "vs average"].map((t, i) => h("th", { class: i > 2 ? "num" : null, text: t })))),
       h("tbody", {}, vids.map((v) => h("tr", {},
         h("td", {}, h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: v.title })),
         h("td", {}, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" })),
         h("td", { class: "muted", text: v.published_at ? new Date(v.published_at).toLocaleDateString("en-GB") : "—" }),
-        h("td", { class: "num", text: fmt(v.views) }), h("td", { class: "num", text: fmt(v.likes) }), h("td", { class: "num" }, multPill(v.vs_baseline)))))))
-      : empty("No videos yet."));
+        h("td", { class: "num", text: fmt(v.views) }), h("td", { class: "num", text: fmt(v.likes) }), h("td", { class: "num", text: fmt(v.comments) }),
+        h("td", { class: "num", text: fmt(v.impressions_28d) }), h("td", { class: "num", text: ctrText(v.ctr_28d) }),
+        h("td", { class: "num" }, multPill(v.vs_baseline)))))))
+      : empty("No videos yet."))];
   } else if (tab === "search") {
     const terms = await q(sb.from("channel_search_terms").select("*").eq("channel_id", id).order("period_end", { ascending: false }).order("views", { ascending: false }).limit(60));
     const latest = terms[0]?.period_end, cur = terms.filter((t) => t.period_end === latest);
@@ -919,7 +950,7 @@ async function refreshChannel(channelId, btn) {
     const errs = Object.values(data?.details || {}).filter((d) => d.error).map((d) => d.error);
     toast(errs.length ? `Refreshed with issues: ${errs[0]}` : "Stats refreshed");
     await loadShared(); render();
-  } catch (e) { toast(`Refresh failed: ${e.message || e}`); if (btn) { btn.disabled = false; btn.textContent = "Refresh"; } }
+  } catch (e) { toast(`Refresh failed: ${e.message || e}`); if (btn) { btn.disabled = false; btn.textContent = channelId ? "Refresh now" : "Refresh stats"; } }
 }
 async function startOAuth() {
   try {

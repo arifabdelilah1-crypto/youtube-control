@@ -2,7 +2,9 @@
 // Called: right after a channel is connected, by the dashboard's "Refresh stats" button,
 // and every 6 h by pg_cron. Body: {channel_id?} — omit to sync every channel.
 // Auth: an allow-listed dashboard user's JWT, or the x-cron-secret header (value kept in Vault).
+// Views / likes / comments are current at sync time; impressions come from daily reports (reach.ts).
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { syncReach } from "./reach.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -111,7 +113,8 @@ async function syncChannel(ch: any) {
     await db.from("keywords").upsert(terms.map((t: any) => ({ niche_id: ch.niche_id, market, term: String(t.insightTrafficSourceDetail).toLowerCase(), source: "channel_search" })),
       { onConflict: "niche_id,market,term", ignoreDuplicates: true });
   }
-  return { ...info, search_terms: terms.length, breakdowns: bd.length };
+  const reach = await syncReach(db, ch, token);
+  return { ...info, search_terms: terms.length, breakdowns: bd.length, ...reach };
 }
 
 Deno.serve(async (req) => {
@@ -136,7 +139,10 @@ Deno.serve(async (req) => {
   const details: Record<string, unknown> = {};
   let status = "ok";
   for (const ch of channels || []) {
-    try { details[ch.title] = await syncChannel(ch); }
+    try {
+      details[ch.title] = await syncChannel(ch);
+      await db.from("channels").update({ stats_synced_at: new Date().toISOString() }).eq("id", ch.id);
+    }
     catch (e) { details[ch.title] = { error: String((e as Error).message) }; status = "warning"; }
   }
   await db.from("job_runs").update({ status, finished_at: new Date().toISOString(), details }).eq("id", run.id);
