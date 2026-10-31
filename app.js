@@ -427,8 +427,13 @@ function videoCard(v, scope) {
         h("div", {}, h("span", { text: "Views" }), h("span", { class: "mono", text: fmtc(v.views) })),
         h("div", {}, h("span", { text: "Views / day" }), h("span", { class: "mono", text: fmtc(v.views_per_hour * 24) })),
         h("div", {}, h("span", { text: "Engagement" }), h("span", { class: "mono", text: `${v.engagement_pct ?? "—"}%` }))),
-      h("button", { class: "btn small", type: "button", style: "margin-top:auto", text: "Save as idea", onclick: () => makeIdea({ title: v.title, niche_id: scope?.global ? null : v.niche_id,
-        score: Math.min(100, Math.round(40 + Number(v.outlier_score || 0) * 3)), sources: [{ type: "outlier", ref: v.youtube_video_id }] }) })));
+      h("button", { class: "btn small", type: "button", style: "margin-top:auto", text: "Save as idea", onclick: async (e) => {
+        e.currentTarget.disabled = true; e.currentTarget.textContent = "Saved ✓";
+        const idea = await makeIdea({ title: v.title, niche_id: scope?.global ? null : v.niche_id, channel_id: state.channel !== "all" ? state.channel : null,
+          score: Math.min(100, Math.round(40 + Number(v.outlier_score || 0) * 3)), sources: [{ type: "outlier", ref: v.youtube_video_id }] });
+        // copy the outlier's details now (title, stats, top comments) so the AI can study its format later
+        sb.functions.invoke("ai", { body: { action: "capture", idea_id: idea.id } }).catch(() => {});
+      } })));
 }
 
 VIEWS.keyword = async (route) => {
@@ -551,6 +556,25 @@ VIEWS.keyword = async (route) => {
 };
 
 // ==================================================================
+// AI pipeline (DeepSeek): outlier snapshot -> format blueprint -> new script for the channel
+// ==================================================================
+async function aiCall(body) {
+  const { data, error } = await sb.functions.invoke("ai", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+/** Runs the missing steps for an idea. onStep(label) reports progress. Returns the fresh idea row. */
+async function generateScript(idea, { channel_id, angle, aspect } = {}, onStep = () => {}) {
+  const isOutlier = (idea.sources || []).some((s) => s.type === "outlier");
+  if (isOutlier && !idea.source_video) { onStep("Reading the outlier…"); await aiCall({ action: "capture", idea_id: idea.id }); }
+  if (isOutlier && !idea.blueprint) { onStep("Studying its format…"); await aiCall({ action: "blueprint", idea_id: idea.id }); }
+  onStep("Writing the script…");
+  await aiCall({ action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, angle: angle || null, aspect: aspect || null });
+  return q(sb.from("ideas").select("*").eq("id", idea.id).single());
+}
+
+// ==================================================================
 // Ideas
 // ==================================================================
 // Columns light up like tally lamps: idle, in progress (amber), ready (green), on air (red).
@@ -577,11 +601,21 @@ VIEWS.ideas = async () => {
       h("div", { class: "col-head" }, h("h3", { text: name }), h("span", { class: "mono small muted", text: String(cards.length) })),
       h("div", { class: "muted small col-hint", text: hint }),
       cards.map((i) => h("article", { class: "icard" },
-        h("div", { class: "meta" }, scorePill(i.score), h("span", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" })),
+        h("div", { class: "meta" }, scorePill(i.score), h("span", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" }),
+          (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null),
         h("a", { class: "title", href: `#/studio/${i.id}`, text: i.video_title || i.title }),
+        i.ai_status && i.ai_status !== "ready" ? h("span", { class: `pill ${i.ai_status === "failed" ? "crit" : "info"}`, title: i.ai_error || "", text: { capturing: "Reading outlier", analyzing: "Studying format", writing: "Writing script", failed: "AI failed" }[i.ai_status] }) : null,
         h("div", { class: "acts" },
+          ci <= 2 && !i.script ? h("button", { class: "btn small primary", type: "button", text: "✨ Generate script", onclick: async (e) => {
+            const btn = e.currentTarget;
+            const channel_id = i.channel_id || (state.channel !== "all" ? state.channel : null);
+            if (!channel_id) return toast("Pick a channel in the top bar first (the script is written for that channel).");
+            btn.disabled = true;
+            try { await generateScript(i, { channel_id }, (t) => { btn.textContent = t; }); toast("Script ready: open it in Studio"); go(`#/studio/${i.id}`); }
+            catch (err) { toast(err.message); render(); }
+          } }) : null,
           ci === 0 ? h("button", { class: "btn small", type: "button", text: "Shortlist", onclick: () => update(i.id, { stage: "shortlisted" }) }) : null,
-          ci === 1 || ci === 2 ? h("a", { class: "btn small primary", href: `#/studio/${i.id}`, text: "Open in Studio" }) : null,
+          ci === 1 || ci === 2 ? h("a", { class: `btn small${i.script ? " primary" : ""}`, href: `#/studio/${i.id}`, text: "Open in Studio" }) : null,
           ci === 3 ? h("button", { class: "btn small", type: "button", text: "Mark published", onclick: () => update(i.id, { stage: "published" }) }) : null,
           h("button", { class: "btn small ghost icon", type: "button", title: "Archive", "aria-label": `Archive “${i.video_title || i.title}”`, onclick: () => update(i.id, { stage: "archived" }) }, icon("i-x"))))));
   })));
@@ -676,6 +710,14 @@ async function studioEditor(ideaId) {
   f.tags = h("input", { id: "s-tags", class: "field", value: (idea.video_tags || []).join(", ") });
 
   const terms = () => f.terms.value.split(",").map((t) => t.trim()).filter(Boolean);
+  // AI suggestions (hook text, music mood) go into the editor settings unless the project already has its own
+  const withAi = (settings) => {
+    const ai = idea.ai || {};
+    const out = JSON.parse(JSON.stringify(settings || {}));
+    if (ai.hook_text && !out.hook?.text) out.hook = { enabled: true, ...(out.hook || {}), text: ai.hook_text };
+    if (ai.music_mood && ai.music_mood !== "none" && (!out.music || !out.music.mood || out.music.mood === "none")) out.music = { volume: 0.22, start: 0, ...(out.music || {}), mood: ai.music_mood, track_id: null };
+    return out;
+  };
   const save = async (quiet) => {
     const early = ["new", "shortlisted", "assigned"].includes(idea.stage);
     const stage = early ? (f.script.value.trim() ? "scripted" : "assigned") : idea.stage;
@@ -694,7 +736,7 @@ async function studioEditor(ideaId) {
       const { data, error } = await sb.functions.invoke("studio", { body: {
         action: "build", project_id: project?.id || null, idea_id: ideaId, channel_id: f.channel.value || null,
         title: f.title.value.trim(), script: f.script.value, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value,
-        settings: project?.settings || chosen?.video_style?.editor || {}, default_terms: terms(),
+        settings: withAi(project?.settings || chosen?.video_style?.editor || {}), default_terms: terms(),
       } });
       if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
       if (data.error) toast(data.error);
@@ -710,11 +752,14 @@ async function studioEditor(ideaId) {
     await loadShared(); toast("Saved as channel default");
   } });
 
+  const aiPanel = studioAiPanel(idea, f, buildBtn);
+
   return [
     h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: project?.title || idea.video_title || idea.title })),
       h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }), buildBtn,
         project ? h("a", { class: "btn primary", href: `#/edit/${project.id}`, text: "Open editor →" }) : null)),
     project ? h("p", { class: "muted small", style: "margin:0", text: "Rebuilding keeps the voice and clip of every line you didn't change." }) : null,
+    aiPanel,
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
         field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
@@ -732,8 +777,67 @@ async function studioEditor(ideaId) {
   ];
 }
 
+// "AI script" card on the script page: the outlier it copies the format of, its blueprint, and the generator.
+function studioAiPanel(idea, f, buildBtn) {
+  const src = idea.source_video;
+  const bp = idea.blueprint;
+  const ai = idea.ai;
+  const isOutlier = (idea.sources || []).some((x) => x.type === "outlier");
+  const angle = h("input", { id: "ai-angle", class: "field", dir: "auto", placeholder: "Optional: your twist, e.g. “make it about Real Madrid instead of Barça”" });
+  const transcript = h("textarea", { id: "ai-transcript", class: "field", rows: "4", dir: "auto", value: idea.transcript || "",
+    placeholder: "Optional: on YouTube open the video → ··· → Show transcript, copy it and paste it here. The AI then copies the structure more precisely.",
+    onchange: async (e) => { await q(sb.from("ideas").update({ transcript: e.target.value.trim() || null, blueprint: null }).eq("id", idea.id)); idea.transcript = e.target.value; idea.blueprint = null; toast("Transcript saved"); } });
+  const status = h("span", { class: "muted small", role: "status" });
+  const run = async (btn, thenBuild) => {
+    if (!f.channel.value) return toast("Pick the channel first (right column): the script is written in its language for its audience.");
+    btn.disabled = true;
+    try {
+      await q(sb.from("ideas").update({ channel_id: f.channel.value }).eq("id", idea.id));
+      const fresh = await generateScript({ ...idea, channel_id: f.channel.value }, { channel_id: f.channel.value, angle: angle.value.trim(), aspect: f.aspect.value }, (t) => { status.textContent = t; });
+      Object.assign(idea, fresh);
+      f.title.value = fresh.video_title || f.title.value;
+      f.script.value = fresh.script || ""; f.script.dispatchEvent(new Event("input"));
+      f.desc.value = fresh.video_description || ""; f.tags.value = (fresh.video_tags || []).join(", ");
+      f.terms.value = (fresh.search_terms || []).join(", ");
+      status.textContent = "";
+      if (thenBuild) { buildBtn.click(); return; }
+      toast("Script ready: check it, then Create scenes"); render();
+    } catch (e) { status.textContent = ""; toast(e.message); btn.disabled = false; }
+  };
+  const genBtn = h("button", { class: `btn ${idea.script ? "" : "primary"}`, type: "button", text: idea.script ? "Regenerate script" : "✨ Generate script", onclick: (e) => run(e.currentTarget, false) });
+  const goBtn = h("button", { class: "btn primary", type: "button", text: "✨ Generate & build video", onclick: (e) => run(e.currentTarget, true) });
+
+  const field = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
+  return h("section", { class: "card ai-card" },
+    h("div", { class: "card-head" }, h("h2", { text: "AI script" }), h("span", { class: "muted small", text: "DeepSeek copies the format, writes new words for your channel" })),
+    src ? h("div", { class: "ai-src" },
+      src.thumbnail ? h("a", { href: src.url, target: "_blank", rel: "noopener", class: "ai-thumb" }, h("img", { src: src.thumbnail, alt: "" })) : null,
+      h("div", { style: "min-width:0;display:flex;flex-direction:column;gap:4px" },
+        h("a", { href: src.url, target: "_blank", rel: "noopener", style: "font-weight:600;color:inherit", text: src.title }),
+        h("div", { class: "muted small", text: `${src.channel_title || ""} · ${fmtc(src.channel_subscribers)} subs · ${fmtc(src.views)} views · ${fmtc(src.views_per_day)}/day${src.outlier_score ? ` · ${Number(src.outlier_score).toFixed(1)}× outlier` : ""}${src.duration_s ? ` · ${src.duration_s} s` : ""}` }),
+        src.keyword ? h("div", { class: "muted small", text: `Ranks for “${src.keyword}”` }) : null))
+      : isOutlier ? h("p", { class: "muted small", style: "margin:0", text: "The outlier's details are copied when you generate." })
+      : h("p", { class: "muted small", style: "margin:0", text: "Not saved from an outlier: the AI picks a proven Shorts format for the title and your keywords." }),
+    bp ? h("details", { class: "ai-bp" }, h("summary", { text: `Format: ${bp.format || "—"} · ${bp.length_seconds ? Math.round(bp.length_seconds) + " s" : ""} · hook: ${bp.hook?.type || "—"}` }),
+      h("div", { class: "small", style: "display:flex;flex-direction:column;gap:6px" },
+        bp.hook?.pattern ? h("div", {}, h("b", { text: "Hook pattern: " }), bp.hook.pattern) : null,
+        bp.beats?.length ? h("div", {}, h("b", { text: "Beats: " }), bp.beats.map((b) => b.role).join(" → ")) : null,
+        bp.title_pattern ? h("div", {}, h("b", { text: "Title pattern: " }), bp.title_pattern) : null,
+        bp.why_it_worked?.length ? h("div", {}, h("b", { text: "Why it worked" }), h("ul", { style: "margin:4px 0 0;padding-left:18px" }, bp.why_it_worked.map((w) => h("li", { text: w })))) : null)) : null,
+    isOutlier ? h("details", {}, h("summary", { text: idea.transcript ? "Transcript (pasted)" : "Paste the transcript (optional, better copy of the structure)" }), transcript) : null,
+    field("ai-angle", "Angle (optional)", angle),
+    h("div", { class: "row" }, genBtn, idea.script ? null : goBtn, status),
+    idea.ai_status === "failed" && idea.ai_error ? h("pre", { class: "err", text: idea.ai_error }) : null,
+    ai?.title_options?.length ? h("div", { class: "field-wrap" }, h("span", { class: "muted small", text: "Title options (click to use)" }),
+      h("div", { class: "chips-tabs" }, ai.title_options.map((t) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(f.title.value === t), text: t,
+        onclick: (e) => { f.title.value = t; e.currentTarget.parentElement.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === e.currentTarget))); } })))) : null,
+    ai ? h("div", { class: "muted small", text: [ai.hook_text ? `Hook text: “${ai.hook_text}”` : "", ai.music_mood ? `Music: ${ai.music_mood}` : "", ai.notes || ""].filter(Boolean).join(" · ") }) : null,
+    ai?.verify?.length ? h("div", { class: "ai-verify" }, h("div", { class: "row", style: "gap:8px" }, h("span", { class: "pill warn", text: "Check before publishing" })),
+      h("ul", { style: "margin:6px 0 0;padding-left:18px" }, ai.verify.map((v) => h("li", { class: "small", text: v })))) : null);
+}
+
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "4";
+const EDITOR_VERSION = "4";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
