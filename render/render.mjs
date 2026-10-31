@@ -143,7 +143,7 @@ async function main() {
       await update("render_jobs", jobId, { status: "done", output_path: objectPath, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString() });
     }
     if (project.idea_id) await rest("PATCH", "ideas", `?id=eq.${project.idea_id}&stage=in.(assigned,scripted)`, { stage: "produced" });
-    log(`Done: ${objectPath}`);
+    log("Done");
   } catch (e) {
     await update("render_jobs", jobId, { status: "failed", error: String(e?.message || e).slice(0, 4000), finished_at: new Date().toISOString() });
     throw e;
