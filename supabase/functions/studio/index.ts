@@ -44,13 +44,13 @@ export function parseScript(script: string): ParsedScene[] {
     const terms = m ? m[2].split(",").map((t) => t.trim()).filter(Boolean).slice(0, 4) : [];
     if (!text) continue;
     const words = text.split(/\s+/).length;
-    if (words > 30) {
+    if (words > 60) {
       // long paragraph: one scene per sentence
       const parts = text.match(/[^.!?…؟]+[.!?…؟]*/g)?.map((p) => p.trim()).filter(Boolean) ?? [text];
       for (const p of parts) out.push({ text: p, terms });
     } else out.push({ text, terms });
   }
-  return out.slice(0, 40);
+  return out.slice(0, 120);   // long videos: ~120 scenes ≈ 25 min
 }
 
 const STOP = new Set(("the a an and or but if then of to in on at for with from by is are was were be been it its this that these those he she they we you i his her their our your " +
@@ -88,12 +88,24 @@ async function pixabay(q: string, kind: "video" | "image", aspect: string, page 
   return hits.sort((a, b) => Number((b.height > b.width) === vertical) - Number((a.height > a.width) === vertical));
 }
 
+const searchCache = new Map<string, Promise<Candidate[]>>();
+let budget = 80;  // max Pixabay calls per request, stays under the per-minute limit
+function cachedSearch(t: string, aspect: string): Promise<Candidate[]> {
+  const key = `${aspect}|${t.toLowerCase()}`;
+  if (!searchCache.has(key)) {
+    if (budget <= 0) return Promise.resolve([]);
+    budget--;
+    searchCache.set(key, pixabay(t, "video", aspect));
+  }
+  return searchCache.get(key)!;
+}
+
 async function candidatesFor(terms: string[], aspect: string, need: number): Promise<Candidate[]> {
   const seen = new Set<string>();
   const out: Candidate[] = [];
   for (const t of terms) {
     if (out.length >= 8) break;
-    for (const c of await pixabay(t, "video", aspect)) {
+    for (const c of await cachedSearch(t, aspect)) {
       if (seen.has(c.id)) continue;
       seen.add(c.id); out.push(c);
       if (out.length >= 8) break;
@@ -156,7 +168,14 @@ Deno.serve(async (req) => {
       const sameVoice = oldProject && oldProject.voice === voice && Number(oldProject.voice_rate) === rate;
       const byText = new Map(old.map((s) => [s.text, s]));
       const defaults: string[] = (Array.isArray(body.default_terms) ? body.default_terms : []).map(String).filter(Boolean).slice(0, 8);
-      const rows = await Promise.all(parsed.map(async (p, idx) => {
+      // 5 scenes at a time so long scripts don't fire 100+ searches at once
+      const limit = <T,>(items: T[], n: number, fn: (x: T, i: number) => Promise<any>) => {
+        const out: Promise<any>[] = [];
+        const queue = items.map((x, i) => () => fn(x, i));
+        const workers = Array.from({ length: n }, async () => { while (queue.length) { const job = queue.shift()!; out.push(job()); await out[out.length - 1]; } });
+        return Promise.all(workers).then(() => Promise.all(out));
+      };
+      const rows = await limit(parsed, 5, async (p, idx) => {
         const prev = byText.get(p.text);
         const terms = p.terms.length ? p.terms : (prev?.terms?.length ? prev.terms : [autoTerm(p.text, language)].filter(Boolean) as string[]);
         const searchTerms = [...terms, ...defaults.slice(idx % Math.max(defaults.length, 1)), ...defaults].filter(Boolean);
@@ -170,7 +189,8 @@ Deno.serve(async (req) => {
           voice_path: keepVoice ? prev.voice_path : null, voice_text: keepVoice ? prev.voice_text : null,
           voice_duration: keepVoice ? prev.voice_duration : null, words: keepVoice ? prev.words : null,
         };
-      }));
+      });
+      rows.sort((a: any, b: any) => a.idx - b.idx);
       await db.from("project_scenes").delete().eq("project_id", projectId);
       const { data: inserted, error: insErr } = await db.from("project_scenes").insert(rows).select("id,voice_path");
       if (insErr) throw insErr;
@@ -186,7 +206,7 @@ Deno.serve(async (req) => {
 
     if (body.action === "voice") {
       if (!UUID.test(body.project_id || "")) return json({ error: "project_id required" }, 400);
-      const ids: string[] = (Array.isArray(body.scene_ids) ? body.scene_ids : []).filter((s: string) => UUID.test(s)).slice(0, 40);
+      const ids: string[] = (Array.isArray(body.scene_ids) ? body.scene_ids : []).filter((s: string) => UUID.test(s)).slice(0, 120);
       await db.from("video_projects").update({ status: "preparing", error: null }).eq("id", body.project_id);
       const err = await dispatch("prepare.yml", { project_id: body.project_id, scene_ids: ids.join(",") });
       if (err) await db.from("video_projects").update({ status: "failed", error: err }).eq("id", body.project_id);

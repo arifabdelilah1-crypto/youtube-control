@@ -3,6 +3,7 @@
 // Reads the project + scenes, signs the private audio/media URLs, renders <Main> with Remotion,
 // uploads the MP4 to the private 'renders' bucket (resumable, 6 MB chunks) and marks the job done.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
@@ -126,13 +127,21 @@ async function main() {
     let last = -1;
     await renderMedia({
       composition, serveUrl, codec: "h264", outputLocation: out, inputProps,
-      crf: 23, encodingMaxRate: "5M", encodingBufferSize: "10M", x264Preset: "veryfast", audioBitrate: "128k", timeoutInMilliseconds: 120000,
+      concurrency: os.cpus().length, crf: 23, encodingMaxRate: "5M", encodingBufferSize: "10M", x264Preset: "veryfast", audioBitrate: "128k", timeoutInMilliseconds: 120000,
       onProgress: ({ progress }) => { const p = Math.floor(progress * 10); if (p !== last) { last = p; log(`render ${p * 10}%`); } },
     });
     const duration = inputProps.totalFrames / inputProps.fps;
-    const objectPath = `videos/${jobId}.mp4`;
-    await upload(out, objectPath);
-    await update("render_jobs", jobId, { status: "done", output_path: objectPath, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString() });
+    const size = fs.statSync(out).size;
+    if (size > MAX_BYTES) {
+      // Too big for the free Storage plan (50 MB per file): the video stays downloadable from the GitHub run (Artifacts, 7 days).
+      log(`Video is ${(size / 1048576).toFixed(0)} MB: kept as a GitHub artifact only`);
+      await update("render_jobs", jobId, { status: "done", output_path: null, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString(),
+        error: `Long video (${(size / 1048576).toFixed(0)} MB) is too big for storage. Download it from the run: Log → Artifacts (kept 7 days).` });
+    } else {
+      const objectPath = `videos/${jobId}.mp4`;
+      await upload(out, objectPath);
+      await update("render_jobs", jobId, { status: "done", output_path: objectPath, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString() });
+    }
     if (project.idea_id) await rest("PATCH", "ideas", `?id=eq.${project.idea_id}&stage=in.(assigned,scripted)`, { stage: "produced" });
     log(`Done: ${objectPath}`);
   } catch (e) {

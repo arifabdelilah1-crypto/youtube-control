@@ -254,12 +254,13 @@ function Renders({ sb, jobs, onRetry }) {
           <span className={`pill ${cls[j.status]}`}>{label[j.status]}</span>
           <div style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
             <div className="muted small">{new Date(j.created_at).toLocaleString()}{j.duration_s ? ` · ${Math.round(j.duration_s)} s` : ""}</div>
-            {j.error ? <pre className="err">{j.error}</pre> : null}
+            {j.error ? <pre className={j.status === "done" ? "note" : "err"}>{j.error}</pre> : null}
             {urls[j.id] ? <video className="player" src={urls[j.id]} controls playsInline /> : null}
           </div>
           <div className="row">
-            {j.status === "done" && !urls[j.id] ? <button type="button" className="btn small" onClick={async () => { const u = await signed(j); if (u) setUrls((x) => ({ ...x, [j.id]: u })); }}>Watch</button> : null}
-            {j.status === "done" ? <button type="button" className="btn small primary" onClick={async () => { const u = await signed(j, true); if (u) location.href = u; }}>Download</button> : null}
+            {j.status === "done" && !j.output_path && j.run_url ? <a className="btn small primary" href={j.run_url} target="_blank" rel="noopener">Download from GitHub</a> : null}
+            {j.status === "done" && j.output_path && !urls[j.id] ? <button type="button" className="btn small" onClick={async () => { const u = await signed(j); if (u) setUrls((x) => ({ ...x, [j.id]: u })); }}>Watch</button> : null}
+            {j.status === "done" && j.output_path ? <button type="button" className="btn small primary" onClick={async () => { const u = await signed(j, true); if (u) location.href = u; }}>Download</button> : null}
             {j.status === "failed" ? <button type="button" className="btn small" onClick={() => onRetry(j)}>Retry</button> : null}
             {j.run_url ? <a className="btn small ghost" href={j.run_url} target="_blank" rel="noopener">Log</a> : null}
           </div>

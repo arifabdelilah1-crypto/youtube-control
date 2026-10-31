@@ -675,7 +675,7 @@ async function studioEditor(ideaId) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "1";
+const EDITOR_VERSION = "2";
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
