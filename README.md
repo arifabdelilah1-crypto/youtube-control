@@ -94,6 +94,12 @@ channels' videos), so a pick keeps its credit and asks for the file; 101 API uni
 zoom/pan; photos much wider than the frame sit on a blurred copy of themselves instead of being cropped. Wikimedia and
 YouTube CC footage needs a credit: the editor shows the lines and adds them to the idea's description when you render.
 
+**Write with AI** (script page): Claude writes a script in this format, plus title, description, tags and an on-screen
+hook, from the idea's keyword data (search volume and difficulty, related searches, the videos ranking for it, the
+niche's outliers and the channel's best videos). It's told not to invent numbers, and every figure it uses is listed
+under "Check these facts" to verify before rendering. **Improve current** keeps what works in your draft; **Restore
+previous script** undoes a rewrite. Each run shows its tokens and cost (roughly $0.05–0.15 a script on Opus 5.5).
+
 Dashboard: the channel bus at the top ("Working on") sets the channel Research, Ideas and Studio follow; the selected
 channel is lit red. Status lamps: red = live/selected, green = ready, amber = in progress, grey = idle. On phones the
 navigation moves to bottom tabs and tables turn into cards.
@@ -101,6 +107,7 @@ navigation moves to bottom tabs and tables turn into cards.
 | Part | Where |
 |---|---|
 | Scenes + footage search | `studio` edge function: `script.ts` (parser), `stock.ts` (Pixabay, Wikimedia Commons) |
+| Write with AI | `script-assistant` edge function: `assistant.ts` (prompt, JSON schema, checks) → Claude API |
 | Voice + word timings | `prepare.yml` → `collectors/prepare_job.py` (Edge TTS) |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
 | Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the private `renders` bucket |
@@ -114,6 +121,8 @@ Secrets:
 | Supabase Edge Function secrets | `GITHUB_TOKEN` | Fine-grained token: this repo only, **Actions: Read and write** |
 | Supabase Edge Function secrets | `GITHUB_REPO` | `arifabdelilah1-crypto/youtube-control` |
 | Supabase Edge Function secrets | `PIXABAY_API_KEY` | Free key from pixabay.com/api/docs (clip search in the editor) |
+| Supabase Edge Function secrets | `ANTHROPIC_API_KEY` | Key from console.anthropic.com with API credits (Write with AI; a Claude.ai plan doesn't include API use) |
+| Supabase Edge Function secrets | `SCRIPT_MODEL`, `SCRIPT_DAILY_LIMIT` | Optional: model (default `claude-opus-5-5`) and scripts per day (default 40) |
 | GitHub repo secrets | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Used by the voice and render workflows |
 
 Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
@@ -124,4 +133,3 @@ The older one-click renderer (MoneyPrinterTurbo, `render.yml`) still works for p
 ## Not built yet
 - Blotato sync adapter (`collectors/blotato_sync.py`): port the request/field mapping from the Réseau DE sync.
 - Write actions from the dashboard: edit titles/tags/thumbnails, reply to comments.
-- Script pack generation from ideas.

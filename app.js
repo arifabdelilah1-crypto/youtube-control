@@ -691,10 +691,11 @@ async function studioEditor(ideaId) {
     try {
       await save(true);
       const chosen = channelById(f.channel.value);
+      const base = project?.settings || chosen?.video_style?.editor || {};
       const { data, error } = await sb.functions.invoke("studio", { body: {
         action: "build", project_id: project?.id || null, idea_id: ideaId, channel_id: f.channel.value || null,
         title: f.title.value.trim(), script: f.script.value, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value,
-        settings: project?.settings || chosen?.video_style?.editor || {}, default_terms: terms(),
+        settings: aiHook ? { ...base, hook: { ...(base.hook || {}), text: aiHook } } : base, default_terms: terms(),
       } });
       if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
       if (data.error) toast(data.error);
@@ -710,6 +711,69 @@ async function studioEditor(ideaId) {
     await loadShared(); toast("Saved as channel default");
   } });
 
+  // Script assistant: Claude writes the scenes, footage searches, title, description and tags from this idea's keyword data.
+  let aiHook = "";
+  const ai = {
+    length: h("select", { id: "ai-length", class: "field", "aria-label": "Video length" },
+      [["short45", "Short, about 45 s"], ["short60", "Short, about 60 s"], ["long3", "Long, about 3 min"]].map(([v, t]) => h("option", { value: v, selected: v === (style.aspect === "16:9" ? "long3" : "short45"), text: t }))),
+    notes: h("input", { id: "ai-notes", class: "field", dir: "auto", placeholder: "Angle or notes (optional), e.g. aim at Moroccan fans" }),
+    out: h("div", { class: "ai-out" }),
+  };
+  const useHook = (hook) => {
+    const lines = f.script.value.split("\n");
+    const i = lines.findIndex((l) => /^VO\s*:/i.test(l.trim()));
+    if (i < 0) return;
+    lines[i] = `VO: ${hook}`; f.script.value = lines.join("\n"); updateCount(); save(true); toast("Hook updated");
+  };
+  const alt = (label, items, use) => (items.length ? h("div", { class: "ai-alts" }, h("div", { class: "eyebrow", text: label }),
+    items.map((t) => h("div", { class: "ai-alt" }, h("span", { dir: "auto", text: t }), h("button", { class: "btn small", type: "button", text: "Use", onclick: () => use(t) })))) : null);
+  const restore = (prev) => {
+    f.script.value = prev.script; f.title.value = prev.title; f.desc.value = prev.desc; f.tags.value = prev.tags; aiHook = prev.hook;
+    updateCount(); save(true); ai.out.replaceChildren(); toast("Previous script restored");
+  };
+  const aiResult = (d, prev) => h("div", { class: "ai-result" },
+    d.facts_to_check.length ? h("div", { class: "ai-facts" }, h("strong", { text: "Check these facts before rendering" }),
+      h("ul", { class: "tips" }, d.facts_to_check.map((t) => h("li", { dir: "auto", text: t })))) : null,
+    alt("Other opening lines", d.hooks.slice(1), useHook),
+    alt("Other titles", d.titles.slice(1), (t) => { f.title.value = t; save(true); toast("Title updated"); }),
+    h("p", { class: "muted small", style: "margin:0", text: [d.hook_text ? `On-screen hook: “${d.hook_text}” (goes into the video when you create scenes).` : "", d.notes ? `Angle: ${d.notes}` : ""].filter(Boolean).join(" ") }),
+    h("p", { class: "muted small mono", style: "margin:0", text: `${d.usage.model} · ${fmt(d.usage.input_tokens + d.usage.output_tokens)} tokens${d.usage.cost_usd !== null && d.usage.cost_usd !== undefined ? ` · about $${Number(d.usage.cost_usd).toFixed(2)}` : ""}` }),
+    prev ? h("button", { class: "btn small ghost", type: "button", text: "Restore previous script", onclick: () => restore(prev) }) : null);
+  const writeWithAI = async (btn, improve) => {
+    const working = f.title.value.trim();
+    if (!working || working === "Untitled video") { f.title.focus(); return toast("Give the video a working title first: Claude writes from it."); }
+    if (improve && !f.script.value.trim()) return toast("There's no script to improve yet. Use Write script.");
+    if (!improve && f.script.value.trim() && !confirm("Replace the current script with a new one from Claude?")) return;
+    const before = { script: f.script.value, title: f.title.value, desc: f.desc.value, tags: f.tags.value, hook: aiHook };
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Writing… about 30–60 s";
+    ai.out.replaceChildren(h("div", { class: "analyzing", style: "display:flex" }, h("div", { class: "spinner", "aria-hidden": "true" }),
+      h("span", { class: "muted", text: "Claude is reading the keyword data and writing the scenes." })));
+    try {
+      await save(true);
+      const { data, error } = await sb.functions.invoke("script-assistant", { body: {
+        idea_id: ideaId, channel_id: f.channel.value || null, language: f.language.value, length: ai.length.value,
+        notes: ai.notes.value.trim(), draft: improve ? f.script.value.trim() : "",
+      } });
+      if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+      f.script.value = data.script;
+      if (data.title) f.title.value = data.title;
+      f.desc.value = data.description; f.tags.value = (data.tags || []).join(", ");
+      aiHook = data.hook_text || "";
+      updateCount(); await save(true);
+      ai.out.replaceChildren(aiResult(data, before.script.trim() ? before : null));
+      toast(data.facts_to_check?.length ? "Script written. Check the listed facts before rendering." : "Script written");
+    } catch (e) { ai.out.replaceChildren(h("pre", { class: "err", text: e.message || String(e) })); }
+    finally { btn.disabled = false; btn.textContent = label; }
+  };
+  const aiBox = h("div", { class: "ai-box" },
+    h("div", { class: "eyebrow", text: "Write with AI" }),
+    h("p", { class: "muted small", style: "margin:0", text: "Claude writes the scenes, footage searches, title, description and tags from this idea and its keyword data. You review, then create scenes." }),
+    h("div", { class: "ai-controls" }, ai.length, ai.notes,
+      h("button", { class: "btn primary", type: "button", text: "Write script", onclick: (e) => writeWithAI(e.currentTarget, false) }),
+      h("button", { class: "btn", type: "button", text: "Improve current", title: "Keep what works in the current script and fix weak hooks and pacing", onclick: (e) => writeWithAI(e.currentTarget, true) })),
+    ai.out);
+
   return [
     h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: project?.title || idea.video_title || idea.title })),
       h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }), buildBtn,
@@ -717,7 +781,8 @@ async function studioEditor(ideaId) {
     project ? h("p", { class: "muted small", style: "margin:0", text: "Rebuilding keeps the voice and clip of every line you didn't change." }) : null,
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
-        field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
+        field("s-title", "Video title", f.title), aiBox,
+        field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
         h("p", { class: "muted small", style: "margin:0", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
         field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
       h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),

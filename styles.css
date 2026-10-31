@@ -264,6 +264,19 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .add-idea { display: flex; gap: 8px; }
 .add-idea .field { flex: 1 1 auto; }
 
+/* Studio: script assistant */
+.ai-box { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: var(--r-lg); background: var(--panel-2); border: 1px solid var(--line); }
+.ai-controls { display: flex; flex-wrap: wrap; gap: 8px; }
+.ai-controls select { flex: 0 1 190px; }
+.ai-controls input { flex: 1 1 220px; }
+.ai-out:empty { display: none; }
+.ai-result { display: flex; flex-direction: column; gap: 12px; }
+.ai-result > .btn { align-self: flex-start; }
+.ai-facts { background: var(--cue-soft); border-radius: 10px; padding: 10px 12px 10px; display: flex; flex-direction: column; gap: 6px; color: #5E3D00; }
+.ai-alts { display: flex; flex-direction: column; }
+.ai-alt { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
+.ai-alts .eyebrow + .ai-alt { border-top: 0; }
+
 /* Schedule strip */
 .strip { display: grid; grid-template-columns: 180px repeat(7, minmax(0, 1fr)); gap: 8px; align-items: center; min-width: 760px; }
 .cell { height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-family: var(--mono); font-size: 13px; background: var(--console); color: var(--faint); }
