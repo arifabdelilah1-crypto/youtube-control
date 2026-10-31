@@ -690,7 +690,16 @@ VIEWS.edit = async (route) => {
 // Channels
 // ==================================================================
 VIEWS.channels = async () => {
-  const rows = await q(sb.rpc("channel_overview", { p_days: 28 }));
+  const [rows, snaps, vids] = await Promise.all([
+    q(sb.rpc("channel_overview", { p_days: 28 })),
+    q(sb.from("channel_snapshots").select("channel_id,total_views,captured_at").order("captured_at", { ascending: false }).limit(300)),
+    q(sb.from("v_own_video_latest").select("channel_id,views,likes")),
+  ]);
+  // live counts from the last refresh: channel total views (latest snapshot, else the sum of tracked videos) and likes
+  const live = {};
+  for (const v of vids) { const l = (live[v.channel_id] ||= { views: 0, likes: 0 }); l.views += Number(v.views || 0); l.likes += Number(v.likes || 0); }
+  const seen = new Set();
+  for (const s of snaps) if (!seen.has(s.channel_id)) { seen.add(s.channel_id); (live[s.channel_id] ||= { views: 0, likes: 0 }).views = Number(s.total_views); }
   return [
     pageHead("Channels", "Connect each channel once with Google. Brand-account channels are connected one at a time.",
       h("button", { class: "btn", type: "button", text: "Refresh stats", onclick: (e) => refreshChannel(null, e.currentTarget) }),
@@ -700,9 +709,12 @@ VIEWS.channels = async () => {
         h("div", { style: "min-width:0" }, h("div", { style: "font-weight:600", text: r.title }), h("div", { class: "muted small", text: `${r.niche_name || "No niche"} · ${(r.language || "—").toUpperCase()}` }))),
       h("div", { class: "stats3" },
         h("div", {}, h("span", { text: "Subscribers" }), h("span", { class: "mono", text: fmt(r.subscribers) })),
-        h("div", {}, h("span", { text: "Views 28 d" }), h("span", { class: "mono", text: r.connected ? fmtc(r.views) : "—" })),
-        h("div", {}, h("span", { text: "Uploads 28 d" }), h("span", { class: "mono", text: fmt(r.uploads) }))),
-      h("span", { class: `pill ${r.connected ? "ok" : "warn"}`, text: r.connected ? "Connected" : "Public stats only" }))))
+        h("div", {}, h("span", { text: "Total views" }), h("span", { class: "mono", text: fmt(live[r.channel_id]?.views) })),
+        h("div", {}, h("span", { text: "Likes" }), h("span", { class: "mono", text: fmt(live[r.channel_id]?.likes) }))),
+      h("div", { class: "muted small", text: `Views 28 d ${r.connected ? fmt(r.views) : "—"} (~2 days behind) · Uploads 28 d ${fmt(r.uploads)}` }),
+      h("div", { class: "row", style: "justify-content:space-between" },
+        h("span", { class: `pill ${r.connected ? "ok" : "warn"}`, text: r.connected ? "Connected" : "Public stats only" }),
+        h("span", { class: "muted small", text: `Updated ${ago(channelById(r.channel_id)?.stats_synced_at)}` })))))
       : empty("No channels yet.", h("button", { class: "btn primary", type: "button", text: "Connect a channel", onclick: startOAuth })),
   ];
 };
