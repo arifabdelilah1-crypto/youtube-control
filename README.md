@@ -30,8 +30,10 @@ Create a repo named `youtube-control`, push this folder, then add these secrets 
 | `GOOGLE_CLIENT_SECRET` | same OAuth client |
 | `BLOTATO_API_KEY` | Blotato → Settings → API |
 
-GitHub Pages: **Settings → Pages → Source: GitHub Actions**. Pages on a *private* repo needs a paid
-GitHub plan; on the free plan make the repo public (no secrets live in the code) or host `web/` elsewhere.
+GitHub Pages: **Settings → Pages → Deploy from a branch: `main`, folder `/` (root)**. The dashboard lives in `web/`;
+`./sync-root.sh` copies it to the root that Pages serves. (`.github/disabled/pages.yml` deploys `web/` directly
+instead; it needs Pages set to *GitHub Actions* and moving the file into `.github/workflows/`.) Pages on a *private*
+repo needs a paid GitHub plan; on the free plan keep the repo public (no secrets live in the code).
 
 ### 2. Google OAuth client
 In the OAuth client (type *Web application*), add this **Authorized redirect URI**:
@@ -53,16 +55,20 @@ Supabase → Authentication → URL Configuration: set **Site URL** to your dash
 Only emails in the `app_users` table can see data.
 
 ### 4. First run
-GitHub → Actions → **Research** → *Run workflow*, then **Channel stats**, then **Google Trends**.
+GitHub → Actions → **Research (YouTube search + autocomplete)** → *Run workflow*, then **Google Trends**.
+Channel stats need nothing: Supabase runs them.
 
 ## Jobs
 
-| Workflow | Schedule (UTC) | Does |
+| Job | Schedule (UTC) | Does |
 |---|---|---|
-| `research.yml` | daily 06:00 | YouTube search per seed term and market, autocomplete, outliers, competitors |
-| `trends.yml` | daily 07:30 | Google Trends (YouTube Search) interest and momentum, rising queries |
-| `channel-stats.yml` | every 6 h | Public stats for all channels; analytics, search terms, traffic for connected ones |
-| `hourly.yml` | hourly | Blotato sync, alerts |
+| `.github/workflows/research.yml` | daily 06:00 | YouTube search per seed term and market, autocomplete, outliers, competitors |
+| `.github/workflows/trends.yml` | daily 07:30 | Google Trends (YouTube Search) interest and momentum, rising queries |
+| Channel stats (Supabase pg_cron → `channel-sync`) | every 6 h, and **Refresh now** | Public stats; analytics, search terms, traffic and impressions for connected channels |
+| `.github/disabled/hourly.yml` | off | Blotato sync + alerts. Move it into `.github/workflows/` once the Blotato sync is built and `BLOTATO_API_KEY` is set |
+
+`research.yml` needs the GitHub secrets `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` and `YOUTUBE_API_KEY`;
+`trends.yml` only the two Supabase ones.
 
 Quota: each niche has a daily YouTube API budget (Settings). One search costs about 102 units;
 the project cap is 9,500 of Google's 10,000 daily units.
