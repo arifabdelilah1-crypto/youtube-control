@@ -118,6 +118,7 @@ async function candidatesFor(terms: string[], aspect: string, need: number): Pro
 // ---------- handlers ----------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
+  searchCache.clear(); budget = 80;
   try {
     const db = createClient(URL_, SERVICE);
     const userDb = createClient(URL_, ANON, { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
@@ -182,7 +183,7 @@ Deno.serve(async (req) => {
         const need = p.text.split(/\s+/).length / 2.6;
         const keepClip = prev?.clip && (!p.terms.length || JSON.stringify(p.terms) === JSON.stringify(prev.terms));
         const candidates = keepClip ? (prev.candidates || []) : await candidatesFor([...new Set(searchTerms)], aspect, need);
-        const clip = keepClip ? prev.clip : (candidates[0] ? { ...candidates[0], trim: 0 } : { type: "card" });
+        const clip = keepClip ? prev.clip : null;  // picked below so scenes don't repeat the same clip
         const keepVoice = sameVoice && prev?.voice_path && prev.voice_text === p.text;
         return {
           project_id: projectId, idx, text: p.text, terms, clip, candidates,
@@ -191,6 +192,13 @@ Deno.serve(async (req) => {
         };
       });
       rows.sort((a: any, b: any) => a.idx - b.idx);
+      const used = new Set(rows.filter((r: any) => r.clip?.id).map((r: any) => `${r.clip.source}-${r.clip.id}`));
+      for (const r of rows as any[]) {
+        if (r.clip) continue;
+        const pick = r.candidates.find((c: Candidate) => !used.has(`${c.source}-${c.id}`)) || r.candidates[0];
+        r.clip = pick ? { ...pick, trim: 0 } : { type: "card" };
+        if (pick) used.add(`${pick.source}-${pick.id}`);
+      }
       await db.from("project_scenes").delete().eq("project_id", projectId);
       const { data: inserted, error: insErr } = await db.from("project_scenes").insert(rows).select("id,voice_path");
       if (insErr) throw insErr;
