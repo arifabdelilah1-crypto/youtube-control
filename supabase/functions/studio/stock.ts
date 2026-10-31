@@ -69,7 +69,7 @@ export async function wikimedia(q: string, page = 1): Promise<Candidate[]> {
   }).filter((c): c is Candidate => !!c);
 }
 
-const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
 
 /**
  * Real footage from Wikimedia Commons (match clips, cars, places; includes videos clubs and brands released under CC BY).
