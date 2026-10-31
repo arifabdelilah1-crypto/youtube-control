@@ -1,5 +1,6 @@
-// Footage search: Pixabay (videos + photos, no credit needed) and Wikimedia Commons (real people, places,
-// cars; free licences that need a credit line, kept on each candidate).
+// Footage search: Pixabay (videos + photos, no credit needed), Wikimedia Commons (real people, places, cars,
+// videos; free licences that need a credit line, kept on each candidate) and YouTube Creative Commons (search only:
+// YouTube doesn't let apps download other channels' videos, so those need the file uploaded).
 import type { Footage } from "./script.ts";
 
 export type Candidate = {
@@ -68,13 +69,88 @@ export async function wikimedia(q: string, page = 1): Promise<Candidate[]> {
   }).filter((c): c is Candidate => !!c);
 }
 
+const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+/**
+ * Real footage from Wikimedia Commons (match clips, cars, places; includes videos clubs and brands released under CC BY).
+ * Commons' search also matches descriptions loosely, so a result must name a word of the query in its title.
+ * Plays from Commons' own WebM copy (up to 1080p), never the original Ogg file.
+ */
+export async function wikimediaVideos(q: string, page = 1): Promise<Candidate[]> {
+  if (!q.trim()) return [];
+  const params = new URLSearchParams({
+    action: "query", format: "json", formatversion: "2", origin: "*",
+    generator: "search", gsrsearch: `${q.slice(0, 100)} filetype:video`, gsrnamespace: "6", gsrlimit: "20", gsroffset: String((page - 1) * 20),
+    prop: "videoinfo", viprop: "url|size|mime|derivatives|extmetadata", viurlwidth: "330",
+    viextmetadatafilter: "Artist|LicenseShortName|LicenseUrl|ObjectName",
+  });
+  const r = await fetch(`https://commons.wikimedia.org/w/api.php?${params}`, { headers: { "User-Agent": UA, "Api-User-Agent": UA } });
+  if (!r.ok) return [];
+  const data = await r.json();
+  const words = fold(q).split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+  // deno-lint-ignore no-explicit-any
+  const pages: any[] = data.query?.pages || [];
+  return pages.sort((a, b) => (a.index ?? 0) - (b.index ?? 0)).map((p): Candidate | null => {
+    const vi = p.videoinfo?.[0];
+    const meta = vi?.extmetadata || {};
+    const name = text(meta.ObjectName?.value) || String(p.title || "").replace(/^File:/, "").replace(/\.[a-z0-9]+$/i, "");
+    const title = ` ${fold(`${p.title} ${name}`).replace(/[^a-z0-9]+/g, " ")} `;
+    if (!vi || !vi.duration || vi.duration < 2 || (words.length && !words.some((w) => title.includes(` ${w} `)))) return null;
+    // deno-lint-ignore no-explicit-any
+    const webm = (vi.derivatives || []).filter((d: any) => /^video\/webm/.test(d.type || "") && d.height >= 360 && d.height <= 1080)
+      // deno-lint-ignore no-explicit-any
+      .sort((a: any, b: any) => b.height - a.height || Number(/vp9/.test(b.type)) - Number(/vp9/.test(a.type)));
+    const best = webm[0], small = webm[webm.length - 1];
+    if (!best) return null;
+    const thumb = String(vi.thumburl || "").split("?")[0];
+    return {
+      type: "video", source: "wikimedia", id: String(p.pageid), url: best.src, preview: small.src, thumb, duration: Number(vi.duration),
+      width: best.width, height: best.height, tags: name, page: vi.descriptionurl || "",
+      author: text(meta.Artist?.value).slice(0, 120) || "Unknown author", license: text(meta.LicenseShortName?.value) || "see file page", license_url: meta.LicenseUrl?.value || "",
+    };
+  }).filter((c): c is Candidate => !!c);
+}
+
+const isoSeconds = (d = "") => {
+  const m = d.match(/^P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/);
+  return m ? (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+(m[3] || 0)) * 60 + (+(m[4] || 0)) : null;
+};
+
+/**
+ * YouTube videos their owners licensed under Creative Commons (CC BY: reuse allowed with credit). 101 quota units.
+ * Search only: there's no file to play, so picking one keeps the credit and asks for the file to be uploaded.
+ */
+export async function youtubeCC(apiKey: string, q: string): Promise<Candidate[]> {
+  if (!apiKey || !q.trim()) return [];
+  const search = await fetch(`https://www.googleapis.com/youtube/v3/search?${new URLSearchParams({
+    key: apiKey, part: "snippet", type: "video", videoLicense: "creativeCommon", maxResults: "12", q: q.slice(0, 100) })}`);
+  if (!search.ok) throw new Error(`YouTube search ${search.status}: ${(await search.text()).slice(0, 200)}`);
+  // deno-lint-ignore no-explicit-any
+  const ids = ((await search.json()).items || []).map((i: any) => i.id?.videoId).filter(Boolean);
+  if (!ids.length) return [];
+  const details = await fetch(`https://www.googleapis.com/youtube/v3/videos?${new URLSearchParams({ key: apiKey, part: "snippet,contentDetails,status", id: ids.join(",") })}`);
+  if (!details.ok) throw new Error(`YouTube videos ${details.status}`);
+  // deno-lint-ignore no-explicit-any
+  return ((await details.json()).items || []).filter((v: any) => v.status?.license === "creativeCommon").map((v: any): Candidate => ({
+    type: "video", source: "youtube", id: v.id, url: "", preview: "", thumb: v.snippet?.thumbnails?.medium?.url || v.snippet?.thumbnails?.default?.url || "",
+    duration: isoSeconds(v.contentDetails?.duration), width: 1280, height: 720, tags: v.snippet?.title || "", page: `https://www.youtube.com/watch?v=${v.id}`,
+    author: v.snippet?.channelTitle || "Unknown channel", license: "CC BY (YouTube)", license_url: "https://creativecommons.org/licenses/by/3.0/",
+  }));
+}
+
+/** Videos from every source that can play them: Wikimedia (real subjects) first, then Pixabay. */
+async function videosFor(key: string, q: string, aspect: string, page: number): Promise<Candidate[]> {
+  const [wiki, pix] = await Promise.all([wikimediaVideos(q, page).catch(() => []), pixabay(key, q, "video", aspect, page)]);
+  return [...wiki.slice(0, 6), ...pix];
+}
+
 /** Every source for one term. "both" mixes videos and photos so each scene gets a choice of either. */
 export async function searchStock(key: string, q: string, kind: Footage, aspect: string, page = 1): Promise<Candidate[]> {
-  if (kind === "video") return pixabay(key, q, "video", aspect, page);
+  if (kind === "video") return videosFor(key, q, aspect, page);
   const [wiki, photos, videos] = await Promise.all([
     wikimedia(q, page).catch(() => []),
     pixabay(key, q, "image", aspect, page),
-    kind === "both" ? pixabay(key, q, "video", aspect, page) : Promise.resolve([]),
+    kind === "both" ? videosFor(key, q, aspect, page) : Promise.resolve([]),
   ]);
   const images = [...wiki.slice(0, 8), ...photos];
   if (kind === "image") return images;

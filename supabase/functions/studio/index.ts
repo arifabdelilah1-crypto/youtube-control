@@ -4,11 +4,12 @@
 //         finds footage per scene, starts the voice job. Returns {project_id}.
 // POST {action:"voice", project_id, scene_ids?}   -> regenerate voice for some/all scenes
 // POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates ("image: …" in q overrides kind)
+//      kind "youtube": Creative Commons YouTube videos (search only, 101 quota units; only on a button press)
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
-// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY
+// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, YOUTUBE_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { type Footage, parseScript, parseTerm } from "./script.ts";
-import { type Candidate, searchStock } from "./stock.ts";
+import { type Candidate, searchStock, youtubeCC } from "./stock.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -16,6 +17,7 @@ const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const PIXABAY = Deno.env.get("PIXABAY_API_KEY") ?? "";
+const YT_KEY = Deno.env.get("YOUTUBE_API_KEY") ?? "";
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -86,6 +88,13 @@ Deno.serve(async (req) => {
     if (!(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
     const { data: { user } } = await userDb.auth.getUser();
     const body = await req.json();
+
+    if (body.action === "search" && body.kind === "youtube") {
+      const q = parseTerm(String(body.q || ""), "video").q;
+      const results = await youtubeCC(YT_KEY, q);
+      await db.rpc("add_quota", { p_api: "youtube_data", p_bucket: "studio_cc", p_niche_key: "all", p_units: 101 });
+      return json({ results, configured: !!YT_KEY });
+    }
 
     if (body.action === "search") {
       const { kind, q } = parseTerm(String(body.q || ""), FOOTAGE.has(body.kind) ? body.kind : "video");

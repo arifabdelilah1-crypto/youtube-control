@@ -43,15 +43,25 @@ export function parseStat(stat = "") {
   return Number.isFinite(value) ? { pre, value, decimals, grouped, suf, label } : { pre: "", value: null, decimals: 0, grouped: false, suf: "", label: String(stat).trim() };
 }
 
-/** Credit lines for photos whose licence asks for one (Wikimedia Commons). Empty string when none. */
+/**
+ * Who a scene's footage must credit: a Wikimedia photo or video, or an uploaded file that replaced a YouTube
+ * Creative Commons pick (the pick itself has no file yet, so it isn't in the video and isn't credited).
+ */
+export function creditOf(c) {
+  if (!c) return null;
+  if (c.source === "wikimedia") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Wikimedia Commons" };
+  return c.credit?.page ? c.credit : null;
+}
+
+/** Credit lines for footage whose licence asks for one. Empty string when none. */
 export function creditsText(scenes) {
   const seen = new Set();
   const lines = [];
   for (const s of [...scenes].sort((a, b) => a.idx - b.idx)) {
-    const c = s.clip;
-    if (!c || c.source !== "wikimedia" || seen.has(c.page || c.id)) continue;
-    seen.add(c.page || c.id);
-    lines.push(`- "${c.tags || "Photo"}" by ${c.author || "unknown author"}, ${c.license || "see file page"}, via Wikimedia Commons: ${c.page}`);
+    const c = creditOf(s.clip);
+    if (!c || seen.has(c.page)) continue;
+    seen.add(c.page);
+    lines.push(`- "${c.tags || "Footage"}" by ${c.author || "unknown author"}, ${c.license || "see source"}, via ${c.via}: ${c.page}`);
   }
   return lines.length ? `Credits:\n${lines.join("\n")}` : "";
 }
@@ -153,8 +163,10 @@ export function preRenderCheck(project, scenes) {
   if (outdated) issues.push({ level: "block", text: `${outdated} scene(s) were edited after their voice was made. Press “Update voice”.` });
   const cards = ordered.filter((s) => !s.clip || s.clip.type === "card").length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
-  const wiki = ordered.filter((s) => s.clip?.source === "wikimedia").length;
-  if (wiki) issues.push({ level: "warn", text: `${wiki} scene(s) use Wikimedia photos. Their licences need the credit lines below in the video description.` });
+  const credited = ordered.filter((s) => creditOf(s.clip)).length;
+  if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage whose licence needs a credit. The credit lines below go in the video description.` });
+  const noFile = ordered.filter((s) => s.clip?.source === "youtube").length;
+  if (noFile) issues.push({ level: "warn", text: `${noFile} scene(s) have a YouTube clip picked but no file uploaded. They show a text card until you upload the clip.` });
   const total = ordered.reduce((t, s) => t + sceneSeconds(s) + SCENE_GAP, 0) + TAIL;
   if (project.aspect === "9:16" && total > 180) issues.push({ level: "block", text: `Video is ${Math.round(total)} s. Shorts can be 3 minutes at most.` });
   else if (project.aspect === "9:16" && total > 60) issues.push({ level: "warn", text: `Video is ${Math.round(total)} s. Allowed, but Shorts under 60 s usually keep viewers better.` });

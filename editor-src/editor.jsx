@@ -107,7 +107,8 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
     const q = t[0] || text;
     setResults(await onSearch(q, t.slice(1), kind));
   };
-  const credit = (c) => (c.source === "wikimedia" ? `${c.tags} · ${c.author} · ${c.license}` : c.tags);
+  const credit = (c) => (c.author && c.source !== "pixabay" ? `${c.tags} · ${c.author} · ${c.license}` : c.tags);
+  const badge = { wikimedia: "Wiki", youtube: "YT CC" };
 
   return (
     <article className={`ed-scene${active ? " active" : ""}`} aria-label={`Scene ${index + 1}`}>
@@ -118,7 +119,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         </button>
         <div className="ed-scene-meta">
           <span className={`pill ${voiceState[0]}`}>{voiceState[1]}</span>
-          <span className="muted small">{clip.type === "card" ? "No clip" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license ? ` · ${clip.license}` : ""}`}</span>
+          <span className="muted small">{clip.type === "card" ? "No clip" : clip.source === "youtube" ? "YouTube CC · file needed" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license || clip.credit?.license ? ` · ${clip.license || clip.credit.license}` : ""}`}</span>
         </div>
         <div className="ed-scene-tools">
           <button type="button" className="btn small ghost" disabled={index === 0} onClick={() => onMove(-1)} aria-label="Move up">↑</button>
@@ -138,14 +139,24 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); search(); } }}
           placeholder={footage === "video" ? "Footage search, e.g. stadium crowd night" : "e.g. Lamine Yamal, Santiago Bernabéu"} aria-label={`Scene ${index + 1} footage search`} />
         <button type="button" className="btn small" onClick={() => search()} disabled={searching}>{searching ? "Searching…" : "Find clips"}</button>
+        <button type="button" className="btn small ghost" onClick={() => search("youtube")} disabled={searching} title="Creative Commons videos on YouTube (reuse allowed with credit)">YouTube CC</button>
       </div>
-      {footage !== "video" ? <span className="muted small">Photos come from Wikimedia Commons (real people, places, cars; credit needed) and Pixabay.</span> : null}
+      <span className="muted small">
+        {footage === "image" ? "Photos" : footage === "video" ? "Videos" : "Videos and photos"} from Wikimedia Commons (real footage of players, clubs, places; credit needed) and Pixabay.
+      </span>
+      {clip.source === "youtube" ? (
+        <p className="muted small" style={{ margin: 0 }}>
+          YouTube doesn’t let apps download other channels’ videos, so this scene shows a text card for now. If you have the file
+          (from the creator or their site), upload it below and the credit stays. <a href={clip.page} target="_blank" rel="noopener">Watch on YouTube</a>
+        </p>
+      ) : null}
       {list.length ? (
         <div className="ed-cands" role="list">
           {list.map((c) => (
             <button type="button" role="listitem" key={`${c.source}-${c.id}`} className={`ed-cand${clip.id === c.id && clip.source === c.source ? " on" : ""}`}
               onClick={() => onPick({ ...c, trim: 0 })} title={credit(c)}>
               <img src={c.thumb || c.preview} alt={c.tags || "clip"} loading="lazy" />
+              {badge[c.source] ? <b className="src">{badge[c.source]}</b> : null}
               {c.duration ? <i>{Math.round(c.duration)}s</i> : c.source === "wikimedia" ? <i>{c.license}</i> : null}
             </button>
           ))}
@@ -299,9 +310,9 @@ function Credits({ sb, project, scenes, toast }) {
   const add = async () => { const err = await saveCredits(sb, project.idea_id, text); toast(err ? `Not saved: ${err}` : "Credits are in the description"); };
   return (
     <section className="card">
-      <h2>Photo credits</h2>
+      <h2>Footage credits</h2>
       <p className="muted small" style={{ margin: 0 }}>
-        The licences of these Wikimedia photos ask for a credit line in the video description.
+        The licences of these photos and videos ask for a credit line in the video description.
         {project.idea_id ? " They're added to the description automatically when you render." : " Paste them into the description when you upload."}
       </p>
       <pre className="note">{text}</pre>
@@ -442,8 +453,9 @@ function Editor({ ctx }) {
     setSearching(sceneId);
     try {
       let { results, configured } = await invoke(sb, { action: "search", q, kind, aspect: project.aspect });
-      for (const m of more) { if (results.length >= 8) break; results = results.concat((await invoke(sb, { action: "search", q: m, kind, aspect: project.aspect })).results); }
-      if (!configured && !results.length) toast("Stock search isn't set up: add PIXABAY_API_KEY in Supabase Edge Function secrets.");
+      // one YouTube search costs 101 of the 10,000 daily quota units: only the first term
+      if (kind !== "youtube") for (const m of more) { if (results.length >= 8) break; results = results.concat((await invoke(sb, { action: "search", q: m, kind, aspect: project.aspect })).results); }
+      if (!configured && !results.length) toast(kind === "youtube" ? "YouTube search isn't set up: add YOUTUBE_API_KEY in Supabase Edge Function secrets." : "Stock search isn't set up: add PIXABAY_API_KEY in Supabase Edge Function secrets.");
       const uniq = [...new Map(results.map((r) => [`${r.source}-${r.id}`, r])).values()].slice(0, 12);
       if (uniq.length) await patchScene(sceneId, { candidates: uniq });
       else toast("No clips for that search. Try simpler English words.");
@@ -466,7 +478,10 @@ function Editor({ ctx }) {
       size = await new Promise((res) => { const im = new Image(); im.onload = () => res([im.naturalWidth, im.naturalHeight]); im.onerror = () => res([null, null]); im.src = URL.createObjectURL(file); });
     }
     await sign([path]);
-    await patchScene(scene.id, { clip: { type: kind, source: "upload", id: path, path, duration, width: size[0], height: size[1], trim: 0 } });
+    // the file for a YouTube Creative Commons pick: keep who to credit
+    const prev = scene.clip || {};
+    const credit = prev.source === "youtube" ? { tags: prev.tags, author: prev.author, license: prev.license, page: prev.page, via: "YouTube" } : null;
+    await patchScene(scene.id, { clip: { type: kind, source: "upload", id: path, path, duration, width: size[0], height: size[1], trim: 0, credit } });
   };
   const addAfter = async (i) => {
     const { data, error } = await sb.from("project_scenes").insert({ project_id: project.id, idx: i + 1, text: "New line…", terms: [], clip: { type: "card" } }).select().single();

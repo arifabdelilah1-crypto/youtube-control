@@ -215,6 +215,7 @@ td.num.plain { font-family: inherit; }
 .ed-cand img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ed-cand i { position: absolute; right: 3px; bottom: 3px; font-style: normal; font-size: 10px; color: #fff; background: rgba(0,0,0,.6); border-radius: 4px; padding: 0 4px; }
 .ed-cand.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+.ed-cand b.src { position: absolute; left: 3px; top: 3px; font-size: 9.5px; font-weight: 700; color: #fff; background: rgba(15,107,99,.9); border-radius: 4px; padding: 0 4px; }
 .ed-trim { width: 80px; min-height: 36px !important; }
 .ed-search .ed-kind { flex: 0 0 auto; width: auto; }
 .ed-more { border-top: 1px solid var(--line-soft); padding-top: 8px; display: flex; flex-direction: column; gap: 10px; }
