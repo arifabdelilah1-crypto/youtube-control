@@ -82,9 +82,15 @@ Script formats (mixable):
     CARD: Lamine Yamal | 19 goals | #A50044 #004D98
 
 Only `VO:` is required. `image:` terms search photos (Wikimedia Commons for real people, places and cars, plus Pixabay),
-`video:` terms search Pixabay clips. Photos get a slow zoom/pan; photos much wider than the frame sit on a blurred copy
-of themselves instead of being cropped. Wikimedia photos need a credit: the editor shows the lines and adds them to
-the idea's description when you render.
+`video:` terms search videos (Wikimedia Commons real footage first, e.g. clubs' CC BY videos, then Pixabay). Each scene
+also has a **YouTube CC** button: Creative Commons YouTube videos, search only (YouTube doesn't let apps download other
+channels' videos), so a pick keeps its credit and asks for the file; 101 API units per search. Photos get a slow
+zoom/pan; photos much wider than the frame sit on a blurred copy of themselves instead of being cropped. Wikimedia and
+YouTube CC footage needs a credit: the editor shows the lines and adds them to the idea's description when you render.
+
+Dashboard: the channel bus at the top ("Working on") sets the channel Research, Ideas and Studio follow; the selected
+channel is lit red. Status lamps: red = live/selected, green = ready, amber = in progress, grey = idle. On phones the
+navigation moves to bottom tabs and tables turn into cards.
 
 | Part | Where |
 |---|---|

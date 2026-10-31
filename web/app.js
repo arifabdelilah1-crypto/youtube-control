@@ -31,6 +31,7 @@ function svg(tag, attrs = {}, ...kids) {
   for (const k of kids.flat()) if (k) el.append(k);
   return el;
 }
+const icon = (name) => svg("svg", { class: "i", "aria-hidden": "true" }, svg("use", { href: `#${name}` }));
 const nf = new Intl.NumberFormat("en-US");
 const cf = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 const fmt = (n) => (n === null || n === undefined ? "—" : nf.format(Math.round(Number(n))));
@@ -59,7 +60,7 @@ function scorePill(s, big) {
 }
 const volLabel = (v) => (v === null || v === undefined ? "—" : v < 20 ? "Very low" : v < 40 ? "Low" : v < 60 ? "Medium" : v < 80 ? "High" : "Very high");
 const diffLabel = (d) => (d === null || d === undefined ? "—" : d < 25 ? "Easy" : d < 50 ? "Medium" : d < 75 ? "Hard" : "Very hard");
-const diffColor = (d) => (d < 25 ? "#15803D" : d < 50 ? "#0F6B63" : d < 75 ? "#B45309" : "#B42318");
+const diffColor = (d) => (d < 25 ? "#12985A" : d < 50 ? "#5B6370" : d < 75 ? "#D48A0A" : "#B3261E");
 function bar(pct, color, thick) {
   return h("div", { class: thick ? "bar thick" : "bar" }, h("div", { style: `width:${Math.max(pct, 2)}%;${color ? `background:${color}` : ""}` }));
 }
@@ -69,7 +70,7 @@ function spark(values, w = 84, hgt = 24) {
   const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
   const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * (w - 4) + 2},${hgt - 2 - ((v - min) / span) * (hgt - 4)}`).join(" ");
   return svg("svg", { width: w, height: hgt, viewBox: `0 0 ${w} ${hgt}`, "aria-hidden": "true", class: "spark" },
-    svg("polyline", { points: pts, fill: "none", stroke: "#0F6B63", "stroke-width": "1.75" }));
+    svg("polyline", { points: pts, fill: "none", stroke: "#111418", "stroke-width": "1.75", "stroke-linejoin": "round" }));
 }
 function lineChart(points, label) {
   const w = 640, ht = 200, pl = 40, pr = 10, pt = 14, pb = 28;
@@ -78,13 +79,15 @@ function lineChart(points, label) {
   const Y = (v) => pt + (1 - v / max) * (ht - pt - pb);
   const g = svg("svg", { viewBox: `0 0 ${w} ${ht}`, role: "img", "aria-label": label, style: "width:100%;height:auto" });
   [0, 0.5, 1].forEach((f) => {
-    g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "#CFCFC8" : "#EFEFEA" }));
-    const t = svg("text", { x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end", "font-size": "11", fill: "#5C5F66" }); t.textContent = Math.round(max * f); g.append(t);
+    g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "#C2C9D1" : "#E7EAEE" }));
+    const t = svg("text", { x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end", "font-size": "11", fill: "#5B6370" }); t.textContent = Math.round(max * f); g.append(t);
   });
   [0, points.length - 1].forEach((i) => {
-    const t = svg("text", { x: X(i), y: ht - 8, "text-anchor": i ? "end" : "start", "font-size": "11", fill: "#5C5F66" }); t.textContent = points[i].x; g.append(t);
+    const t = svg("text", { x: X(i), y: ht - 8, "text-anchor": i ? "end" : "start", "font-size": "11", fill: "#5B6370" }); t.textContent = points[i].x; g.append(t);
   });
-  g.append(svg("polyline", { fill: "none", stroke: "#0F6B63", "stroke-width": "2.5", points: points.map((p, i) => `${X(i)},${Y(p.y)}`).join(" ") }));
+  g.append(svg("polyline", { fill: "none", stroke: "#111418", "stroke-width": "2.5", "stroke-linejoin": "round", points: points.map((p, i) => `${X(i)},${Y(p.y)}`).join(" ") }));
+  const last = points[points.length - 1];
+  if (last) g.append(svg("circle", { cx: X(points.length - 1), cy: Y(last.y), r: "4.5", fill: "#E5322C", stroke: "#FBFCFD", "stroke-width": "2" }));
   return g;
 }
 function toast(msg) {
@@ -103,6 +106,16 @@ function selectEl(id, options, current, onChange, label, extra = {}) {
       options.map(([v, text]) => h("option", { value: v, selected: String(v) === String(current), text }))));
 }
 const empty = (text, action) => h("div", { class: "empty" }, h("div", { text }), action || null);
+const skeleton = () => h("div", { class: "skeleton", "aria-busy": "true", "aria-label": "Loading" },
+  h("div", { class: "sk sk-title" }), h("div", { class: "sk-row" }, [1, 2, 3, 4].map(() => h("div", { class: "sk sk-card" }))), h("div", { class: "sk sk-block" }));
+// Phones show table rows as cards (see .stack in styles.css): each cell carries its column name.
+function labelTables(root) {
+  for (const t of root.querySelectorAll("table")) {
+    const heads = [...t.querySelectorAll("thead th")].map((th) => th.textContent.trim());
+    for (const tr of t.querySelectorAll("tbody tr")) [...tr.children].forEach((td, i) => { if (heads[i]) td.dataset.label = heads[i]; });
+    t.classList.add("stack");
+  }
+}
 const store = { get: (k, d) => { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } } };
 
 // ==================================================================
@@ -174,9 +187,40 @@ async function loadShared() {
     q(sb.from("channels").select("*").order("created_at")),
     q(sb.from("niches").select("*").order("created_at")),
   ]);
-  const sel = document.getElementById("channel-switch");
-  sel.replaceChildren(h("option", { value: "all", text: "All channels" }), ...state.channels.map((c) => h("option", { value: c.id, text: c.title })));
-  sel.value = state.channels.some((c) => c.id === state.channel) ? state.channel : "all";
+  if (!state.channels.some((c) => c.id === state.channel)) state.channel = "all";
+  renderBus();
+}
+
+// The channel bus in the top bar: the channel you're working on lights up. Research, Ideas and Studio follow it.
+function renderBus() {
+  const item = (id, label, art) => h("button", { type: "button", class: "bus-item", "aria-pressed": String(state.channel === id), title: label, onclick: () => setChannel(id) },
+    art, h("span", { class: "bus-name", text: label }));
+  const bus = document.getElementById("bus");
+  bus.replaceChildren(h("span", { class: "bus-label", text: "Working on" }),
+    item("all", "All channels", h("span", { class: "bus-all" }, icon("i-all"))),
+    ...state.channels.map((c) => item(c.id, c.title, c.thumbnail_url ? h("img", { src: c.thumbnail_url, alt: "" }) : h("span", { class: "bus-all", text: c.title.slice(0, 1) }))));
+  bus.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+function setChannel(id) {
+  state.channel = id; store.set("ytc.channel", id); renderBus();
+  const route = parseRoute();
+  if (route.name === "research" || route.name === "keyword") { go("#/research"); return; }
+  if (route.name === "channel" && id !== "all") { go(`#/channel/${id}`); return; }
+  render();
+}
+
+// Live counts from the last refresh: total views (latest channel snapshot, else the sum of tracked videos), likes, uploads in the last 24 h.
+function liveCounts(snaps, vids) {
+  const live = {};
+  const since = Date.now() - 864e5;
+  for (const v of vids) {
+    const l = (live[v.channel_id] ||= { views: 0, likes: 0, fresh: 0 });
+    l.views += Number(v.views || 0); l.likes += Number(v.likes || 0);
+    if (v.published_at && new Date(v.published_at).getTime() > since) l.fresh++;
+  }
+  const seen = new Set();
+  for (const s of snaps) if (!seen.has(s.channel_id)) { seen.add(s.channel_id); (live[s.channel_id] ||= { views: 0, likes: 0, fresh: 0 }).views = Number(s.total_views); }
+  return live;
 }
 
 const VIEWS = {};
@@ -188,10 +232,10 @@ async function render() {
   document.querySelectorAll(".side-links a").forEach((a) =>
     a.dataset.route === section ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   const fn = VIEWS[route.name] || VIEWS.home;
-  view().replaceChildren(h("div", { class: "loading", text: "Loading…" }));
+  view().replaceChildren(skeleton());
   try {
     const nodes = await fn(route);
-    if (parseRoute().name === route.name) view().replaceChildren(...[nodes].flat().filter(Boolean));
+    if (parseRoute().name === route.name) { view().replaceChildren(...[nodes].flat().filter(Boolean)); labelTables(view()); }
   } catch (e) {
     console.error(e);
     view().replaceChildren(h("div", { class: "card" }, h("h2", { text: "Something went wrong" }), h("p", { class: "muted", text: e.message || String(e) })));
@@ -214,12 +258,15 @@ async function makeIdea({ title, niche_id, score, sources, channel_id }) {
 // ==================================================================
 VIEWS.home = async () => {
   const days = state.period;
-  const [rows, daily, alerts, ideas] = await Promise.all([
+  const [rows, daily, alerts, ideas, snaps, vids] = await Promise.all([
     q(sb.rpc("channel_overview", { p_days: days })),
     q(sb.rpc("portfolio_daily", { p_days: days })),
     q(sb.from("alerts").select("*").is("resolved_at", null).order("created_at", { ascending: false }).limit(6)),
     q(sb.from("ideas").select("*").in("stage", ["new", "shortlisted"]).order("score", { ascending: false, nullsFirst: false }).limit(5)),
+    q(sb.from("channel_snapshots").select("channel_id,total_views,captured_at").order("captured_at", { ascending: false }).limit(300)),
+    q(sb.from("v_own_video_latest").select("channel_id,views,likes,published_at")),
   ]);
+  const live = liveCounts(snaps, vids);
   const sum = (k) => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
   const connected = rows.some((r) => r.connected);
   const kpi = (label, value, d, series) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
@@ -234,21 +281,10 @@ VIEWS.home = async () => {
       kpi("Watch hours", fmt(sum("watch_hours")), connected ? delta(sum("watch_hours"), sum("watch_hours_prev")) : na, daily.map((d) => d.watch_hours)),
       kpi("Net subscribers", (sum("subs_net") >= 0 ? "+" : "") + fmt(sum("subs_net")), connected ? delta(sum("subs_net"), sum("subs_net_prev")) : na),
       kpi("Videos published", fmt(sum("uploads")), h("span", { class: "flat", text: `last ${days} days` }))),
-    h("section", { class: "card" },
-      h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("a", { href: "#/channels", class: "small", text: "Manage channels" })),
-      rows.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:680px" },
-        h("thead", {}, h("tr", {}, ["Channel", "Subscribers", "Views", "Watch hours", "YPP watch hours (12 mo)", ""].map((t, i) => h("th", { class: [1, 2, 3].includes(i) ? "num" : null, text: t })))),
-        h("tbody", {}, rows.map((r) => h("tr", { class: "clickable", tabindex: "0", onclick: () => go(`#/channel/${r.channel_id}`), onkeydown: (e) => e.key === "Enter" && go(`#/channel/${r.channel_id}`) },
-          h("td", {}, h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, r.thumbnail_url ? h("img", { class: "avatar sm", src: r.thumbnail_url, alt: "" }) : h("span", { class: "avatar sm" }),
-            h("div", {}, h("div", { style: "font-weight:500", text: r.title }), h("div", { class: "muted small", text: r.niche_name || "No niche" })))),
-          h("td", { class: "num", text: fmt(r.subscribers) }),
-          h("td", { class: "num", text: r.connected ? fmt(r.views) : "—" }),
-          h("td", { class: "num", text: r.connected ? fmt(r.watch_hours) : "—" }),
-          h("td", { style: "min-width:180px" }, r.connected
-            ? [bar(pctOf(r.watch_hours_12m, 8000), null), h("div", { class: "muted small", style: "margin-top:6px", text: `${fmt(r.watch_hours_12m)} / 8,000 h` })]
-            : h("span", { class: "muted small", text: "Not connected" })),
-          h("td", {}, r.open_critical ? h("span", { class: "pill crit", text: "Needs attention" }) : null))))))
-        : empty("No channels yet.", h("a", { class: "btn primary", href: "#/channels", text: "Connect a channel" }))),
+    h("p", { class: "muted small note-lag", text: "Views, watch hours and subscribers above come from YouTube Analytics, about 2 days behind. Each channel below shows its live counts from the last refresh." }),
+    h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("a", { href: "#/channels", class: "small", text: "Manage channels" })),
+    rows.length ? h("section", { class: "monitors", "aria-label": "Channels" }, rows.map((r) => monitor(r, live[r.channel_id], days)))
+      : empty("No channels yet.", h("a", { class: "btn primary", href: "#/channels", text: "Connect a channel" })),
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("div", { class: "card-head" }, h("h2", { text: "Next ideas" }), h("a", { href: "#/ideas", class: "small", text: "All ideas" })),
         ideas.length ? ideas.map((i) => h("a", { class: "listrow link", href: `#/studio/${i.id}` }, scorePill(i.score),
@@ -261,6 +297,24 @@ VIEWS.home = async () => {
           : empty("All good, nothing needs attention."))),
   ];
 };
+
+// One channel on Home: live counts from the last refresh, lagging Analytics views, monetization progress.
+// A red "new today" lamp when something went out in the last 24 h; the channel you're working on is framed in red.
+function monitor(r, l = {}, days) {
+  const c = channelById(r.channel_id);
+  return h("a", { class: `monitor${state.channel === r.channel_id ? " on-air" : ""}`, href: `#/channel/${r.channel_id}` },
+    h("div", { class: "mon-head" }, r.thumbnail_url ? h("img", { class: "avatar", src: r.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
+      h("div", {}, h("div", { class: "mon-name", text: r.title }), h("div", { class: "muted small", text: `${r.niche_name || "No niche"} · ${(r.language || "—").toUpperCase()}` })),
+      l.fresh ? h("span", { class: "lamp on", text: l.fresh > 1 ? `${l.fresh} new today` : "New today" }) : r.open_critical ? h("span", { class: "lamp cue", text: "Alert" }) : null),
+    h("div", { class: "mon-figs" },
+      h("div", {}, h("div", { class: "fig", text: fmtc(l.views ?? null) }), h("span", { text: "Total views" })),
+      h("div", {}, h("div", { class: "fig", text: fmtc(l.likes ?? null) }), h("span", { text: "Likes" })),
+      h("div", {}, h("div", { class: "fig", text: fmt(r.subscribers) }), h("span", { text: "Subscribers" }))),
+    h("div", { class: "mon-foot" },
+      h("div", { class: "row" }, h("span", { text: `Views, last ${days} d: ${r.connected ? fmt(r.views) : "—"}` }), h("span", { class: "mono", text: `Updated ${ago(c?.stats_synced_at)}` })),
+      r.connected ? [bar(pctOf(r.watch_hours_12m, 8000), null), h("span", { text: `${fmt(r.watch_hours_12m)} of 8,000 watch hours (12 months)` })]
+        : h("span", { text: "Public stats only. Connect with Google for analytics." })));
+}
 
 // ==================================================================
 // Research: search first, then a dedicated keyword page
@@ -279,7 +333,8 @@ function searchBar(route, scope, initial = {}) {
     const term = input.value.trim().toLowerCase();
     if (term) go(link(`keyword/${encodeURIComponent(term)}`, { market: mSel.value, lang: lSel.value, scope: sSel.value }));
   } },
-    h("label", { for: "kw-q", class: "sr", text: "Keyword" }), input, mSel, lSel, sSel, h("button", { class: "btn primary", type: "submit", text: "Analyze" }));
+    h("div", { class: "search-main" }, h("label", { for: "kw-q", class: "sr", text: "Keyword" }), input, h("button", { class: "btn primary", type: "submit", text: "Analyze" })),
+    h("div", { class: "search-opts" }, mSel, lSel, sSel));
 }
 
 VIEWS.research = async (route) => {
@@ -498,39 +553,39 @@ VIEWS.keyword = async (route) => {
 // ==================================================================
 // Ideas
 // ==================================================================
+// Columns light up like tally lamps: idle, in progress (amber), ready (green), on air (red).
 const BOARD = [
-  ["Ideas", ["new"], "Saved from research"],
-  ["Shortlisted", ["shortlisted"], "Worth making"],
-  ["In Studio", ["assigned", "scripted"], "Script being written"],
-  ["Rendered", ["produced", "scheduled"], "Video ready"],
-  ["Published", ["published"], "Live"],
+  ["Ideas", ["new"], "Saved from research", "idle"],
+  ["Shortlisted", ["shortlisted"], "Worth making", "cue"],
+  ["In Studio", ["assigned", "scripted"], "Script being written", "cue"],
+  ["Rendered", ["produced", "scheduled"], "Video ready", "ready"],
+  ["Published", ["published"], "Live on YouTube", "on"],
 ];
 VIEWS.ideas = async () => {
   let iq = sb.from("ideas").select("*").neq("stage", "archived").order("score", { ascending: false, nullsFirst: false });
   if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
   const ideas = await q(iq);
   const update = async (id, values) => { await q(sb.from("ideas").update(values).eq("id", id)); render(); };
-  const titleIn = h("input", { id: "idea-title", class: "field", placeholder: "Add an idea…", style: "flex:1 1 260px" });
-  const add = h("form", { class: "row", onsubmit: async (e) => { e.preventDefault(); if (!titleIn.value.trim()) return;
+  const titleIn = h("input", { id: "idea-title", class: "field", placeholder: "Add an idea, e.g. What if Ronaldo never left Real Madrid?" });
+  const add = h("form", { class: "add-idea", onsubmit: async (e) => { e.preventDefault(); if (!titleIn.value.trim()) return;
     await makeIdea({ title: titleIn.value.trim(), channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] }); render(); } },
-    h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn, h("button", { class: "btn", type: "submit", text: "Add" }));
+    h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn, h("button", { class: "btn primary", type: "submit", text: "Add idea" }));
 
-  const board = h("div", { class: "board" }, h("div", { class: "board-inner" }, BOARD.map(([name, stages, hint], ci) => {
+  const board = h("div", { class: "board" }, h("div", { class: "board-inner" }, BOARD.map(([name, stages, hint, lamp], ci) => {
     const cards = ideas.filter((i) => stages.includes(i.stage));
-    return h("section", { class: "col", "aria-label": name },
-      h("div", { class: "col-head" }, h("h3", { style: "font-size:14px", text: name }), h("span", { class: "mono small muted", text: String(cards.length) })),
-      h("div", { class: "muted small", style: "padding:0 4px", text: hint }),
+    return h("section", { class: "col", "data-lamp": lamp, "aria-label": name },
+      h("div", { class: "col-head" }, h("h3", { text: name }), h("span", { class: "mono small muted", text: String(cards.length) })),
+      h("div", { class: "muted small col-hint", text: hint }),
       cards.map((i) => h("article", { class: "icard" },
-        h("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:8px" }, scorePill(i.score),
-          h("span", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" })),
-        h("a", { class: "title", href: `#/studio/${i.id}`, text: i.title }),
+        h("div", { class: "meta" }, scorePill(i.score), h("span", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" })),
+        h("a", { class: "title", href: `#/studio/${i.id}`, text: i.video_title || i.title }),
         h("div", { class: "acts" },
           ci === 0 ? h("button", { class: "btn small", type: "button", text: "Shortlist", onclick: () => update(i.id, { stage: "shortlisted" }) }) : null,
-          ci >= 1 && ci <= 3 ? h("a", { class: "btn small primary", href: `#/studio/${i.id}`, text: "Open in Studio" }) : null,
+          ci === 1 || ci === 2 ? h("a", { class: "btn small primary", href: `#/studio/${i.id}`, text: "Open in Studio" }) : null,
           ci === 3 ? h("button", { class: "btn small", type: "button", text: "Mark published", onclick: () => update(i.id, { stage: "published" }) }) : null,
-          h("button", { class: "btn small ghost", type: "button", text: "Archive", onclick: () => update(i.id, { stage: "archived" }) })))));
+          h("button", { class: "btn small ghost icon", type: "button", title: "Archive", "aria-label": `Archive “${i.video_title || i.title}”`, onclick: () => update(i.id, { stage: "archived" }) }, icon("i-x"))))));
   })));
-  return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All channels", add), board];
+  return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All channels"), add, board];
 };
 
 // ==================================================================
@@ -693,13 +748,9 @@ VIEWS.channels = async () => {
   const [rows, snaps, vids] = await Promise.all([
     q(sb.rpc("channel_overview", { p_days: 28 })),
     q(sb.from("channel_snapshots").select("channel_id,total_views,captured_at").order("captured_at", { ascending: false }).limit(300)),
-    q(sb.from("v_own_video_latest").select("channel_id,views,likes")),
+    q(sb.from("v_own_video_latest").select("channel_id,views,likes,published_at")),
   ]);
-  // live counts from the last refresh: channel total views (latest snapshot, else the sum of tracked videos) and likes
-  const live = {};
-  for (const v of vids) { const l = (live[v.channel_id] ||= { views: 0, likes: 0 }); l.views += Number(v.views || 0); l.likes += Number(v.likes || 0); }
-  const seen = new Set();
-  for (const s of snaps) if (!seen.has(s.channel_id)) { seen.add(s.channel_id); (live[s.channel_id] ||= { views: 0, likes: 0 }).views = Number(s.total_views); }
+  const live = liveCounts(snaps, vids);
   return [
     pageHead("Channels", "Connect each channel once with Google. Brand-account channels are connected one at a time.",
       h("button", { class: "btn", type: "button", text: "Refresh stats", onclick: (e) => refreshChannel(null, e.currentTarget) }),
@@ -745,9 +796,9 @@ VIEWS.channel = async (route) => {
       h("div", { class: "head-text" }, h("a", { href: "#/channels", class: "small", text: "← Channels" }), h("h1", { style: "font-size:26px", text: ch.title }),
         h("div", { class: "muted small" }, `${ch.niche_name || "No niche"} · `, ch.connected ? h("span", { class: "up", text: "Connected" }) : h("span", { class: "flat", text: "Public stats only" })))),
     h("div", { class: "row" },
-      h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this channel" }),
       h("span", { class: "muted small", title: chRow?.stats_synced_at ? when(chRow.stats_synced_at) : "", text: `Updated ${chRow?.stats_synced_at ? ago(chRow.stats_synced_at) : "—"}` }),
       h("button", { class: "btn", type: "button", text: "Refresh now", onclick: (e) => refreshChannel(id, e.currentTarget) }),
+      h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this channel" }),
       ch.connected ? null : h("button", { class: "btn primary", type: "button", text: "Connect with Google", onclick: startOAuth })));
   const statLine = (v) => [`${fmtc(v.views)} views`, `${fmtc(v.likes)} likes`, v.impressions_28d !== null && v.impressions_28d !== undefined ? `${fmtc(v.impressions_28d)} impr.` : null].filter(Boolean).join(" · ");
   const tabs = h("div", { class: "tabs", role: "tablist" },
@@ -825,7 +876,7 @@ function yppRow(label, val, target, unit) {
   const p = pctOf(val, target);
   return h("div", { style: "display:flex;flex-direction:column;gap:6px" },
     h("div", { style: "display:flex;justify-content:space-between;font-size:13.5px" }, h("span", { style: "font-weight:500", text: label }), h("span", { class: "mono", text: `${fmtc(val)} / ${fmtc(target)}${unit}` })),
-    bar(p, p >= 100 ? "#15803D" : null, true));
+    bar(p, p >= 100 ? "#12985A" : null, true));
 }
 function multPill(m) {
   if (m === null || m === undefined) return h("span", { class: "flat", text: "—" });
@@ -906,7 +957,7 @@ VIEWS.settings = async (route) => {
   const used = quota.filter((r) => r.api === "youtube_data"), total = used.reduce((a, r) => a + r.units, 0);
   const quotaBox = h("section", { class: "card grow2" }, h("h2", { text: "YouTube API today" }),
     h("div", { style: "display:flex;justify-content:space-between" }, h("span", { text: `${fmt(total)} of 10,000 units` }), h("span", { class: "mono", text: `${Math.round(total / 100)}%` })),
-    bar(total / 100, total > 9000 ? "#B42318" : null, true),
+    bar(total / 100, total > 9000 ? "#B3261E" : null, true),
     h("p", { class: "muted small", style: "margin:0", text: `About ${Math.max(0, Math.floor((9500 - total) / 102))} keyword analyses left today. Resets at midnight Pacific time.` }));
 
   // --- Music library
@@ -1014,13 +1065,6 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   boot();
 });
 document.getElementById("sign-out").addEventListener("click", async () => { await sb.auth.signOut(); location.hash = ""; boot(); });
-document.getElementById("channel-switch").addEventListener("change", (e) => {
-  state.channel = e.target.value; store.set("ytc.channel", state.channel);
-  const route = parseRoute();
-  if (route.name === "research" || route.name === "keyword") { go("#/research"); return; }
-  if (route.name === "channel" && state.channel !== "all") { go(`#/channel/${state.channel}`); return; }
-  render();
-});
 window.addEventListener("hashchange", () => { if (!document.getElementById("app").hidden) render(); });
 sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") boot(); });
 boot();
