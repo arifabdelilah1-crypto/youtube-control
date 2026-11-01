@@ -1,5 +1,6 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
+import { slotsBetween } from "./slots.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "pkce", detectSessionInUrl: true, persistSession: true } });
 
@@ -231,7 +232,7 @@ async function render() {
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
   if (state.unmount) { state.unmount(); state.unmount = null; }
   const route = parseRoute();
-  const section = { keyword: "research", channel: "channels", edit: "studio" }[route.name] || route.name;
+  const section = { keyword: "research", channel: "channels", edit: "studio" }[route.name] || route.name;  // "automation" = Publishing
   document.querySelectorAll(".side-links a").forEach((a) =>
     a.dataset.route === section ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   const fn = VIEWS[route.name] || VIEWS.home;
@@ -870,6 +871,151 @@ VIEWS.edit = async (route) => {
   const el = h("div", { class: "ed-root" });
   state.unmount = mod.mountEditor(el, { sb, projectId: route.id, toast, VOICES, LANGS });
   return el;
+};
+
+// ==================================================================
+// Publishing: one posting schedule per channel + the upload queue
+// ==================================================================
+const WEEKDAYS = [[1, "Mon"], [2, "Tue"], [3, "Wed"], [4, "Thu"], [5, "Fri"], [6, "Sat"], [0, "Sun"]];
+const TIMEZONES = [["Europe/Madrid", "Spain (Madrid)"], ["Europe/London", "UK (London)"], ["Europe/Berlin", "Germany (Berlin)"], ["Europe/Paris", "France (Paris)"],
+  ["Africa/Casablanca", "Morocco (Casablanca)"], ["America/New_York", "US East (New York)"], ["America/Los_Angeles", "US West (Los Angeles)"], ["UTC", "UTC"]];
+const CATEGORIES = [["22", "People & Blogs"], ["24", "Entertainment"], ["17", "Sports"], ["2", "Autos & Vehicles"], ["27", "Education"], ["28", "Science & Technology"], ["25", "News & Politics"], ["26", "Howto & Style"]];
+const DEFAULT_SCHED = { enabled: false, method: "youtube", blotato_account_id: "", days: [1, 2, 3, 4, 5, 6, 0], times: ["18:00"], timezone: "Europe/Madrid",
+  privacy: "public", notify_subscribers: true, synthetic_media: false, category_id: "22" };
+const inTz = (iso, tz) => new Date(iso).toLocaleString("en-GB", { timeZone: tz, weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+async function publishCall(body) {
+  const { data, error } = await sb.functions.invoke("publish", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+VIEWS.automation = async () => {
+  const since = new Date(Date.now() - 14 * 864e5).toISOString();
+  const [scheds, queue, jobs, tokens] = await Promise.all([
+    q(sb.from("publish_schedules").select("*")),
+    q(sb.from("publish_queue").select("*").neq("status", "cancelled").order("slot_at", { ascending: true, nullsFirst: true }).limit(200)),
+    q(sb.from("render_jobs").select("id,status,channel_id,project_id,idea_id,params,output_path,run_url,duration_s,finished_at,created_at").eq("status", "done").gte("created_at", since).order("created_at", { ascending: false })),
+    q(sb.from("channel_tokens").select("channel_id")),
+  ]);
+  const connected = new Set(tokens.map((t) => t.channel_id));
+  const schedOf = (id) => ({ ...DEFAULT_SCHED, ...(scheds.find((x) => x.channel_id === id) || {}) });
+  const channels = state.channel === "all" ? state.channels : state.channels.filter((c) => c.id === state.channel);
+  const active = (r) => ["queued", "uploading", "scheduled"].includes(r.status);
+  const now = Date.now();
+
+  // ----- consistency: empty slots in the next 7 days
+  const week = channels.map((c) => {
+    const sc = schedOf(c.id);
+    const slots = slotsBetween(sc, now, 7);
+    const taken = queue.filter((r) => r.channel_id === c.id && (active(r) || r.status === "published") && r.slot_at).map((r) => Date.parse(r.slot_at));
+    const empty = slots.filter((t) => !taken.some((x) => Math.abs(x - t) < 30 * 60e3));
+    return { c, sc, slots, empty };
+  });
+  const weekBox = h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "Next 7 days" }), h("span", { class: "muted small", text: "Empty slots = days you'd miss. Render more videos to fill them." })),
+    h("div", { class: "pub-week" }, week.map(({ c, sc, slots, empty }) => h("div", { class: "pub-week-row" },
+      h("div", { style: "font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", text: c.title }),
+      sc.enabled ? h("div", { class: "pub-dots", "aria-label": `${slots.length - empty.length} of ${slots.length} slots filled` },
+        slots.map((t) => h("span", { class: `pub-dot${empty.includes(t) ? "" : " on"}`, title: `${inTz(new Date(t).toISOString(), sc.timezone)}${empty.includes(t) ? " · empty" : " · filled"}` })))
+        : h("span", { class: "muted small", text: "Automation off" }),
+      sc.enabled ? h("span", { class: `pill ${empty.length ? (empty[0] - now < 2 * 864e5 ? "crit" : "warn") : "ok"}`, text: empty.length ? `${empty.length} empty` : "All filled" }) : null))));
+
+  // ----- schedule per channel
+  const schedCard = (c) => {
+    const sc = schedOf(c.id);
+    const days = new Set(sc.days);
+    const en = h("input", { type: "checkbox", checked: sc.enabled, id: `en-${c.id}` });
+    const method = h("select", { class: "field", id: `m-${c.id}` }, [["youtube", "YouTube (direct)"], ["blotato", "Blotato"]].map(([v, t]) => h("option", { value: v, selected: sc.method === v, text: t })));
+    const blot = h("input", { class: "field", id: `b-${c.id}`, value: sc.blotato_account_id || "", placeholder: "Blotato YouTube account ID" });
+    const blotWrap = h("div", { class: "field-wrap" }, h("label", { for: `b-${c.id}`, text: "Blotato account ID" }), blot);
+    const showBlot = () => { blotWrap.hidden = method.value !== "blotato"; };
+    method.addEventListener("change", showBlot); showBlot();
+    const dayBtns = h("div", { class: "chips-tabs", role: "group", "aria-label": "Posting days" }, WEEKDAYS.map(([d, t]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(days.has(d)), text: t,
+      onclick: (e) => { days.has(d) ? days.delete(d) : days.add(d); e.currentTarget.setAttribute("aria-pressed", String(days.has(d))); } })));
+    const times = h("input", { class: "field", id: `t-${c.id}`, value: sc.times.join(", "), placeholder: "18:00, 21:00" });
+    const tz = h("select", { class: "field", id: `tz-${c.id}` }, TIMEZONES.map(([v, t]) => h("option", { value: v, selected: sc.timezone === v, text: t })));
+    const privacy = h("select", { class: "field", id: `p-${c.id}` }, [["public", "Public"], ["unlisted", "Unlisted"], ["private", "Private"]].map(([v, t]) => h("option", { value: v, selected: sc.privacy === v, text: t })));
+    const cat = h("select", { class: "field", id: `c-${c.id}` }, CATEGORIES.map(([v, t]) => h("option", { value: v, selected: sc.category_id === v, text: t })));
+    const notify = h("input", { type: "checkbox", checked: sc.notify_subscribers });
+    const synth = h("input", { type: "checkbox", checked: sc.synthetic_media });
+    const fld = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
+    const save = h("button", { class: "btn primary small", type: "button", text: "Save schedule", onclick: async () => {
+      const tlist = times.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
+      if (tlist.some((x) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(x))) return toast("Times look like 18:00, 21:30");
+      if (!days.size || !tlist.length) return toast("Pick at least one day and one time");
+      if (method.value === "blotato" && !blot.value.trim()) return toast("Add the Blotato account ID");
+      await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked, method: method.value, blotato_account_id: blot.value.trim() || null,
+        days: [...days], times: tlist.map((x) => x.padStart(5, "0")), timezone: tz.value, privacy: privacy.value, category_id: cat.value,
+        notify_subscribers: notify.checked, synthetic_media: synth.checked }, { onConflict: "channel_id" }));
+      toast("Schedule saved"); render();
+    } });
+    return h("article", { class: "card pub-sched" },
+      h("div", { class: "card-head" }, h("h3", { text: c.title }),
+        connected.has(c.id) ? null : h("span", { class: "pill warn", title: "YouTube direct publishing needs the channel connected in Channels", text: "Not connected" })),
+      h("label", { class: "pub-check", style: "font-weight:600" }, en, "Auto-publish finished renders"),
+      h("div", { class: "form-grid" }, fld(`m-${c.id}`, "Publish with", method), blotWrap),
+      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Posting days" }), dayBtns),
+      h("div", { class: "form-grid" }, fld(`t-${c.id}`, "Times (local)", times), fld(`tz-${c.id}`, "Time zone", tz), fld(`p-${c.id}`, "Visibility", privacy), fld(`c-${c.id}`, "Category", cat)),
+      h("label", { class: "pub-check small" }, notify, "Notify subscribers"),
+      h("label", { class: "pub-check small" }, synth, "Label as altered/synthetic content (realistic AI people or events)"),
+      h("div", { class: "row" }, save));
+  };
+
+  // ----- renders not queued yet
+  const queuedJobs = new Set(queue.map((r) => r.render_job_id));
+  const ready = jobs.filter((j) => !queuedJobs.has(j.id) && (state.channel === "all" || j.channel_id === state.channel));
+  const pickTime = (j) => {
+    const inp = h("input", { type: "datetime-local", class: "field", style: "min-height:36px", "aria-label": "Publish at" });
+    const go2 = h("button", { class: "btn small", type: "button", text: "Schedule", onclick: async () => {
+      if (!inp.value) return toast("Pick a date and time");
+      try { await publishCall({ action: "queue", render_job_id: j.id, when: new Date(inp.value).toISOString() }); toast("Scheduled"); render(); } catch (e) { toast(e.message); }
+    } });
+    return h("span", { class: "row", style: "gap:6px" }, inp, go2);
+  };
+  const readyBox = h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "Rendered, not scheduled" }), h("span", { class: "muted small", text: "Last 14 days" })),
+    ready.length ? ready.map((j) => h("div", { class: "listrow" },
+      h("div", { style: "flex:1 1 240px;min-width:0" }, h("div", { style: "font-weight:500", text: j.params?.title || "Video" }),
+        h("div", { class: "muted small", text: [channelById(j.channel_id)?.title || "No channel", j.params?.aspect, j.duration_s ? Math.round(j.duration_s) + " s" : "", `rendered ${ago(j.finished_at || j.created_at)}`].filter(Boolean).join(" · ") })),
+      h("div", { class: "row" },
+        h("button", { class: "btn small primary", type: "button", text: "Next free slot", onclick: async (e) => { e.currentTarget.disabled = true;
+          try { const r = await publishCall({ action: "queue", render_job_id: j.id, when: "next" }); toast(r.row?.slot_at ? `Queued for ${inTz(r.row.slot_at, schedOf(j.channel_id).timezone)}` : "Queued"); render(); } catch (err) { toast(err.message); render(); } } }),
+        h("button", { class: "btn small", type: "button", text: "Publish now", onclick: async (e) => { e.currentTarget.disabled = true;
+          try { await publishCall({ action: "queue", render_job_id: j.id, when: "now" }); toast("Uploading now: live in a few minutes"); render(); } catch (err) { toast(err.message); render(); } } }),
+        pickTime(j))))
+      : empty("Nothing waiting. Videos you render show up here, or go straight to the queue when auto-publish is on."));
+
+  // ----- queue
+  const label = { queued: ["info", "Queued"], uploading: ["info", "Uploading"], scheduled: ["ok", "Scheduled"], published: ["ok", "Published"], failed: ["crit", "Failed"] };
+  const rows = queue.filter((r) => state.channel === "all" || r.channel_id === state.channel);
+  const queueBox = h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "Queue" }), h("span", { class: "muted small", text: "Scheduled videos stay private on YouTube until their time, then go live automatically." })),
+    rows.length ? rows.map((r) => {
+      const sc = schedOf(r.channel_id);
+      return h("div", { class: "listrow", style: "align-items:flex-start" },
+        h("span", { class: `pill ${label[r.status]?.[0] || "info"}`, text: label[r.status]?.[1] || r.status }),
+        h("div", { style: "flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:4px" },
+          h("div", { style: "font-weight:500", text: r.title }),
+          h("div", { class: "muted small", text: `${channelById(r.channel_id)?.title || ""} · ${r.slot_at ? inTz(r.slot_at, sc.timezone) : "as soon as uploaded"} · ${r.method === "blotato" ? "Blotato" : "YouTube"}` }),
+          r.error ? h("pre", { class: "err", text: r.error }) : null),
+        h("div", { class: "row" },
+          r.youtube_video_id ? h("a", { class: "btn small", href: `https://studio.youtube.com/video/${r.youtube_video_id}/edit`, target: "_blank", rel: "noopener", text: "YouTube Studio" }) : null,
+          r.status === "failed" ? h("button", { class: "btn small primary", type: "button", text: "Retry", onclick: async () => {
+            try { await publishCall({ action: "queue", render_job_id: r.render_job_id, when: r.slot_at && Date.parse(r.slot_at) > Date.now() + 20 * 60e3 ? r.slot_at : "next" }); toast("Retrying"); } catch (e) { toast(e.message); } render();
+          } }) : null,
+          ["queued", "failed"].includes(r.status) ? h("button", { class: "btn small ghost", type: "button", text: "Cancel", onclick: async () => {
+            try { await publishCall({ action: "cancel", queue_id: r.id }); toast("Cancelled"); } catch (e) { toast(e.message); } render();
+          } }) : null,
+          r.run_url ? h("a", { class: "btn small ghost", href: r.run_url, target: "_blank", rel: "noopener", text: "Log" }) : null));
+    }) : empty("The queue is empty."));
+
+  if (queue.some((r) => ["queued", "uploading"].includes(r.status))) state.timer = setInterval(() => render(), 20000);
+  return [pageHead("Publishing", "Each channel posts on its own days and times. Render a video and it lands in the next free slot."),
+    weekBox, readyBox, queueBox,
+    h("h2", { style: "margin:8px 0 0", text: "Schedules" }),
+    channels.length ? h("div", { class: "grid-cards wide pub-grid" }, channels.map(schedCard)) : empty("No channels yet.")];
 };
 
 // ==================================================================

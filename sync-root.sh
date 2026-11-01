@@ -3,6 +3,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 npm run -s build:editor
-cp web/index.html web/app.js web/styles.css web/config.js web/editor.bundle.js .
+cp web/index.html web/app.js web/styles.css web/config.js web/editor.bundle.js web/slots.js .
 mkdir -p fonts sfx && cp web/fonts/* fonts/ && cp web/sfx/* sfx/
 echo "Root copy updated."

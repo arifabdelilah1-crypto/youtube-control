@@ -36,3 +36,10 @@ jobs:
           path: render-output.mp4
           if-no-files-found: ignore
           retention-days: 7
+      - name: Auto-publish (if the channel's automation is on)
+        if: success()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          JOB_ID: ${{ github.event.inputs.job_id }}
+        run: node render/publish.mjs --auto "$JOB_ID"

@@ -424,3 +424,15 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .icard .pill { align-self: flex-start; }
 @media (max-width: 700px) { .ai-thumb { width: 100%; } .ai-opts { grid-template-columns: 1fr; } }
 .icard .acts { flex-wrap: wrap; row-gap: 6px; }
+
+/* ---- Publishing ---- */
+.pub-week { display: flex; flex-direction: column; gap: 8px; }
+.pub-week-row { display: grid; grid-template-columns: minmax(110px, 200px) minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.pub-dots { display: flex; flex-wrap: wrap; gap: 5px; }
+.pub-dot { width: 14px; height: 14px; border-radius: 4px; background: var(--console-2); border: 1px solid var(--line-strong); }
+.pub-dot.on { background: var(--preview, #16A34A); border-color: transparent; }
+.pub-sched .chip-tab { min-width: 46px; }
+.pub-grid { align-items: start; }
+@media (max-width: 760px) { .pub-week-row { grid-template-columns: minmax(0, 1fr) auto; } .pub-dots { grid-column: 1 / -1; order: 3; } }
+.pub-check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
+.pub-check input { margin-top: 3px; flex: none; }

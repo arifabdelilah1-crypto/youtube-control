@@ -1,0 +1,45 @@
+name: Publish video
+on:
+  workflow_dispatch:
+    inputs:
+      queue_id:
+        description: "publish_queue.id"
+        required: true
+      run_id:
+        description: "Render run that holds the video artifact (long videos only)"
+        required: false
+        default: ""
+      artifact:
+        description: "Artifact name (long videos only)"
+        required: false
+        default: ""
+concurrency: { group: "publish-${{ github.event.inputs.queue_id }}", cancel-in-progress: false }
+permissions:
+  contents: read
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: render
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Get the long video from its render run
+        if: ${{ github.event.inputs.run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ github.event.inputs.artifact }}
+          run-id: ${{ github.event.inputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: .
+      - name: Upload / schedule
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          BLOTATO_API_KEY: ${{ secrets.BLOTATO_API_KEY }}
+          QUEUE_ID: ${{ github.event.inputs.queue_id }}
+        run: node render/publish.mjs "$QUEUE_ID"
