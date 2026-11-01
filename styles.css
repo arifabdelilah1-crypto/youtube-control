@@ -420,6 +420,7 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .ai-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .ai-bp summary, .ai-card details summary { cursor: pointer; font-weight: 600; font-size: 13px; }
 .ai-verify { background: var(--cue-soft); border-radius: 8px; padding: 10px 12px; }
+.ai-opts { display: grid; grid-template-columns: minmax(170px, 220px) 1fr; gap: 12px; }
 .icard .pill { align-self: flex-start; }
-@media (max-width: 700px) { .ai-thumb { width: 100%; } }
+@media (max-width: 700px) { .ai-thumb { width: 100%; } .ai-opts { grid-template-columns: 1fr; } }
 .icard .acts { flex-wrap: wrap; row-gap: 6px; }

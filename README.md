@@ -94,6 +94,14 @@ channels' videos), so a pick keeps its credit and asks for the file; 101 API uni
 zoom/pan; photos much wider than the frame sit on a blurred copy of themselves instead of being cropped. Wikimedia and
 YouTube CC footage needs a credit: the editor shows the lines and adds them to the idea's description when you render.
 
+**AI script** (top of the script page; also **Generate script** on the Ideas board): DeepSeek writes a script in this format,
+plus title options, description, tags, an on-screen hook, a music mood and a list of facts to verify. For an idea saved from
+an outlier it first studies that video's format (never its words). It also reads the research tables: the keyword's demand
+and difficulty, related searches, the titles ranking for it, the niche's outliers and the channel's best videos. Pick a
+length (45 s, 60 s or 3 min); a script far under that length is sent back once. **Improve current** rewrites the script on
+the page, keeping what works, and **Restore previous script** goes back to the version before the last AI run
+(`ideas.ai.previous`).
+
 Dashboard: the channel bus at the top ("Working on") sets the channel Research, Ideas and Studio follow; the selected
 channel is lit red. Status lamps: red = live/selected, green = ready, amber = in progress, grey = idle. On phones the
 navigation moves to bottom tabs and tables turn into cards.
@@ -101,6 +109,7 @@ navigation moves to bottom tabs and tables turn into cards.
 | Part | Where |
 |---|---|
 | Scenes + footage search | `studio` edge function: `script.ts` (parser), `stock.ts` (Pixabay, Wikimedia Commons) |
+| AI script | `ai` edge function: `index.ts` (capture, blueprint, script), `prompts.ts` (DeepSeek prompts and lengths) |
 | Voice + word timings | `prepare.yml` → `collectors/prepare_job.py` (Edge TTS) |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
 | Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the private `renders` bucket |
@@ -114,6 +123,7 @@ Secrets:
 | Supabase Edge Function secrets | `GITHUB_TOKEN` | Fine-grained token: this repo only, **Actions: Read and write** |
 | Supabase Edge Function secrets | `GITHUB_REPO` | `arifabdelilah1-crypto/youtube-control` |
 | Supabase Edge Function secrets | `PIXABAY_API_KEY` | Free key from pixabay.com/api/docs (clip search in the editor) |
+| Supabase Edge Function secrets | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | DeepSeek key for AI script; model is optional (default `deepseek-chat`) |
 | GitHub repo secrets | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Used by the voice and render workflows |
 
 Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
@@ -124,4 +134,3 @@ The older one-click renderer (MoneyPrinterTurbo, `render.yml`) still works for p
 ## Not built yet
 - Blotato sync adapter (`collectors/blotato_sync.py`): port the request/field mapping from the Réseau DE sync.
 - Write actions from the dashboard: edit titles/tags/thumbnails, reply to comments.
-- Script pack generation from ideas.

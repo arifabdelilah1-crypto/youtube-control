@@ -565,12 +565,12 @@ async function aiCall(body) {
   return data;
 }
 /** Runs the missing steps for an idea. onStep(label) reports progress. Returns the fresh idea row. */
-async function generateScript(idea, { channel_id, angle, aspect } = {}, onStep = () => {}) {
+async function generateScript(idea, { channel_id, angle, aspect, length, draft } = {}, onStep = () => {}) {
   const isOutlier = (idea.sources || []).some((s) => s.type === "outlier");
   if (isOutlier && !idea.source_video) { onStep("Reading the outlier…"); await aiCall({ action: "capture", idea_id: idea.id }); }
   if (isOutlier && !idea.blueprint) { onStep("Studying its format…"); await aiCall({ action: "blueprint", idea_id: idea.id }); }
-  onStep("Writing the script…");
-  await aiCall({ action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, angle: angle || null, aspect: aspect || null });
+  onStep(draft ? "Improving the script…" : "Writing the script…");
+  await aiCall({ action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, angle: angle || null, aspect: aspect || null, length: length || null, draft: draft || null });
   return q(sb.from("ideas").select("*").eq("id", idea.id).single());
 }
 
@@ -682,7 +682,10 @@ async function studioEditor(ideaId) {
   ]);
   const project = projects[0] || null;
   const ch = channelById(idea.channel_id);
-  const style = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1.1, aspect: "9:16", ...(ch?.video_style || {}), ...(project ? { language: project.language, voice: project.voice, voice_rate: Number(project.voice_rate), aspect: project.aspect } : {}) };
+  const style = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1.1, aspect: "9:16", ...(ch?.video_style || {}),
+    // an AI script was written for a language and format: the page stays on them
+    ...(idea.ai?.language ? { language: idea.ai.language } : {}), ...(idea.ai?.aspect ? { aspect: idea.ai.aspect } : {}),
+    ...(project ? { language: project.language, voice: project.voice, voice_rate: Number(project.voice_rate), aspect: project.aspect } : {}) };
 
   const f = {};
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
@@ -752,7 +755,7 @@ async function studioEditor(ideaId) {
     await loadShared(); toast("Saved as channel default");
   } });
 
-  const aiPanel = studioAiPanel(idea, f, buildBtn);
+  const aiPanel = studioAiPanel(idea, f, buildBtn, save);
 
   return [
     h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: project?.title || idea.video_title || idea.title })),
@@ -778,7 +781,7 @@ async function studioEditor(ideaId) {
 }
 
 // "AI script" card on the script page: the outlier it copies the format of, its blueprint, and the generator.
-function studioAiPanel(idea, f, buildBtn) {
+function studioAiPanel(idea, f, buildBtn, save) {
   const src = idea.source_video;
   const bp = idea.blueprint;
   const ai = idea.ai;
@@ -787,29 +790,46 @@ function studioAiPanel(idea, f, buildBtn) {
   const transcript = h("textarea", { id: "ai-transcript", class: "field", rows: "4", dir: "auto", value: idea.transcript || "",
     placeholder: "Optional: on YouTube open the video → ··· → Show transcript, copy it and paste it here. The AI then copies the structure more precisely.",
     onchange: async (e) => { await q(sb.from("ideas").update({ transcript: e.target.value.trim() || null, blueprint: null }).eq("id", idea.id)); idea.transcript = e.target.value; idea.blueprint = null; toast("Transcript saved"); } });
+  const lengthFor = () => (f.aspect.value === "16:9" ? "long3" : "short45");
+  const length = h("select", { id: "ai-length", class: "field", onchange: (e) => { e.currentTarget.dataset.picked = "1"; } },
+    [["short45", "Short, about 45 s"], ["short60", "Short, about 60 s"], ["long3", "Long, about 3 min"]].map(([v, t]) => h("option", { value: v, selected: v === (ai?.length || lengthFor()), text: t })));
+  f.aspect.addEventListener("change", () => { if (!length.dataset.picked) length.value = lengthFor(); });
   const status = h("span", { class: "muted small", role: "status" });
-  const run = async (btn, thenBuild) => {
+  const busy = (on) => [genBtn, goBtn, improveBtn, restoreBtn].forEach((b) => { if (b) b.disabled = on; });
+  const run = async ({ thenBuild = false, improve = false } = {}) => {
     if (!f.channel.value) return toast("Pick the channel first (right column): the script is written in its language for its audience.");
-    btn.disabled = true;
+    busy(true);
     try {
+      // saved first, so Improve and Restore work from exactly what is on screen now
+      if (f.script.value.trim()) await save(true);
       await q(sb.from("ideas").update({ channel_id: f.channel.value }).eq("id", idea.id));
-      const fresh = await generateScript({ ...idea, channel_id: f.channel.value }, { channel_id: f.channel.value, angle: angle.value.trim(), aspect: f.aspect.value }, (t) => { status.textContent = t; });
+      const fresh = await generateScript({ ...idea, channel_id: f.channel.value }, { channel_id: f.channel.value, angle: angle.value.trim(), aspect: f.aspect.value, length: length.value, draft: improve ? f.script.value.trim() : "" }, (t) => { status.textContent = t; });
       Object.assign(idea, fresh);
       f.title.value = fresh.video_title || f.title.value;
       f.script.value = fresh.script || ""; f.script.dispatchEvent(new Event("input"));
       f.desc.value = fresh.video_description || ""; f.tags.value = (fresh.video_tags || []).join(", ");
       f.terms.value = (fresh.search_terms || []).join(", ");
       status.textContent = "";
-      if (thenBuild) { buildBtn.click(); return; }
-      toast("Script ready: check it, then Create scenes"); render();
-    } catch (e) { status.textContent = ""; toast(e.message); btn.disabled = false; }
+      if (thenBuild) { busy(false); buildBtn.click(); return; }
+      toast(improve ? "Script improved: check it, then Create scenes" : "Script ready: check it, then Create scenes"); render();
+    } catch (e) { status.textContent = ""; toast(e.message); busy(false); }
   };
-  const genBtn = h("button", { class: `btn ${idea.script ? "" : "primary"}`, type: "button", text: idea.script ? "Regenerate script" : "✨ Generate script", onclick: (e) => run(e.currentTarget, false) });
-  const goBtn = h("button", { class: "btn primary", type: "button", text: "✨ Generate & build video", onclick: (e) => run(e.currentTarget, true) });
+  const genBtn = h("button", { class: `btn ${idea.script ? "" : "primary"}`, type: "button", text: idea.script ? "Regenerate script" : "✨ Generate script", onclick: () => run() });
+  const goBtn = h("button", { class: "btn primary", type: "button", text: "✨ Generate & build video", onclick: () => run({ thenBuild: true }) });
+  const improveBtn = h("button", { class: "btn", type: "button", text: "Improve current", title: "Keeps what works in the script below and fixes weak hooks and pacing", hidden: !f.script.value.trim(), onclick: () => run({ improve: true }) });
+  f.script.addEventListener("input", () => { improveBtn.hidden = !f.script.value.trim(); });
+  // ideas.ai.previous: the version the last AI run replaced
+  const restoreBtn = ai?.previous ? h("button", { class: "btn ghost", type: "button", text: "Restore previous script", title: "Go back to the script from before the last AI run", onclick: async () => {
+    if (!confirm("Go back to the script from before the last AI run? The current script will be replaced.")) return;
+    const { script, video_title, video_description, video_tags, search_terms, ai: before } = ai.previous;
+    busy(true);
+    try { await q(sb.from("ideas").update({ script, video_title, video_description, video_tags, search_terms, ai: before }).eq("id", idea.id)); toast("Previous script restored"); render(); }
+    catch (e) { toast(e.message); busy(false); }
+  } }) : null;
 
   const field = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
   return h("section", { class: "card ai-card" },
-    h("div", { class: "card-head" }, h("h2", { text: "AI script" }), h("span", { class: "muted small", text: "DeepSeek copies the format, writes new words for your channel" })),
+    h("div", { class: "card-head" }, h("h2", { text: "AI script" }), h("span", { class: "muted small", text: "DeepSeek copies the format and uses your keyword research, in new words for your channel" })),
     src ? h("div", { class: "ai-src" },
       src.thumbnail ? h("a", { href: src.url, target: "_blank", rel: "noopener", class: "ai-thumb" }, h("img", { src: src.thumbnail, alt: "" })) : null,
       h("div", { style: "min-width:0;display:flex;flex-direction:column;gap:4px" },
@@ -817,7 +837,7 @@ function studioAiPanel(idea, f, buildBtn) {
         h("div", { class: "muted small", text: `${src.channel_title || ""} · ${fmtc(src.channel_subscribers)} subs · ${fmtc(src.views)} views · ${fmtc(src.views_per_day)}/day${src.outlier_score ? ` · ${Number(src.outlier_score).toFixed(1)}× outlier` : ""}${src.duration_s ? ` · ${src.duration_s} s` : ""}` }),
         src.keyword ? h("div", { class: "muted small", text: `Ranks for “${src.keyword}”` }) : null))
       : isOutlier ? h("p", { class: "muted small", style: "margin:0", text: "The outlier's details are copied when you generate." })
-      : h("p", { class: "muted small", style: "margin:0", text: "Not saved from an outlier: the AI picks a proven Shorts format for the title and your keywords." }),
+      : h("p", { class: "muted small", style: "margin:0", text: "Not saved from an outlier: the AI picks a proven format for the title and your keywords." }),
     bp ? h("details", { class: "ai-bp" }, h("summary", { text: `Format: ${bp.format || "—"} · ${bp.length_seconds ? Math.round(bp.length_seconds) + " s" : ""} · hook: ${bp.hook?.type || "—"}` }),
       h("div", { class: "small", style: "display:flex;flex-direction:column;gap:6px" },
         bp.hook?.pattern ? h("div", {}, h("b", { text: "Hook pattern: " }), bp.hook.pattern) : null,
@@ -825,8 +845,8 @@ function studioAiPanel(idea, f, buildBtn) {
         bp.title_pattern ? h("div", {}, h("b", { text: "Title pattern: " }), bp.title_pattern) : null,
         bp.why_it_worked?.length ? h("div", {}, h("b", { text: "Why it worked" }), h("ul", { style: "margin:4px 0 0;padding-left:18px" }, bp.why_it_worked.map((w) => h("li", { text: w })))) : null)) : null,
     isOutlier ? h("details", {}, h("summary", { text: idea.transcript ? "Transcript (pasted)" : "Paste the transcript (optional, better copy of the structure)" }), transcript) : null,
-    field("ai-angle", "Angle (optional)", angle),
-    h("div", { class: "row" }, genBtn, idea.script ? null : goBtn, status),
+    h("div", { class: "ai-opts" }, field("ai-length", "Length", length), field("ai-angle", "Angle (optional)", angle)),
+    h("div", { class: "row" }, genBtn, idea.script ? null : goBtn, improveBtn, restoreBtn, status),
     idea.ai_status === "failed" && idea.ai_error ? h("pre", { class: "err", text: idea.ai_error }) : null,
     ai?.title_options?.length ? h("div", { class: "field-wrap" }, h("span", { class: "muted small", text: "Title options (click to use)" }),
       h("div", { class: "chips-tabs" }, ai.title_options.map((t) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(f.title.value === t), text: t,

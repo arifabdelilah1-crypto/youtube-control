@@ -1,10 +1,12 @@
 // Outlier -> blueprint -> script, with DeepSeek.
 // POST {action:"capture",   idea_id}                       -> snapshot of the outlier video (YouTube API, ~3 units)
 // POST {action:"blueprint", idea_id}                       -> format analysis (DeepSeek)
-// POST {action:"script",    idea_id, channel_id?, angle?, aspect?} -> new script in TITLE/VO/FOOTAGE/CARD format, title, description, tags
+// POST {action:"script",    idea_id, channel_id?, angle?, aspect?, length?, draft?} -> new or improved script in TITLE/VO/FOOTAGE/CARD format,
+//      title, description, tags. Uses the research tables (keyword numbers, ranking titles, niche outliers, the channel's best videos).
+//      length: short45 | short60 | long3 (default from the aspect). draft: the script to improve. ideas.ai.previous keeps the version it replaced.
 // Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), YOUTUBE_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { BLUEPRINT_SYSTEM, SCRIPT_SYSTEM, blueprintUser, scriptUser } from "./prompts.ts";
+import { BLUEPRINT_SYSTEM, LENGTHS, type LengthKey, SCRIPT_SYSTEM, blueprintUser, scriptUser } from "./prompts.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -64,12 +66,16 @@ async function deepseek(db: any, ideaId: string, kind: string, system: string, u
 const clean = (s: unknown, n = 200) => String(s ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, n);
 const term = (s: unknown) => clean(s, 80).replace(/[|;,[\]]/g, " ").replace(/\s+/g, " ").trim();
 const HEX = /^#[0-9A-Fa-f]{6}$/;
+// a voice line never keeps a block label or [footage words]: they would be read aloud (likelier when improving a draft that has them)
+const voice = (s: unknown) => clean(s, 600).replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").replace(/\s+([.,!?…])/g, "$1")
+  .replace(/^(TITLE|VO|VOICE|FOOTAGE|CARD)\s*:\s*/i, "").trim();
+export const voWords = (script: string) => script.split("\n").filter((l) => l.startsWith("VO: ")).map((l) => l.slice(4)).join(" ").split(/\s+/).filter(Boolean).length;
 export function toScript(scenes: any[]): string {
   return (scenes || []).map((s) => {
     const lines: string[] = [];
     const title = clean(s.title, 40).replace(/^(TITLE|VO|FOOTAGE|CARD)\s*:/i, "");
     if (title) lines.push(`TITLE: ${title}`);
-    lines.push(`VO: ${clean(s.vo, 600)}`);
+    lines.push(`VO: ${voice(s.vo)}`);
     const foot = (Array.isArray(s.footage) ? s.footage : []).slice(0, 3)
       .map((f: any) => ({ kind: f?.kind === "image" ? "image" : "video", q: term(f?.q) })).filter((f: any) => f.q);
     if (foot.length) lines.push(`FOOTAGE: ${foot.map((f: any) => `${f.kind}: ${f.q}`).join(" | ")}`);
@@ -79,6 +85,44 @@ export function toScript(scenes: any[]): string {
     }
     return lines.join("\n");
   }).filter((b) => /VO: \S/.test(b)).join("\n\n");
+}
+
+// ---------- what the research tables know about this idea ----------
+async function researchFor(db: any, idea: any, channel: any) {
+  const out: any = {};
+  const src = (idea.sources || []).find((s: any) => s.type === "keyword" && s.ref);
+  const mainTerm = String(src?.ref || idea.source_video?.keyword || "").toLowerCase().trim();
+  if (mainTerm) {
+    let q = db.from("v_keyword_metrics").select("keyword_id,term,market,volume_index,difficulty,kw_score,views_per_day,median_subs_top,outlier_count").eq("term", mainTerm);
+    if (src?.market) q = q.eq("market", src.market);
+    const k = (await q.order("captured_on", { ascending: false }).limit(1)).data?.[0];
+    if (k) {
+      out.main_keyword = { term: k.term, market: k.market, demand_out_of_100: k.volume_index, difficulty_out_of_100: k.difficulty, score_out_of_100: k.kw_score,
+        page1_views_per_day: k.views_per_day, typical_page1_channel_subs: k.median_subs_top, small_channels_beating_their_size: k.outlier_count };
+      const [rel, links] = await Promise.all([
+        db.from("keyword_related").select("term").eq("keyword_id", k.keyword_id).order("rank").limit(40),
+        db.from("video_keywords").select("youtube_video_id").eq("keyword_id", k.keyword_id).order("rank").limit(8),
+      ]);
+      out.related_searches = [...new Set((rel.data || []).map((r: any) => r.term))].slice(0, 25);
+      const ids = (links.data || []).map((l: any) => l.youtube_video_id);
+      if (ids.length) {
+        const { data: videos } = await db.from("v_video_latest").select("youtube_video_id,title,views,subscribers").in("youtube_video_id", ids);
+        out.ranking_titles = (videos || []).sort((a: any, b: any) => ids.indexOf(a.youtube_video_id) - ids.indexOf(b.youtube_video_id))
+          .map((v: any) => ({ title: clean(v.title, 140), views: v.views, channel_subs: v.subscribers }));
+      }
+    }
+  }
+  const nicheId = channel?.niche_id || idea.niche_id;
+  if (nicheId) {
+    const { data } = await db.from("v_video_latest").select("title,outlier_score,is_short").eq("niche_id", nicheId)
+      .gte("outlier_score", 3).lte("subscribers", 100000).order("outlier_score", { ascending: false }).limit(8);
+    if (data?.length) out.what_works_in_niche = data.map((v: any) => ({ title: clean(v.title, 140), times_its_channel_size: v.outlier_score, is_short: v.is_short }));
+  }
+  if (channel?.id) {
+    const { data } = await db.from("v_own_video_latest").select("title,views,vs_baseline").eq("channel_id", channel.id).order("vs_baseline", { ascending: false, nullsFirst: false }).limit(5);
+    if (data?.length) out.channel_best_videos = data.map((v: any) => ({ title: clean(v.title, 140), views: v.views, times_channel_usual: v.vs_baseline }));
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 Deno.serve(async (req) => {
@@ -151,7 +195,9 @@ Deno.serve(async (req) => {
       const { data: channel } = await db.from("channels").select("*").eq("id", channelId).single();
       const { data: niche } = channel?.niche_id ? await db.from("niches").select("*").eq("id", channel.niche_id).single() : { data: null };
       const language = channel?.video_style?.language || channel?.language || "en";
-      const aspect = ["9:16", "16:9"].includes(body.aspect) ? body.aspect : (idea.source_video?.is_short === false ? "16:9" : (channel?.video_style?.aspect || "9:16"));
+      const aspect = ["9:16", "16:9", "1:1"].includes(body.aspect) ? body.aspect : (idea.source_video?.is_short === false ? "16:9" : (channel?.video_style?.aspect || "9:16"));
+      const length: LengthKey = Object.hasOwn(LENGTHS, body.length || "") ? body.length : (aspect === "16:9" ? "long3" : "short45");
+      const draft = String(body.draft || "").trim().slice(0, 12000);
       // keywords: the outlier's keyword + its related searches + the idea's keyword sources
       const kwTerms: string[] = [];
       const kwRefs = (idea.sources || []).filter((s: any) => s.type === "keyword").map((s: any) => s.ref).filter(Boolean);
@@ -165,18 +211,31 @@ Deno.serve(async (req) => {
         }
       }
       await db.from("ideas").update({ ai_status: "writing", ai_error: null, channel_id: channelId }).eq("id", ideaId);
-      const out = await deepseek(db, ideaId, "script", SCRIPT_SYSTEM,
-        scriptUser({ idea, blueprint: idea.blueprint, channel, niche, language, aspect, angle: body.angle ? clean(body.angle, 300) : null, keywords: [...new Set(kwTerms)] }),
-        user?.id ?? null);
-      const script = toScript(out.scenes);
+      const research = await researchFor(db, idea, channel).catch(() => null); // useful, not essential: never blocks the script
+      const prompt = scriptUser({ idea, blueprint: idea.blueprint, channel, niche, language, aspect, length, draft, research,
+        angle: body.angle ? clean(body.angle, 300) : null, keywords: [...new Set(kwTerms)] });
+      let out = await deepseek(db, ideaId, "script", SCRIPT_SYSTEM, prompt, user?.id ?? null);
+      let script = toScript(out.scenes);
       if (!script) throw new Error("DeepSeek returned no scenes. Try again.");
+      // Models tend to stop well short of a long target: ask once more, saying how far off it was, and keep the longer answer.
+      const L = LENGTHS[length];
+      if (voWords(script) < L.min * 0.75) {
+        const again = await deepseek(db, ideaId, "script", SCRIPT_SYSTEM,
+          `${prompt}\n\nYour last attempt had only ${voWords(script)} words of voice-over. That is far too short: write the full ${L.words} words in ${L.scenes} scenes.`,
+          user?.id ?? null).catch(() => null);
+        const longer = again ? toScript(again.scenes) : "";
+        if (voWords(longer) > voWords(script)) { out = again; script = longer; }
+      }
       const hashtags = (Array.isArray(out.hashtags) ? out.hashtags : []).map((t: string) => "#" + String(t).replace(/^#/, "").replace(/\s+/g, "")).slice(0, 3);
       const description = [clean(out.description, 4000).replace(/ {2,}/g, " "), hashtags.join(" ")].filter(Boolean).join("\n\n");
       const ai = {
         title_options: (out.title_options || []).map((t: string) => clean(t, 100)).slice(0, 3),
         hook_text: clean(out.hook_text, 40), music_mood: clean(out.music_mood, 20).toLowerCase(),
         verify: (out.verify || []).map((v: string) => clean(v, 240)).slice(0, 15), notes: clean(out.notes, 400),
-        aspect, language, model: DS_MODEL, generated_at: new Date().toISOString(),
+        aspect, language, length, model: DS_MODEL, generated_at: new Date().toISOString(),
+        // the version this replaces, so the Studio page can go back to it
+        previous: idea.script?.trim() ? { script: idea.script, video_title: idea.video_title, video_description: idea.video_description, video_tags: idea.video_tags, search_terms: idea.search_terms,
+          ai: idea.ai ? { ...idea.ai, previous: undefined } : null } : null,
       };
       const stage = ["new", "shortlisted", "assigned"].includes(idea.stage) ? "scripted" : idea.stage;
       await db.from("ideas").update({
