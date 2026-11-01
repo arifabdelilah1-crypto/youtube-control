@@ -138,6 +138,9 @@ const VOICES = {
   es: [["es-ES-AlvaroNeural-Male", "Álvaro (male)"], ["es-ES-ElviraNeural-Female", "Elvira (female)"]],
   de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"]],
 };
+// Supertonic-3: the same ten voices in every language, made on the GitHub machine (collectors/supertonic_voice.py).
+const SUPERTONIC_VOICES = [["M", "male"], ["F", "female"]].flatMap(([k, g]) => [1, 2, 3, 4, 5].map((n) => [`supertonic-${k}${n}`, `Supertonic ${k}${n} (${g})`]));
+for (const lang of ["en", "fr", "es", "de"]) VOICES[lang].push(...SUPERTONIC_VOICES);
 const MOODS = [["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
   ["emotional", "Emotional / piano"], ["lofi", "Lo-fi / chill"], ["oriental", "Oriental / Arabic"], ["latin", "Latin / Spanish guitar"], ["other", "Other"]];
 const DEFAULT_STYLE = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1, aspect: "9:16", source: "pixabay", bgm: "random", bgm_volume: 0.2,

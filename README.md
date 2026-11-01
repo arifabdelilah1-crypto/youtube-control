@@ -102,6 +102,12 @@ length (45 s, 60 s or 3 min); a script far under that length is sent back once. 
 the page, keeping what works, and **Restore previous script** goes back to the version before the last AI run
 (`ideas.ai.previous`).
 
+**Voices:** the list offers Microsoft Edge TTS voices and, in English, French, Spanish and German, ten Supertonic-3
+voices (`supertonic-M1` to `supertonic-F5`). Supertonic-3 runs on the GitHub machine: no server and no key. The job
+installs it and downloads the model only when a project uses one of its voices, and faster-whisper times the words for
+the captions. The weights are OpenRAIL-M: content must be disclosed as machine generated, and a voice must not
+impersonate anyone without their consent.
+
 Dashboard: the channel bus at the top ("Working on") sets the channel Research, Ideas and Studio follow; the selected
 channel is lit red. Status lamps: red = live/selected, green = ready, amber = in progress, grey = idle. On phones the
 navigation moves to bottom tabs and tables turn into cards.
@@ -110,7 +116,7 @@ navigation moves to bottom tabs and tables turn into cards.
 |---|---|
 | Scenes + footage search | `studio` edge function: `script.ts` (parser), `stock.ts` (Pixabay, Wikimedia Commons) |
 | AI script | `ai` edge function: `index.ts` (capture, blueprint, script), `prompts.ts` (DeepSeek prompts and lengths) |
-| Voice + word timings | `prepare.yml` → `collectors/prepare_job.py` (Edge TTS) |
+| Voice + word timings | `prepare.yml` → `collectors/prepare_job.py`: Edge TTS, or `collectors/supertonic_voice.py` for Supertonic-3 |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
 | Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the private `renders` bucket |
 

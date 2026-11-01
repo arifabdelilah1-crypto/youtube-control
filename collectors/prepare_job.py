@@ -2,9 +2,13 @@
 
     python collectors/prepare_job.py <project_id> [scene_id,scene_id,...]
 
-For each scene (all, or only the listed ones) it generates the voice with Microsoft Edge TTS,
-records the timing of every word (for word-by-word captions), uploads the MP3 to the private
-'renders' bucket and stores path, duration and word timings on the scene.
+For each scene (all, or only the listed ones) it generates the voice with Microsoft Edge TTS or
+Supertonic-3 (see supertonic_voice.py), records the timing of every word (for word-by-word captions),
+uploads the MP3 to the private 'renders' bucket and stores path, duration and word timings on the scene.
+
+    python collectors/prepare_job.py --engine <project_id>
+
+prints engine=edge or engine=supertonic, so the workflow installs Supertonic-3 only when it's needed.
 """
 from __future__ import annotations
 
@@ -17,6 +21,7 @@ import sys
 import edge_tts
 
 from common import DB, HTTP, SUPABASE_KEY, SUPABASE_URL, log, require_env
+from supertonic_voice import is_supertonic, speak
 
 BYTES_PER_SECOND = 48_000 / 8  # Edge TTS default output: 24 kHz, 48 kbit/s mono MP3 (constant bitrate)
 VOICE_RE = re.compile(r"^([a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural)(-(Male|Female))?$")
@@ -77,6 +82,12 @@ def upload(path: str, data: bytes) -> None:
 
 async def main() -> int:
     require_env("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY")
+    if sys.argv[1] == "--engine":
+        if not re.fullmatch(r"[0-9a-f-]{36}", sys.argv[2]):
+            sys.exit("invalid id")
+        project = DB().select("video_projects", {"select": "voice", "id": f"eq.{sys.argv[2]}"})[0]
+        print("engine=supertonic" if is_supertonic(project["voice"]) else "engine=edge")
+        return 0
     project_id = sys.argv[1]
     only = {s for s in (sys.argv[2] if len(sys.argv) > 2 else "").split(",") if s}
     if not re.fullmatch(r"[0-9a-f-]{36}", project_id) or any(not re.fullmatch(r"[0-9a-f-]{36}", s) for s in only):
@@ -89,23 +100,27 @@ async def main() -> int:
     db.update("video_projects", {"id": f"eq.{project_id}"}, {"status": "preparing", "run_url": run_url, "error": None})
     scenes = db.select("project_scenes", {"select": "*", "project_id": f"eq.{project_id}", "order": "idx"})
     todo = [s for s in scenes if s["id"] in only] if only else scenes
-    voice, rate = tts_voice(project["voice"]), tts_rate(project.get("voice_rate"))
+    supertonic = is_supertonic(project["voice"])
+    voice, rate = (project["voice"], project.get("voice_rate")) if supertonic else (tts_voice(project["voice"]), tts_rate(project.get("voice_rate")))
     log(f"Project {project_id}: {len(todo)} of {len(scenes)} scenes, voice {voice} {rate}")
 
-    sem = asyncio.Semaphore(4)
+    sem = asyncio.Semaphore(1 if supertonic else 4)  # Supertonic-3 already uses every processor for one line
 
     async def one(scene: dict) -> None:
         text = re.sub(r"\s+", " ", scene["text"]).strip()
         if not text:
             return
         async with sem:
-            audio, words = await synthesize(text, voice, rate)
+            if supertonic:
+                audio, words, duration = await asyncio.to_thread(speak, text, voice, rate, project.get("language") or "en")
+            else:
+                audio, words = await synthesize(text, voice, rate)
+                duration = round(len(audio) / BYTES_PER_SECOND, 3)
+                if words:
+                    duration = max(duration, words[-1]["e"])
         key = hashlib.sha1(f"{text}|{voice}|{rate}".encode()).hexdigest()[:10]
         path = f"projects/{project_id}/voice/{scene['id']}-{key}.mp3"
         await asyncio.to_thread(upload, path, audio)
-        duration = round(len(audio) / BYTES_PER_SECOND, 3)
-        if words:
-            duration = max(duration, words[-1]["e"])
         db.update("project_scenes", {"id": f"eq.{scene['id']}"},
                   {"voice_path": path, "voice_text": scene["text"], "voice_duration": duration, "words": words})
         log(f"  scene {scene['idx'] + 1}: {duration:.2f}s, {len(words)} words")

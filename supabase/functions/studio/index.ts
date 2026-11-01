@@ -25,7 +25,7 @@ const cors = {
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 const UUID = /^[0-9a-f-]{36}$/;
-const VOICE = /^[a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural(-(Male|Female))?$/;
+const VOICE = /^([a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural(-(Male|Female))?|supertonic-[MF][1-5])$/;
 
 async function dispatch(workflow: string, inputs: Record<string, string>): Promise<string | null> {
   if (!GH_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return "Rendering isn't set up yet: add GITHUB_TOKEN and GITHUB_REPO in Supabase Edge Function secrets.";
