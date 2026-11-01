@@ -1,9 +1,10 @@
 // Outlier -> blueprint -> script, with DeepSeek.
 // POST {action:"capture",   idea_id}                       -> snapshot of the outlier video (YouTube API, ~3 units)
 // POST {action:"blueprint", idea_id}                       -> format analysis (DeepSeek)
-// POST {action:"script",    idea_id, channel_id?, angle?, aspect?, length?, draft?} -> new or improved script in TITLE/VO/FOOTAGE/CARD format,
+// POST {action:"script",    idea_id, channel_id?, language?, angle?, aspect?, length?, draft?} -> new or improved script in TITLE/VO/FOOTAGE/CARD format,
 //      title, description, tags. Uses the research tables (keyword numbers, ranking titles, niche outliers, the channel's best videos).
-//      length: short45 | short60 | long3 (default from the aspect). draft: the script to improve. ideas.ai.previous keeps the version it replaced.
+//      language: the one picked on the page (default: the channel's). length: short45 | short60 | long3 (default from the aspect).
+//      draft: the script to improve. ideas.ai.previous keeps the version it replaced.
 // Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), YOUTUBE_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { BLUEPRINT_SYSTEM, LENGTHS, type LengthKey, SCRIPT_SYSTEM, blueprintUser, scriptUser } from "./prompts.ts";
@@ -194,7 +195,7 @@ Deno.serve(async (req) => {
       if (!channelId) return json({ error: "Pick a channel first, so the script uses the right language and audience." }, 400);
       const { data: channel } = await db.from("channels").select("*").eq("id", channelId).single();
       const { data: niche } = channel?.niche_id ? await db.from("niches").select("*").eq("id", channel.niche_id).single() : { data: null };
-      const language = channel?.video_style?.language || channel?.language || "en";
+      const language = /^[a-z]{2}$/.test(body.language || "") ? body.language : (channel?.video_style?.language || channel?.language || "en");
       const aspect = ["9:16", "16:9", "1:1"].includes(body.aspect) ? body.aspect : (idea.source_video?.is_short === false ? "16:9" : (channel?.video_style?.aspect || "9:16"));
       const length: LengthKey = Object.hasOwn(LENGTHS, body.length || "") ? body.length : (aspect === "16:9" ? "long3" : "short45");
       const draft = String(body.draft || "").trim().slice(0, 12000);

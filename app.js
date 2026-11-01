@@ -568,12 +568,12 @@ async function aiCall(body) {
   return data;
 }
 /** Runs the missing steps for an idea. onStep(label) reports progress. Returns the fresh idea row. */
-async function generateScript(idea, { channel_id, angle, aspect, length, draft } = {}, onStep = () => {}) {
+async function generateScript(idea, { channel_id, language, angle, aspect, length, draft } = {}, onStep = () => {}) {
   const isOutlier = (idea.sources || []).some((s) => s.type === "outlier");
   if (isOutlier && !idea.source_video) { onStep("Reading the outlier…"); await aiCall({ action: "capture", idea_id: idea.id }); }
   if (isOutlier && !idea.blueprint) { onStep("Studying its format…"); await aiCall({ action: "blueprint", idea_id: idea.id }); }
   onStep(draft ? "Improving the script…" : "Writing the script…");
-  await aiCall({ action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, angle: angle || null, aspect: aspect || null, length: length || null, draft: draft || null });
+  await aiCall({ action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, language: language || null, angle: angle || null, aspect: aspect || null, length: length || null, draft: draft || null });
   return q(sb.from("ideas").select("*").eq("id", idea.id).single());
 }
 
@@ -676,6 +676,8 @@ function renderRow(j) {
   return row;
 }
 
+// Language, voice, speed and format on screen when an AI run re-renders the script page, so they survive it.
+const studioPicks = new Map();
 async function studioEditor(ideaId) {
   const idea = await q(sb.from("ideas").select("*").eq("id", ideaId).maybeSingle());
   if (!idea) return [empty("Project not found.", h("a", { class: "btn", href: "#/studio", text: "Back to Studio" }))];
@@ -685,10 +687,11 @@ async function studioEditor(ideaId) {
   ]);
   const project = projects[0] || null;
   const ch = channelById(idea.channel_id);
-  const style = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1.1, aspect: "9:16", ...(ch?.video_style || {}),
+  const style = { language: ch?.language || "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1.1, aspect: "9:16", ...(ch?.video_style || {}),
     // an AI script was written for a language and format: the page stays on them
     ...(idea.ai?.language ? { language: idea.ai.language } : {}), ...(idea.ai?.aspect ? { aspect: idea.ai.aspect } : {}),
-    ...(project ? { language: project.language, voice: project.voice, voice_rate: Number(project.voice_rate), aspect: project.aspect } : {}) };
+    ...(project ? { language: project.language, voice: project.voice, voice_rate: Number(project.voice_rate), aspect: project.aspect } : {}),
+    ...(studioPicks.get(ideaId) || {}) };
 
   const f = {};
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
@@ -800,13 +803,13 @@ function studioAiPanel(idea, f, buildBtn, save) {
   const status = h("span", { class: "muted small", role: "status" });
   const busy = (on) => [genBtn, goBtn, improveBtn, restoreBtn].forEach((b) => { if (b) b.disabled = on; });
   const run = async ({ thenBuild = false, improve = false } = {}) => {
-    if (!f.channel.value) return toast("Pick the channel first (right column): the script is written in its language for its audience.");
+    if (!f.channel.value) return toast("Pick the channel first (right column): the script is written for its audience.");
     busy(true);
     try {
       // saved first, so Improve and Restore work from exactly what is on screen now
       if (f.script.value.trim()) await save(true);
       await q(sb.from("ideas").update({ channel_id: f.channel.value }).eq("id", idea.id));
-      const fresh = await generateScript({ ...idea, channel_id: f.channel.value }, { channel_id: f.channel.value, angle: angle.value.trim(), aspect: f.aspect.value, length: length.value, draft: improve ? f.script.value.trim() : "" }, (t) => { status.textContent = t; });
+      const fresh = await generateScript({ ...idea, channel_id: f.channel.value }, { channel_id: f.channel.value, language: f.language.value, angle: angle.value.trim(), aspect: f.aspect.value, length: length.value, draft: improve ? f.script.value.trim() : "" }, (t) => { status.textContent = t; });
       Object.assign(idea, fresh);
       f.title.value = fresh.video_title || f.title.value;
       f.script.value = fresh.script || ""; f.script.dispatchEvent(new Event("input"));
@@ -814,6 +817,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
       f.terms.value = (fresh.search_terms || []).join(", ");
       status.textContent = "";
       if (thenBuild) { busy(false); buildBtn.click(); return; }
+      studioPicks.set(idea.id, { language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value });
       toast(improve ? "Script improved: check it, then Create scenes" : "Script ready: check it, then Create scenes"); render();
     } catch (e) { status.textContent = ""; toast(e.message); busy(false); }
   };
@@ -826,7 +830,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
     if (!confirm("Go back to the script from before the last AI run? The current script will be replaced.")) return;
     const { script, video_title, video_description, video_tags, search_terms, ai: before } = ai.previous;
     busy(true);
-    try { await q(sb.from("ideas").update({ script, video_title, video_description, video_tags, search_terms, ai: before }).eq("id", idea.id)); toast("Previous script restored"); render(); }
+    try { await q(sb.from("ideas").update({ script, video_title, video_description, video_tags, search_terms, ai: before }).eq("id", idea.id)); studioPicks.set(idea.id, { language: before?.language || f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: before?.aspect || f.aspect.value }); toast("Previous script restored"); render(); }
     catch (e) { toast(e.message); busy(false); }
   } }) : null;
 
