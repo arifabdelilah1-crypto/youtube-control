@@ -16,6 +16,10 @@ from common import log
 
 VOICE_RE = re.compile(r"^supertonic-([MF][1-5])$")
 MIN_MATCH = 0.5  # below this share of matched letters the timings aren't worth trusting
+# Supertonic-3 leaves about 0.5 s of silence before and 0.65 s after every line, which makes a video drag.
+# Trimmed to about what Edge TTS leaves (0.1 s and 0.3 s).
+TRIM = ("silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.1,areverse,"
+        "silenceremove=start_periods=1:start_threshold=-40dB:start_silence=0.3,areverse")
 
 _tts = None
 _whisper = None
@@ -138,7 +142,7 @@ def speak(text: str, voice: str, rate, lang: str) -> tuple[bytes, list[dict], fl
     with tempfile.TemporaryDirectory() as folder:
         wav_path, mp3_path = Path(folder) / "voice.wav", Path(folder) / "voice.mp3"
         tts.save_audio(wav, str(wav_path))
-        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav_path), "-b:a", "128k", str(mp3_path)], check=True)
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", str(wav_path), "-af", TRIM, "-b:a", "128k", str(mp3_path)], check=True)
         duration = float(subprocess.check_output(
             ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(mp3_path)]))
-        return mp3_path.read_bytes(), word_timings(text, wav_path, lang, duration), round(duration, 3)
+        return mp3_path.read_bytes(), word_timings(text, mp3_path, lang, duration), round(duration, 3)
