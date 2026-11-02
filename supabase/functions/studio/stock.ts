@@ -1,4 +1,4 @@
-// Footage search: Pixabay (videos + photos, no credit needed), Wikimedia Commons (real people, places, cars,
+// Footage search: Pexels and Pixabay (videos + photos, free for commercial use), Wikimedia Commons (real people, places, cars,
 // videos; free licences that need a credit line, kept on each candidate) and YouTube Creative Commons (search only:
 // YouTube doesn't let apps download other channels' videos, so those need the file uploaded).
 import type { Footage } from "./script.ts";
@@ -34,6 +34,48 @@ export async function pixabay(key: string, q: string, kind: "video" | "image", a
 }
 
 const UA = "YouTubeControl/1.0 (https://github.com/arifabdelilah1-crypto/youtube-control)";
+const PEXELS_ORIENTATION: Record<string, string> = { "9:16": "portrait", "16:9": "landscape", "1:1": "square" };
+
+/**
+ * Pexels: free videos and photos in HD and 4K. Credit isn't required by the licence, but its API terms ask for a link
+ * to Pexels and a credit when possible, so candidates carry one. Limit: 200 requests an hour; past that it returns
+ * nothing and the other sources carry on.
+ */
+export async function pexels(key: string, q: string, kind: "video" | "image", aspect: string, page = 1): Promise<Candidate[]> {
+  if (!key || !q.trim()) return [];
+  const params = new URLSearchParams({ query: q.slice(0, 100), per_page: "20", page: String(page) });
+  if (PEXELS_ORIENTATION[aspect]) params.set("orientation", PEXELS_ORIENTATION[aspect]);
+  const r = await fetch(`https://api.pexels.com/v1/${kind === "video" ? "videos/" : ""}search?${params}`, { headers: { Authorization: key, "User-Agent": UA } });
+  if (!r.ok) return [];
+  const data = await r.json();
+  const license = { license: "Pexels License", license_url: "https://www.pexels.com/license/" };
+  const sized = (original: string, px: number) => `${original.split("?")[0]}?auto=compress&cs=tinysrgb&w=${px}`;
+  if (kind === "image") {
+    // deno-lint-ignore no-explicit-any
+    return (data.photos || []).map((p: any): Candidate | null => {
+      if (!p.src?.original || !p.width || !p.height) return null;
+      const px = Math.min(p.width, p.width >= p.height ? 1920 : 1280);  // enough for a 1920 px wide or a 1080 px wide frame
+      return { type: "image", source: "pexels", id: String(p.id), url: sized(p.src.original, px), preview: sized(p.src.original, 500), thumb: sized(p.src.original, 330), duration: null,
+        width: px, height: Math.round(p.height * px / p.width), tags: p.alt || "", page: p.url || "", author: p.photographer || "Unknown author", ...license };
+    }).filter((c: Candidate | null): c is Candidate => !!c);
+  }
+  // deno-lint-ignore no-explicit-any
+  const short = (f: any) => Math.min(f.width, f.height);
+  // deno-lint-ignore no-explicit-any
+  return (data.videos || []).map((v: any): Candidate | null => {
+    // deno-lint-ignore no-explicit-any
+    const files = (v.video_files || []).filter((f: any) => f.file_type === "video/mp4" && f.link && f.width && f.height).sort((a: any, b: any) => short(a) - short(b));
+    // the best file up to 1080p (4K is slow to preview and render, and the video is at most 1080p), and a light one for the preview
+    // deno-lint-ignore no-explicit-any
+    const best = files.filter((f: any) => short(f) <= 1080).pop() || files[0];
+    if (!best) return null;
+    // deno-lint-ignore no-explicit-any
+    const small = files.find((f: any) => short(f) >= 360) || best;
+    const name = String(v.url || "").match(/\/video\/(.+?)-?\d*\/?$/)?.[1]?.replace(/-/g, " ") || "";
+    return { type: "video", source: "pexels", id: String(v.id), url: best.link, preview: small.link, thumb: v.image ? sized(v.image, 330) : "", duration: v.duration ?? null,
+      width: best.width, height: best.height, tags: name, page: v.url || "", author: v.user?.name || "Unknown author", ...license };
+  }).filter((c: Candidate | null): c is Candidate => !!c);
+}
 const text = (html = "") => html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, " ").trim();
 
 /** Photos from Wikimedia Commons, best match first. Thumbnails are 1280 px (enough for a 1080 px wide frame). */
@@ -138,27 +180,37 @@ export async function youtubeCC(apiKey: string, q: string): Promise<Candidate[]>
   }));
 }
 
-/** Videos from every source that can play them: Wikimedia (real subjects) first, then Pixabay. */
-async function videosFor(key: string, q: string, aspect: string, page: number): Promise<Candidate[]> {
-  const [wiki, pix] = await Promise.all([wikimediaVideos(q, page).catch(() => []), pixabay(key, q, "video", aspect, page)]);
-  return [...wiki.slice(0, 6), ...pix];
+export type StockKeys = { pixabay: string; pexels: string };
+
+/** One from each list in turn, so no source drowns the other. */
+function alternate(a: Candidate[], b: Candidate[]): Candidate[] {
+  const out: Candidate[] = [];
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    if (a[i]) out.push(a[i]);
+    if (b[i]) out.push(b[i]);
+  }
+  return out;
+}
+
+/** Videos from every source that can play them: Wikimedia (real subjects) first, then Pexels and Pixabay. */
+async function videosFor(keys: StockKeys, q: string, aspect: string, page: number): Promise<Candidate[]> {
+  const [wiki, pex, pix] = await Promise.all([
+    wikimediaVideos(q, page).catch(() => []),
+    pexels(keys.pexels, q, "video", aspect, page).catch(() => []),
+    pixabay(keys.pixabay, q, "video", aspect, page).catch(() => []),
+  ]);
+  return [...wiki.slice(0, 6), ...alternate(pex, pix)];
 }
 
 /** Every source for one term. "both" mixes videos and photos so each scene gets a choice of either. */
-export async function searchStock(key: string, q: string, kind: Footage, aspect: string, page = 1): Promise<Candidate[]> {
-  if (kind === "video") return videosFor(key, q, aspect, page);
-  const [wiki, photos, videos] = await Promise.all([
+export async function searchStock(keys: StockKeys, q: string, kind: Footage, aspect: string, page = 1): Promise<Candidate[]> {
+  if (kind === "video") return videosFor(keys, q, aspect, page);
+  const [wiki, pex, pix, videos] = await Promise.all([
     wikimedia(q, page).catch(() => []),
-    pixabay(key, q, "image", aspect, page),
-    kind === "both" ? videosFor(key, q, aspect, page) : Promise.resolve([]),
+    pexels(keys.pexels, q, "image", aspect, page).catch(() => []),
+    pixabay(keys.pixabay, q, "image", aspect, page).catch(() => []),
+    kind === "both" ? videosFor(keys, q, aspect, page) : Promise.resolve([]),
   ]);
-  const images = [...wiki.slice(0, 8), ...photos];
-  if (kind === "image") return images;
-  // both: alternate video / photo
-  const out: Candidate[] = [];
-  for (let i = 0; i < Math.max(videos.length, images.length); i++) {
-    if (videos[i]) out.push(videos[i]);
-    if (images[i]) out.push(images[i]);
-  }
-  return out;
+  const images = [...wiki.slice(0, 8), ...alternate(pex, pix)];
+  return kind === "image" ? images : alternate(videos, images);
 }

@@ -6,7 +6,7 @@
 // POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates ("image: …" in q overrides kind)
 //      kind "youtube": Creative Commons YouTube videos (search only, 101 quota units; only on a button press)
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
-// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, YOUTUBE_API_KEY
+// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, YOUTUBE_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { type Footage, parseScript, parseTerm } from "./script.ts";
 import { type Candidate, searchStock, youtubeCC } from "./stock.ts";
@@ -16,7 +16,8 @@ const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
-const PIXABAY = Deno.env.get("PIXABAY_API_KEY") ?? "";
+const KEYS = { pixabay: Deno.env.get("PIXABAY_API_KEY") ?? "", pexels: Deno.env.get("PEXELS_API_KEY") ?? "" };
+const STOCK_READY = !!(KEYS.pixabay || KEYS.pexels);
 const YT_KEY = Deno.env.get("YOUTUBE_API_KEY") ?? "";
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -49,7 +50,7 @@ function autoTerm(text: string, language: string): string | null {
 // ---------- stock footage ----------
 const FOOTAGE = new Set(["video", "image", "both"]);
 const searchCache = new Map<string, Promise<Candidate[]>>();
-let budget = 80;  // max Pixabay calls per request, stays under the per-minute limit
+let budget = 80;  // max stock calls per request, stays under Pixabay's per-minute limit
 function cachedSearch(term: string, footage: Footage, aspect: string): Promise<Candidate[]> {
   const { kind, q } = parseTerm(term, footage);
   const key = `${aspect}|${kind}|${q.toLowerCase()}`;
@@ -57,7 +58,7 @@ function cachedSearch(term: string, footage: Footage, aspect: string): Promise<C
     const calls = kind === "both" ? 2 : 1;
     if (budget < calls) return Promise.resolve([]);
     budget -= calls;
-    searchCache.set(key, searchStock(PIXABAY, q, kind, aspect));
+    searchCache.set(key, searchStock(KEYS, q, kind, aspect));
   }
   return searchCache.get(key)!;
 }
@@ -98,8 +99,8 @@ Deno.serve(async (req) => {
 
     if (body.action === "search") {
       const { kind, q } = parseTerm(String(body.q || ""), FOOTAGE.has(body.kind) ? body.kind : "video");
-      const results = await searchStock(PIXABAY, q, kind, String(body.aspect || "9:16"), Math.min(Math.max(Number(body.page) || 1, 1), 10));
-      return json({ results, configured: !!PIXABAY });
+      const results = await searchStock(KEYS, q, kind, String(body.aspect || "9:16"), Math.min(Math.max(Number(body.page) || 1, 1), 10));
+      return json({ results, configured: STOCK_READY });
     }
 
     if (body.action === "build") {
@@ -179,11 +180,11 @@ Deno.serve(async (req) => {
       const needVoice = (inserted || []).filter((s) => !s.voice_path).map((s) => s.id);
       if (!needVoice.length) {
         await db.from("video_projects").update({ status: "ready" }).eq("id", projectId);
-        return json({ project_id: projectId, status: "ready", footage: !!PIXABAY });
+        return json({ project_id: projectId, status: "ready", footage: STOCK_READY });
       }
       const err = await dispatch("prepare.yml", { project_id: projectId!, scene_ids: needVoice.length === rows.length ? "" : needVoice.join(",") });
       if (err) await db.from("video_projects").update({ status: "failed", error: err }).eq("id", projectId);
-      return json({ project_id: projectId, status: err ? "failed" : "preparing", error: err, footage: !!PIXABAY });
+      return json({ project_id: projectId, status: err ? "failed" : "preparing", error: err, footage: STOCK_READY });
     }
 
     if (body.action === "voice") {

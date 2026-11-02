@@ -44,16 +44,18 @@ export function parseStat(stat = "") {
 }
 
 /**
- * Who a scene's footage must credit: a Wikimedia photo or video, or an uploaded file that replaced a YouTube
- * Creative Commons pick (the pick itself has no file yet, so it isn't in the video and isn't credited).
+ * Who a scene's footage credits: a Wikimedia photo or video (the licence requires it), a Pexels one (its API terms ask
+ * for it when possible), or an uploaded file that replaced a YouTube Creative Commons pick (the pick itself has no file
+ * yet, so it isn't in the video and isn't credited).
  */
 export function creditOf(c) {
   if (!c) return null;
   if (c.source === "wikimedia") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Wikimedia Commons" };
+  if (c.source === "pexels") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Pexels" };
   return c.credit?.page ? c.credit : null;
 }
 
-/** Credit lines for footage whose licence asks for one. Empty string when none. */
+/** Credit lines for footage that gets one. Empty string when none. */
 export function creditsText(scenes) {
   const seen = new Set();
   const lines = [];
@@ -164,7 +166,7 @@ export function preRenderCheck(project, scenes) {
   const cards = ordered.filter((s) => !s.clip || s.clip.type === "card").length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
   const credited = ordered.filter((s) => creditOf(s.clip)).length;
-  if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage whose licence needs a credit. The credit lines below go in the video description.` });
+  if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage that gets a credit. The credit lines below go in the video description.` });
   const noFile = ordered.filter((s) => s.clip?.source === "youtube").length;
   if (noFile) issues.push({ level: "warn", text: `${noFile} scene(s) have a YouTube clip picked but no file uploaded. They show a text card until you upload the clip.` });
   const total = ordered.reduce((t, s) => t + sceneSeconds(s) + SCENE_GAP, 0) + TAIL;

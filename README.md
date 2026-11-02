@@ -87,8 +87,9 @@ Script formats (mixable):
     FOOTAGE: image: Lamine Yamal | video: football stadium night
     CARD: Lamine Yamal | 19 goals | #A50044 #004D98
 
-Only `VO:` is required. `image:` terms search photos (Wikimedia Commons for real people, places and cars, plus Pixabay),
-`video:` terms search videos (Wikimedia Commons real footage first, e.g. clubs' CC BY videos, then Pixabay). Each scene
+Only `VO:` is required. `image:` terms search photos (Wikimedia Commons for real people, places and cars, plus Pexels and
+Pixabay), `video:` terms search videos (Wikimedia Commons real footage first, e.g. clubs' CC BY videos, then Pexels and
+Pixabay). Each scene
 also has a **YouTube CC** button: Creative Commons YouTube videos, search only (YouTube doesn't let apps download other
 channels' videos), so a pick keeps its credit and asks for the file; 101 API units per search. Photos get a slow
 zoom/pan; photos much wider than the frame sit on a blurred copy of themselves instead of being cropped. Wikimedia and
@@ -114,7 +115,7 @@ navigation moves to bottom tabs and tables turn into cards.
 
 | Part | Where |
 |---|---|
-| Scenes + footage search | `studio` edge function: `script.ts` (parser), `stock.ts` (Pixabay, Wikimedia Commons) |
+| Scenes + footage search | `studio` edge function: `script.ts` (parser), `stock.ts` (Pexels, Pixabay, Wikimedia Commons) |
 | AI script | `ai` edge function: `index.ts` (capture, blueprint, script), `prompts.ts` (DeepSeek prompts and lengths) |
 | Voice + word timings | `prepare.yml` → `collectors/prepare_job.py`: Edge TTS, or `collectors/supertonic_voice.py` for Supertonic-3 |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
@@ -129,6 +130,7 @@ Secrets:
 | Supabase Edge Function secrets | `GITHUB_TOKEN` | Fine-grained token: this repo only, **Actions: Read and write** |
 | Supabase Edge Function secrets | `GITHUB_REPO` | `arifabdelilah1-crypto/youtube-control` |
 | Supabase Edge Function secrets | `PIXABAY_API_KEY` | Free key from pixabay.com/api/docs (clip search in the editor) |
+| Supabase Edge Function secrets | `PEXELS_API_KEY` | Free key from pexels.com/api (clip search; 200 requests an hour, raised for free on request) |
 | Supabase Edge Function secrets | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | DeepSeek key for AI script; model is optional (default `deepseek-chat`) |
 | GitHub repo secrets | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Used by the voice and render workflows |
 

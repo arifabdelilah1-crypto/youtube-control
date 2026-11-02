@@ -108,7 +108,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
     setResults(await onSearch(q, t.slice(1), kind));
   };
   const credit = (c) => (c.author && c.source !== "pixabay" ? `${c.tags} · ${c.author} · ${c.license}` : c.tags);
-  const badge = { wikimedia: "Wiki", youtube: "YT CC" };
+  const badge = { wikimedia: "Wiki", youtube: "YT CC", pexels: "Pexels" };
 
   return (
     <article className={`ed-scene${active ? " active" : ""}`} aria-label={`Scene ${index + 1}`}>
@@ -142,7 +142,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         <button type="button" className="btn small ghost" onClick={() => search("youtube")} disabled={searching} title="Creative Commons videos on YouTube (reuse allowed with credit)">YouTube CC</button>
       </div>
       <span className="muted small">
-        {footage === "image" ? "Photos" : footage === "video" ? "Videos" : "Videos and photos"} from Wikimedia Commons (real footage of players, clubs, places; credit needed) and Pixabay.
+        {footage === "image" ? "Photos" : footage === "video" ? "Videos" : "Videos and photos"} from Wikimedia Commons (real footage of players, clubs, places; credit needed), <a href="https://www.pexels.com" target="_blank" rel="noopener">Pexels</a> and Pixabay.
       </span>
       {clip.source === "youtube" ? (
         <p className="muted small" style={{ margin: 0 }}>
@@ -312,7 +312,7 @@ function Credits({ sb, project, scenes, toast }) {
     <section className="card">
       <h2>Footage credits</h2>
       <p className="muted small" style={{ margin: 0 }}>
-        The licences of these photos and videos ask for a credit line in the video description.
+        These photos and videos get a credit line in the video description.
         {project.idea_id ? " They're added to the description automatically when you render." : " Paste them into the description when you upload."}
       </p>
       <pre className="note">{text}</pre>
