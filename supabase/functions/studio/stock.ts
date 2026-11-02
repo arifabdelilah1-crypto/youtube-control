@@ -218,7 +218,10 @@ export async function youtubeCC(apiKey: string, q: string): Promise<Candidate[]>
 
 export type StockKeys = { pixabay: string; pexels: string; unsplash: string };
 
-/** One from each list in turn, so no source drowns the others. */
+/**
+ * One from each list in turn, so no source drowns the others. The editor keeps the first 12 results of a search, so
+ * Wikimedia (real subjects) leads with 3 and then takes its turn: every source shows up in those 12.
+ */
 function alternate(...lists: Candidate[][]): Candidate[] {
   const out: Candidate[] = [];
   for (let i = 0; i < Math.max(...lists.map((l) => l.length)); i++) {
@@ -234,7 +237,7 @@ async function videosFor(keys: StockKeys, q: string, aspect: string, page: numbe
     pexels(keys.pexels, q, "video", aspect, page).catch(() => []),
     pixabay(keys.pixabay, q, "video", aspect, page).catch(() => []),
   ]);
-  return [...wiki.slice(0, 6), ...alternate(pex, pix)];
+  return [...wiki.slice(0, 3), ...alternate(pex, pix, wiki.slice(3, 6))];
 }
 
 /** Every source for one term. "both" mixes videos and photos so each scene gets a choice of either. */
@@ -247,6 +250,6 @@ export async function searchStock(keys: StockKeys, q: string, kind: Footage, asp
     pixabay(keys.pixabay, q, "image", aspect, page).catch(() => []),
     kind === "both" ? videosFor(keys, q, aspect, page) : Promise.resolve([]),
   ]);
-  const images = [...wiki.slice(0, 8), ...alternate(pex, uns, pix)];
+  const images = [...wiki.slice(0, 3), ...alternate(pex, uns, pix, wiki.slice(3, 8))];
   return kind === "image" ? images : alternate(videos, images);
 }
