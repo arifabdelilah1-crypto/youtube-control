@@ -23,6 +23,12 @@ export function parseTerm(term: string, fallback: Footage): { kind: Footage; q: 
   return { kind: /^(video|clip)/i.test(m[1]) ? "video" : "image", q: m[2].trim() };
 }
 
+/** A search from the editor: its Photos or Videos menu wins over a prefix in the term; "both" follows the prefixes. */
+export function searchTerm(term: string, picked: Footage): { kind: Footage; q: string } {
+  const parsed = parseTerm(term, picked);
+  return picked === "both" ? parsed : { kind: picked, q: parsed.q };
+}
+
 function splitTerms(s: string): string[] {
   return s.split(/\s*[|;,]\s*/).map((t) => t.trim()).filter(Boolean).slice(0, MAX_TERMS);
 }

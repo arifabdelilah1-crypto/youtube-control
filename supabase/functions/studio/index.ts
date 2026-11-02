@@ -3,12 +3,12 @@
 //      -> splits the script into scenes (see script.ts: one line per scene, or TITLE/VO/FOOTAGE/CARD blocks),
 //         finds footage per scene, starts the voice job. Returns {project_id}.
 // POST {action:"voice", project_id, scene_ids?}   -> regenerate voice for some/all scenes
-// POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates ("image: …" in q overrides kind)
+// POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates (kind "video" or "image" wins over a prefix in q; with "both" or no kind, "image: …" in q decides)
 //      kind "youtube": Creative Commons YouTube videos (search only, 101 quota units; only on a button press)
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
 // Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY, YOUTUBE_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { type Footage, parseScript, parseTerm } from "./script.ts";
+import { type Footage, parseScript, parseTerm, searchTerm } from "./script.ts";
 import { type Candidate, searchStock, trackUnsplashDownloads, youtubeCC } from "./stock.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
@@ -98,7 +98,7 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "search") {
-      const { kind, q } = parseTerm(String(body.q || ""), FOOTAGE.has(body.kind) ? body.kind : "video");
+      const { kind, q } = FOOTAGE.has(body.kind) ? searchTerm(String(body.q || ""), body.kind) : parseTerm(String(body.q || ""), "video");
       const results = await searchStock(KEYS, q, kind, String(body.aspect || "9:16"), Math.min(Math.max(Number(body.page) || 1, 1), 10));
       return json({ results, configured: STOCK_READY });
     }
