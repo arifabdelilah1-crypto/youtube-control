@@ -1,28 +1,21 @@
-name: TMP media store check
+name: TMP move videos to the VDS
 on:
   push:
     branches: [tmp/media-check]
 jobs:
-  render:
+  move:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - name: Secrets are present
-        env:
-          MEDIA_URL: ${{ secrets.MEDIA_URL }}
-          MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
-        run: |
-          test -n "$MEDIA_URL" && test "${#MEDIA_SECRET}" = 64 && echo "both set, secret length 64"
-      - name: Render
+      - name: Move
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           MEDIA_URL: ${{ secrets.MEDIA_URL }}
           MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
-        run: node render/render.mjs 01662b13-5825-4f28-a6bb-61bff938392b
+          MODE: copy
+        run: node render/tmp-migrate.mjs
