@@ -76,6 +76,7 @@ export async function pexels(key: string, q: string, kind: "video" | "image", as
       width: best.width, height: best.height, tags: name, page: v.url || "", author: v.user?.name || "Unknown author", ...license };
   }).filter((c: Candidate | null): c is Candidate => !!c);
 }
+
 const text = (html = "") => html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, " ").trim();
 
 /** Photos from Wikimedia Commons, best match first. Thumbnails are 1280 px (enough for a 1080 px wide frame). */
