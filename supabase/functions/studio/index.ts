@@ -6,7 +6,8 @@
 // POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates (kind "video" or "image" wins over a prefix in q; with "both" or no kind, "image: …" in q decides)
 //      kind "youtube": Creative Commons YouTube videos (search only, 101 quota units; only on a button press)
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
-// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY, YOUTUBE_API_KEY
+// POST {action:"video_link", job_id, download?}    -> a link (1 hour) to a final video on the VDS (vds/media.php)
+// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY, YOUTUBE_API_KEY, MEDIA_URL, MEDIA_SECRET
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { type Footage, parseScript, parseTerm, searchTerm } from "./script.ts";
 import { type Candidate, searchStock, trackUnsplashDownloads, youtubeCC } from "./stock.ts";
@@ -19,6 +20,8 @@ const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const KEYS = { pixabay: Deno.env.get("PIXABAY_API_KEY") ?? "", pexels: Deno.env.get("PEXELS_API_KEY") ?? "", unsplash: Deno.env.get("UNSPLASH_ACCESS_KEY") ?? "" };
 const STOCK_READY = !!(KEYS.pixabay || KEYS.pexels || KEYS.unsplash);
 const YT_KEY = Deno.env.get("YOUTUBE_API_KEY") ?? "";
+const MEDIA_URL = Deno.env.get("MEDIA_URL") ?? "";
+const MEDIA_SECRET = Deno.env.get("MEDIA_SECRET") ?? "";
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -79,6 +82,17 @@ async function candidatesFor(terms: string[], footage: Footage, aspect: string, 
   return out.sort((a, b) => short(a) - short(b));
 }
 
+// ---------- final videos on the VDS ----------
+async function mediaLink(base: string, secret: string, objectPath: string, seconds: number, name = ""): Promise<string> {
+  const e = Math.floor(Date.now() / 1000) + seconds;
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(`GET\n${objectPath}\n${e}`));
+  const s = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  const params = new URLSearchParams({ p: objectPath, e: String(e), s });
+  if (name) params.set("dl", name);
+  return `${base}?${params}`;
+}
+
 // ---------- handlers ----------
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -89,6 +103,15 @@ Deno.serve(async (req) => {
     if (!(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
     const { data: { user } } = await userDb.auth.getUser();
     const body = await req.json();
+
+    if (body.action === "video_link") {
+      if (!UUID.test(body.job_id || "")) return json({ error: "job_id required" }, 400);
+      const { data: job } = await db.from("render_jobs").select("output_path,params").eq("id", body.job_id).maybeSingle();
+      if (!String(job?.output_path || "").startsWith("vds:")) return json({ error: "video not found" }, 404);
+      if (!MEDIA_URL || !MEDIA_SECRET) return json({ error: "The video store isn't set up: add MEDIA_URL and MEDIA_SECRET in Supabase Edge Function secrets." }, 503);
+      const name = body.download ? String(job.params?.title || "video").replace(/[^\w-]+/g, "_").slice(0, 60) : "";
+      return json({ url: await mediaLink(MEDIA_URL, MEDIA_SECRET, job.output_path.slice(4), 3600, name) });
+    }
 
     if (body.action === "search" && body.kind === "youtube") {
       const q = parseTerm(String(body.q || ""), "video").q;

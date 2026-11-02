@@ -119,7 +119,7 @@ navigation moves to bottom tabs and tables turn into cards.
 | AI script | `ai` edge function: `index.ts` (capture, blueprint, script), `prompts.ts` (DeepSeek prompts and lengths) |
 | Voice + word timings | `prepare.yml` → `collectors/prepare_job.py`: Edge TTS, or `collectors/supertonic_voice.py` for Supertonic-3 |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
-| Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the private `renders` bucket |
+| Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the VDS (`render/media.mjs`, `vds/media.php`), or to the private `renders` bucket if the VDS isn't set up or fails |
 
 After changing `web/`, `editor-src/` or `video/`, run `./sync-root.sh` (GitHub Pages serves the repo root).
 
@@ -134,6 +134,7 @@ Secrets:
 | Supabase Edge Function secrets | `PEXELS_API_KEY` | Free key from pexels.com/api (clip search; 200 requests an hour, raised for free on request) |
 | Supabase Edge Function secrets | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | DeepSeek key for AI script; model is optional (default `deepseek-chat`) |
 | GitHub repo secrets | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Used by the voice and render workflows |
+| GitHub repo secrets and Supabase Edge Function secrets | `MEDIA_URL`, `MEDIA_SECRET` | The VDS video store: `https://control.homerecipe.casa/media.php` and the shared secret in `/home/controlapp/.media-secret` |
 
 Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
 Sound effects in `web/sfx/` are synthesized (no license needed). Fonts in `web/fonts/` are SIL Open Font License.

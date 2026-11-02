@@ -330,6 +330,7 @@ function Renders({ sb, jobs, onRetry }) {
   const cls = { done: "ok", failed: "crit", running: "info", dispatched: "info", queued: "warn" };
   const label = { done: "Ready", failed: "Failed", running: "Rendering…", dispatched: "Starting…", queued: "Queued" };
   const signed = async (j, download) => {
+    if (String(j.output_path).startsWith("vds:")) return (await invoke(sb, { action: "video_link", job_id: j.id, download: !!download })).url;
     const { data } = await sb.storage.from("renders").createSignedUrl(j.output_path, 3600, download ? { download: `${(j.params?.title || "video").replace(/[^\w-]+/g, "_").slice(0, 60)}.mp4` } : undefined);
     return data?.signedUrl;
   };

@@ -26,6 +26,8 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MEDIA_URL: ${{ secrets.MEDIA_URL }}
+          MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
           JOB_ID: ${{ github.event.inputs.job_id }}
         run: node render/render.mjs "$JOB_ID"
       - name: Keep a backup copy of the video (7 days)
@@ -41,5 +43,7 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MEDIA_URL: ${{ secrets.MEDIA_URL }}
+          MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
           JOB_ID: ${{ github.event.inputs.job_id }}
         run: node render/publish.mjs --auto "$JOB_ID"

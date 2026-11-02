@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { downloadFromVds, isVds, mediaLink, vdsPath } from "./media.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -39,6 +40,7 @@ async function videoFile(job) {
   const local = path.join(ROOT, "render-output.mp4");   // downloaded artifact (long videos) or the render that just finished
   if (fs.existsSync(local)) return local;
   if (!job.output_path) throw new Error("The video file is gone: it isn't in Storage and no GitHub artifact was found (artifacts are kept 7 days). Render it again.");
+  if (isVds(job.output_path)) { await downloadFromVds(vdsPath(job.output_path), local); return local; }
   const r = await fetch(`${URL_}/storage/v1/object/renders/${job.output_path}`, { headers: H });
   if (!r.ok) throw new Error(`download ${r.status}: the rendered file may have been deleted. Render it again.`);
   fs.writeFileSync(local, Buffer.from(await r.arrayBuffer()));
@@ -46,6 +48,7 @@ async function videoFile(job) {
 }
 
 async function signedUrl(objectPath) {
+  if (isVds(objectPath)) return mediaLink("GET", vdsPath(objectPath), 7 * 86400);
   const r = await fetch(`${URL_}/storage/v1/object/sign/renders/${objectPath}`, {
     method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ expiresIn: 7 * 86400 }),
   });

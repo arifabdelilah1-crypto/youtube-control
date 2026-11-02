@@ -662,19 +662,30 @@ function renderRow(j) {
       j.error ? h("pre", { class: "err", text: j.error }) : null, preview),
     h("div", { class: "row" },
       j.status === "done" ? h("button", { class: "btn small", type: "button", text: "Preview", onclick: async (e) => {
-        const { data } = await sb.storage.from("renders").createSignedUrl(j.output_path, 3600);
-        if (data?.signedUrl) preview.replaceChildren(h("video", { class: "player", src: data.signedUrl, controls: true, playsinline: true }));
-        e.currentTarget.remove();
+        const button = e.currentTarget;
+        const url = await videoLink(j);
+        if (url) { preview.replaceChildren(h("video", { class: "player", src: url, controls: true, playsinline: true })); button.remove(); }
       } }) : null,
       j.status === "done" ? h("button", { class: "btn small primary", type: "button", text: "Download", onclick: async () => {
-        const { data } = await sb.storage.from("renders").createSignedUrl(j.output_path, 3600, { download: `${(j.params?.title || "video").replace(/[^\w-]+/g, "_").slice(0, 60)}.mp4` });
-        if (data?.signedUrl) location.href = data.signedUrl;
+        const url = await videoLink(j, true);
+        if (url) location.href = url;
       } }) : null,
       j.status === "failed" ? h("button", { class: "btn small", type: "button", text: "Retry", onclick: async () => {
         const { error } = await sb.functions.invoke("render", { body: { retry: j.id } }); toast(error ? "Retry failed" : "Render restarted"); render();
       } }) : null,
       j.run_url ? h("a", { class: "btn small ghost", href: j.run_url, target: "_blank", rel: "noopener", text: "Log" }) : null));
   return row;
+}
+
+/** A link to a final video: on the VDS ("vds:" paths, signed by the studio function) or in Supabase Storage. */
+async function videoLink(j, download) {
+  if (String(j.output_path).startsWith("vds:")) {
+    const { data, error } = await sb.functions.invoke("studio", { body: { action: "video_link", job_id: j.id, download: !!download } });
+    if (error || !data?.url) { toast(data?.error || "Couldn't open the video"); return null; }
+    return data.url;
+  }
+  const { data } = await sb.storage.from("renders").createSignedUrl(j.output_path, 3600, download ? { download: `${(j.params?.title || "video").replace(/[^\w-]+/g, "_").slice(0, 60)}.mp4` } : undefined);
+  return data?.signedUrl;
 }
 
 // Language, voice, speed and format on screen when an AI run re-renders the script page, so they survive it.
@@ -865,7 +876,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "6";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "7";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });

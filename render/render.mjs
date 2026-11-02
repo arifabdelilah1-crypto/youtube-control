@@ -1,7 +1,7 @@
 // Final render of an editor project (runs in the GitHub Actions "Render final video" workflow).
 //   node render/render.mjs <render_job_id>
 // Reads the project + scenes, signs the private audio/media URLs, renders <Main> with Remotion,
-// uploads the MP4 to the private 'renders' bucket (resumable, 6 MB chunks) and marks the job done.
+// uploads the MP4 to the VDS (media.mjs), or to the private 'renders' bucket without it, and marks the job done.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, selectComposition } from "@remotion/renderer";
 import { buildProps } from "../video/layout.js";
+import { mediaReady, uploadToVds } from "./media.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -132,13 +133,23 @@ async function main() {
     });
     const duration = inputProps.totalFrames / inputProps.fps;
     const size = fs.statSync(out).size;
-    if (size > MAX_BYTES) {
+    const objectPath = `videos/${jobId}.mp4`;
+    let onVds = false;
+    if (mediaReady()) {
+      try {
+        await uploadToVds(out, objectPath);
+        onVds = true;
+        log(`Uploaded ${(size / 1048576).toFixed(1)} MB to the VDS`);
+      } catch (e) { log(`${e.message}. Falling back to Supabase Storage.`); }
+    }
+    if (onVds) {
+      await update("render_jobs", jobId, { status: "done", output_path: `vds:${objectPath}`, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString() });
+    } else if (size > MAX_BYTES) {
       // Too big for the free Storage plan (50 MB per file): the video stays downloadable from the GitHub run (Artifacts, 7 days).
       log(`Video is ${(size / 1048576).toFixed(0)} MB: kept as a GitHub artifact only`);
       await update("render_jobs", jobId, { status: "done", output_path: null, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString(),
         error: `Long video (${(size / 1048576).toFixed(0)} MB) is too big for storage. Download it from the run: Log → Artifacts (kept 7 days).` });
     } else {
-      const objectPath = `videos/${jobId}.mp4`;
       await upload(out, objectPath);
       await update("render_jobs", jobId, { status: "done", output_path: objectPath, duration_s: Number(duration.toFixed(2)), finished_at: new Date().toISOString() });
     }
