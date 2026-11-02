@@ -773,7 +773,7 @@ async function studioEditor(ideaId) {
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
         field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
-        h("p", { class: "muted small", style: "margin:0", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pexels, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
+        h("p", { class: "muted small", style: "margin:0", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pexels, Unsplash, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
         field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
       h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),
         field("s-channel", "Channel", f.channel),
@@ -865,7 +865,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "5";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "6";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });

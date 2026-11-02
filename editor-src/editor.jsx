@@ -108,7 +108,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
     setResults(await onSearch(q, t.slice(1), kind));
   };
   const credit = (c) => (c.author && c.source !== "pixabay" ? `${c.tags} · ${c.author} · ${c.license}` : c.tags);
-  const badge = { wikimedia: "Wiki", youtube: "YT CC", pexels: "Pexels" };
+  const badge = { wikimedia: "Wiki", youtube: "YT CC", pexels: "Pexels", unsplash: "Unsplash" };
 
   return (
     <article className={`ed-scene${active ? " active" : ""}`} aria-label={`Scene ${index + 1}`}>
@@ -142,7 +142,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         <button type="button" className="btn small ghost" onClick={() => search("youtube")} disabled={searching} title="Creative Commons videos on YouTube (reuse allowed with credit)">YouTube CC</button>
       </div>
       <span className="muted small">
-        {footage === "image" ? "Photos" : footage === "video" ? "Videos" : "Videos and photos"} from Wikimedia Commons (real footage of players, clubs, places; credit needed), <a href="https://www.pexels.com" target="_blank" rel="noopener">Pexels</a> and Pixabay.
+        {footage === "image" ? "Photos" : footage === "video" ? "Videos" : "Videos and photos"} from Wikimedia Commons (real footage of players, clubs, places; credit needed), <a href="https://www.pexels.com" target="_blank" rel="noopener">Pexels</a>, <a href="https://unsplash.com/?utm_source=youtube_control&utm_medium=referral" target="_blank" rel="noopener">Unsplash</a> (photos) and Pixabay.
       </span>
       {clip.source === "youtube" ? (
         <p className="muted small" style={{ margin: 0 }}>

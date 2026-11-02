@@ -6,18 +6,18 @@
 // POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates ("image: …" in q overrides kind)
 //      kind "youtube": Creative Commons YouTube videos (search only, 101 quota units; only on a button press)
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
-// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, YOUTUBE_API_KEY
+// Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY, YOUTUBE_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { type Footage, parseScript, parseTerm } from "./script.ts";
-import { type Candidate, searchStock, youtubeCC } from "./stock.ts";
+import { type Candidate, searchStock, trackUnsplashDownloads, youtubeCC } from "./stock.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
-const KEYS = { pixabay: Deno.env.get("PIXABAY_API_KEY") ?? "", pexels: Deno.env.get("PEXELS_API_KEY") ?? "" };
-const STOCK_READY = !!(KEYS.pixabay || KEYS.pexels);
+const KEYS = { pixabay: Deno.env.get("PIXABAY_API_KEY") ?? "", pexels: Deno.env.get("PEXELS_API_KEY") ?? "", unsplash: Deno.env.get("UNSPLASH_ACCESS_KEY") ?? "" };
+const STOCK_READY = !!(KEYS.pixabay || KEYS.pexels || KEYS.unsplash);
 const YT_KEY = Deno.env.get("YOUTUBE_API_KEY") ?? "";
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -200,9 +200,10 @@ Deno.serve(async (req) => {
       if (!UUID.test(body.project_id || "")) return json({ error: "project_id required" }, 400);
       const { data: project } = await db.from("video_projects").select("*").eq("id", body.project_id).single();
       if (!project) return json({ error: "project not found" }, 404);
-      const { data: scenes } = await db.from("project_scenes").select("id,text,voice_path,voice_text").eq("project_id", body.project_id);
+      const { data: scenes } = await db.from("project_scenes").select("id,text,voice_path,voice_text,clip").eq("project_id", body.project_id);
       const stale = (scenes || []).filter((s) => !s.voice_path || s.voice_text !== s.text).length;
       if (!scenes?.length || stale) return json({ error: stale ? `${stale} scene(s) need their voice updated first.` : "No scenes." }, 400);
+      await trackUnsplashDownloads(KEYS.unsplash, scenes.map((s) => s.clip));
       const { data: job, error } = await db.from("render_jobs").insert({
         project_id: project.id, idea_id: project.idea_id, channel_id: project.channel_id,
         params: { engine: "editor", project_id: project.id, title: project.title, aspect: project.aspect },

@@ -1,4 +1,4 @@
-// Footage search: Pexels and Pixabay (videos + photos, free for commercial use), Wikimedia Commons (real people, places, cars,
+// Footage search: Pexels and Pixabay (videos + photos, free for commercial use), Unsplash (photos), Wikimedia Commons (real people, places, cars,
 // videos; free licences that need a credit line, kept on each candidate) and YouTube Creative Commons (search only:
 // YouTube doesn't let apps download other channels' videos, so those need the file uploaded).
 import type { Footage } from "./script.ts";
@@ -7,6 +7,7 @@ export type Candidate = {
   type: "video" | "image"; source: string; id: string; url: string; preview: string; thumb: string; duration: number | null;
   width: number; height: number; tags: string; page: string;
   author?: string; license?: string; license_url?: string;
+  download_location?: string;  // Unsplash: called when the photo is used in a video
 };
 
 export async function pixabay(key: string, q: string, kind: "video" | "image", aspect: string, page = 1): Promise<Candidate[]> {
@@ -75,6 +76,40 @@ export async function pexels(key: string, q: string, kind: "video" | "image", as
     return { type: "video", source: "pexels", id: String(v.id), url: best.link, preview: small.link, thumb: v.image ? sized(v.image, 330) : "", duration: v.duration ?? null,
       width: best.width, height: best.height, tags: name, page: v.url || "", author: v.user?.name || "Unknown author", ...license };
   }).filter((c: Candidate | null): c is Candidate => !!c);
+}
+
+const UNSPLASH_ORIENTATION: Record<string, string> = { "9:16": "portrait", "16:9": "landscape", "1:1": "squarish" };
+
+/**
+ * Unsplash: free photos. Its API terms ask to use its image URLs directly (kept here, with their ixid), to credit the
+ * photographer and Unsplash, and to report each photo used (trackUnsplashDownloads). Limit: 50 requests an hour until
+ * Unsplash approves the app; past that it returns nothing and the other sources carry on.
+ */
+export async function unsplash(key: string, q: string, aspect: string, page = 1): Promise<Candidate[]> {
+  if (!key || !q.trim()) return [];
+  const params = new URLSearchParams({ query: q.slice(0, 100), per_page: "20", page: String(page) });
+  if (UNSPLASH_ORIENTATION[aspect]) params.set("orientation", UNSPLASH_ORIENTATION[aspect]);
+  const r = await fetch(`https://api.unsplash.com/search/photos?${params}`, { headers: { Authorization: `Client-ID ${key}`, "Accept-Version": "v1" } });
+  if (!r.ok) return [];
+  const utm = "utm_source=youtube_control&utm_medium=referral";
+  // deno-lint-ignore no-explicit-any
+  return ((await r.json()).results || []).map((p: any): Candidate | null => {
+    if (!p.urls?.raw || !p.width || !p.height) return null;
+    const sized = (px: number) => `${p.urls.raw}${p.urls.raw.includes("?") ? "&" : "?"}w=${px}&fit=max&fm=jpg&q=80`;
+    const px = Math.min(p.width, p.width >= p.height ? 1920 : 1280);
+    return { type: "image", source: "unsplash", id: String(p.id), url: sized(px), preview: sized(500), thumb: sized(330), duration: null,
+      width: px, height: Math.round(p.height * px / p.width), tags: p.alt_description || p.description || "",
+      page: p.links?.html ? `${p.links.html}?${utm}` : "", author: p.user?.name || "Unknown author", license: "Unsplash License", license_url: "https://unsplash.com/license",
+      download_location: p.links?.download_location || `https://api.unsplash.com/photos/${encodeURIComponent(p.id)}/download` };
+  }).filter((c: Candidate | null): c is Candidate => !!c);
+}
+
+/** Tells Unsplash which photos a video uses, as its API terms require. Never blocks a render. */
+export async function trackUnsplashDownloads(key: string, clips: (Partial<Candidate> | null | undefined)[]): Promise<void> {
+  // the clip is editable by the client: the key only ever goes to Unsplash's own API
+  const urls = [...new Set(clips.filter((c) => c?.source === "unsplash").map((c) => String(c?.download_location || "")).filter((u) => u.startsWith("https://api.unsplash.com/photos/")))];
+  if (!key) return;
+  await Promise.allSettled(urls.map((u) => fetch(u, { headers: { Authorization: `Client-ID ${key}`, "Accept-Version": "v1" } })));
 }
 
 const text = (html = "") => html.replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/\s+/g, " ").trim();
@@ -181,14 +216,13 @@ export async function youtubeCC(apiKey: string, q: string): Promise<Candidate[]>
   }));
 }
 
-export type StockKeys = { pixabay: string; pexels: string };
+export type StockKeys = { pixabay: string; pexels: string; unsplash: string };
 
-/** One from each list in turn, so no source drowns the other. */
-function alternate(a: Candidate[], b: Candidate[]): Candidate[] {
+/** One from each list in turn, so no source drowns the others. */
+function alternate(...lists: Candidate[][]): Candidate[] {
   const out: Candidate[] = [];
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    if (a[i]) out.push(a[i]);
-    if (b[i]) out.push(b[i]);
+  for (let i = 0; i < Math.max(...lists.map((l) => l.length)); i++) {
+    for (const l of lists) if (l[i]) out.push(l[i]);
   }
   return out;
 }
@@ -206,12 +240,13 @@ async function videosFor(keys: StockKeys, q: string, aspect: string, page: numbe
 /** Every source for one term. "both" mixes videos and photos so each scene gets a choice of either. */
 export async function searchStock(keys: StockKeys, q: string, kind: Footage, aspect: string, page = 1): Promise<Candidate[]> {
   if (kind === "video") return videosFor(keys, q, aspect, page);
-  const [wiki, pex, pix, videos] = await Promise.all([
+  const [wiki, pex, uns, pix, videos] = await Promise.all([
     wikimedia(q, page).catch(() => []),
     pexels(keys.pexels, q, "image", aspect, page).catch(() => []),
+    unsplash(keys.unsplash, q, aspect, page).catch(() => []),
     pixabay(keys.pixabay, q, "image", aspect, page).catch(() => []),
     kind === "both" ? videosFor(keys, q, aspect, page) : Promise.resolve([]),
   ]);
-  const images = [...wiki.slice(0, 8), ...alternate(pex, pix)];
+  const images = [...wiki.slice(0, 8), ...alternate(pex, uns, pix)];
   return kind === "image" ? images : alternate(videos, images);
 }

@@ -44,14 +44,15 @@ export function parseStat(stat = "") {
 }
 
 /**
- * Who a scene's footage credits: a Wikimedia photo or video (the licence requires it), a Pexels one (its API terms ask
- * for it when possible), or an uploaded file that replaced a YouTube Creative Commons pick (the pick itself has no file
+ * Who a scene's footage credits: a Wikimedia photo or video (the licence requires it), a Pexels or Unsplash one (their
+ * API terms ask for it), or an uploaded file that replaced a YouTube Creative Commons pick (the pick itself has no file
  * yet, so it isn't in the video and isn't credited).
  */
 export function creditOf(c) {
   if (!c) return null;
   if (c.source === "wikimedia") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Wikimedia Commons" };
   if (c.source === "pexels") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Pexels" };
+  if (c.source === "unsplash") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Unsplash" };
   return c.credit?.page ? c.credit : null;
 }
 
