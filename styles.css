@@ -278,6 +278,9 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .login-card label { font-size: 12.5px; font-weight: 600; color: var(--graphite); }
 .login-card input { min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r); padding: 0 12px; font: 400 15px/1 var(--display); }
 .login-card .btn { min-height: 44px; }
+.login-google { display: flex; flex-direction: column; gap: 12px; width: 100%; }
+.login-google .btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
+.login-or { text-align: center; }
 .toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 12px 18px; border-radius: 11px; font-weight: 600; z-index: 60; max-width: calc(100% - 32px); box-shadow: 0 10px 30px rgba(17, 20, 24, .25); }
 .loading { color: var(--graphite); padding: 40px 0; }
 

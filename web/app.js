@@ -1312,7 +1312,7 @@ async function startOAuth() {
 }
 
 // ==================================================================
-// Boot + sign-in (email + password; password created once)
+// Boot + sign-in (Google, or email + password; password created once)
 // ==================================================================
 async function boot() {
   const { data: { session } } = await sb.auth.getSession();
@@ -1352,6 +1352,25 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   if (creating && !data.session) { msg.textContent = "Account created but waiting for email confirmation. Turn off “Confirm email” in Supabase, then sign in."; setLoginMode(false); return; }
   boot();
 });
+document.getElementById("login-google").addEventListener("click", async () => {
+  const msg = document.getElementById("login-msg");
+  msg.textContent = "Opening Google…";
+  const { error } = await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: location.origin + location.pathname, queryParams: { prompt: "select_account" } } });
+  if (error) msg.textContent = error.message;
+});
+/** The Google button shows only once Google is switched on in Supabase; a sign-in Google refused comes back in the URL. */
+async function setUpGoogleSignIn() {
+  const params = new URLSearchParams(location.search);
+  if (params.get("error")) {
+    document.getElementById("login-msg").textContent = `Google sign-in failed: ${params.get("error_description") || params.get("error")}`;
+    history.replaceState(null, "", location.pathname + location.hash);
+  }
+  try {
+    const r = await fetch(`${SUPABASE_URL}/auth/v1/settings`, { headers: { apikey: SUPABASE_KEY } });
+    document.getElementById("google-wrap").hidden = !(await r.json()).external?.google;
+  } catch { /* the password form still works */ }
+}
+setUpGoogleSignIn();
 document.getElementById("sign-out").addEventListener("click", async () => { await sb.auth.signOut(); location.hash = ""; boot(); });
 window.addEventListener("hashchange", () => { if (!document.getElementById("app").hidden) render(); });
 sb.auth.onAuthStateChange((event) => { if (event === "SIGNED_OUT") boot(); });

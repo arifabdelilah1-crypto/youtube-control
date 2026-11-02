@@ -54,6 +54,11 @@ Supabase → Authentication → URL Configuration: set **Site URL** to your dash
 (e.g. `https://<user>.github.io/youtube-control/`) and add it to **Redirect URLs**.
 Only emails in the `app_users` table can see data.
 
+Sign-in with Google: in the same Google OAuth client, add the redirect URI
+`https://pojvaicmeighnpxaixwa.supabase.co/auth/v1/callback`, then switch on Google in Supabase → Authentication →
+Providers with that client's ID and secret. The button appears on the sign-in page as soon as it's on, and asks Google
+only for the name and email. Add each dashboard address (with its final `/`) to **Redirect URLs**.
+
 ### 4. First run
 GitHub → Actions → **Research (YouTube search + autocomplete)** → *Run workflow*, then **Google Trends**.
 Channel stats need nothing: Supabase runs them.
