@@ -50,7 +50,7 @@ def chain(fx) -> str:
         first = round(60 + e * 300)
         parts.append(f"aecho=0.8:0.6:{first}|{first * 2}:{e * 0.7:.3f}|{e * 0.4:.3f}")
     parts.append("acompressor=threshold=-20dB:ratio=3:attack=10:release=200")
-    parts.append("alimiter=limit=0.95")
+    parts.append("loudnorm=I=-18:TP=-1.5:LRA=11")  # the effects lower the level: back to about the natural voice's
     return ",".join(parts)
 
 
