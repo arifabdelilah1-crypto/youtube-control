@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { blotatoPost, createPost, uploadToBlotato, waitForPost } from "./blotato.mjs";
 import { downloadFromVds, isVds, mediaLink, vdsPath } from "./media.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -120,23 +121,41 @@ async function toYouTube(row, sched, file, job) {
   return { youtube_video_id: data.id, status: meta.status.publishAt ? "scheduled" : "published", warning };
 }
 
+/** The project's thumbnail as a local file, when there is one. */
+async function thumbnailFile(job) {
+  if (!job.project_id) return null;
+  const [project] = await rest("GET", "video_projects", `?id=eq.${job.project_id}&select=settings`);
+  const objectPath = project?.settings?.thumbnail?.file?.path;
+  if (!isVds(objectPath)) return null;
+  const local = path.join(ROOT, "thumbnail.jpg");
+  const r = await fetch(mediaLink("GET", vdsPath(objectPath)));
+  if (!r.ok) throw new Error(`the image isn't on the VDS (${r.status})`);
+  fs.writeFileSync(local, Buffer.from(await r.arrayBuffer()));
+  return local;
+}
+
 async function toBlotato(row, sched, job) {
   if (!BLOTATO) throw new Error("Add BLOTATO_API_KEY to the GitHub repo secrets.");
-  if (!job.output_path) throw new Error("Blotato needs a link to the video, and long videos aren't kept in Storage. Use the YouTube method for this channel.");
+  const target = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === row.platform)
+    || { privacy: sched.privacy, notify: sched.notify_subscribers, synthetic: sched.synthetic_media };
+  if (row.platform === "youtube" && !target.synthetic) target.synthetic = !!sched.synthetic_media;
   const future = row.slot_at && Date.parse(row.slot_at) > Date.now() + 5 * 60e3;
-  const body = {
-    post: {
-      accountId: sched.blotato_account_id,
-      content: { text: row.description || row.title, mediaUrls: [await signedUrl(job.output_path)], platform: "youtube" },
-      target: { targetType: "youtube", title: row.title.slice(0, 100), privacyStatus: sched.privacy || "public", shouldNotifySubscribers: sched.notify_subscribers !== false,
-        containsSyntheticMedia: !!sched.synthetic_media },
-    },
-    ...(future ? { scheduledTime: new Date(row.slot_at).toISOString() } : {}),
-  };
-  const r = await fetch("https://backend.blotato.com/v2/posts", { method: "POST", headers: { "blotato-api-key": BLOTATO, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(`Blotato ${r.status}: ${JSON.stringify(data).slice(0, 400)}`);
-  return { blotato_post_id: data.postSubmissionId || data.id || null, status: future ? "scheduled" : "published" };
+  const mediaUrl = await uploadToBlotato(BLOTATO, await videoFile(job), "video.mp4", "video/mp4");
+  // TikTok takes its cover from the video's first frame; the others take the image. A failed cover never stops the post.
+  let coverUrl = null;
+  let warning = null;
+  if (row.platform !== "tiktok") {
+    try {
+      const cover = await thumbnailFile(job);
+      if (cover) coverUrl = await uploadToBlotato(BLOTATO, cover, "cover.jpg", "image/jpeg");
+    } catch (e) { warning = `The video went up, but its cover didn't: ${e.message}`.slice(0, 500); log(warning); }
+  }
+  const id = await createPost(BLOTATO, blotatoPost({ row, target, mediaUrl, coverUrl, scheduledTime: future ? new Date(row.slot_at).toISOString() : null }));
+  log(`Sent to Blotato for ${row.platform}: ${id}`);
+  // saved before waiting, so the post can still be followed if this job stops
+  await rest("PATCH", "publish_queue", `?id=eq.${row.id}`, { blotato_post_id: id });
+  if (future) return { blotato_post_id: id, status: "scheduled", warning };
+  return { blotato_post_id: id, ...(await waitForPost(BLOTATO, id)), warning };
 }
 
 async function main() {
@@ -163,7 +182,7 @@ async function main() {
     const { warning, ...saved } = result;
     await rest("PATCH", "publish_queue", `?id=eq.${queueId}`, { ...saved, error: warning || null });
     if (row.idea_id) await rest("PATCH", "ideas", `?id=eq.${row.idea_id}`, { stage: result.status === "published" ? "published" : "scheduled" });
-    log(`${result.status === "published" ? "Published" : `Scheduled for ${row.slot_at}`}${result.youtube_video_id ? `: https://youtu.be/${result.youtube_video_id}` : ""}`);
+    log(`${result.status === "published" ? "Published" : result.status === "uploading" ? "Still processing at Blotato" : `Scheduled for ${row.slot_at}`}${result.youtube_video_id ? `: https://youtu.be/${result.youtube_video_id}` : ""}`);
   } catch (e) {
     await rest("PATCH", "publish_queue", `?id=eq.${queueId}`, { status: "failed", error: String(e?.message || e).slice(0, 2000) });
     throw e;

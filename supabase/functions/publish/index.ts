@@ -2,9 +2,11 @@
 // POST {action:"queue",  render_job_id, when: "next" | "now" | ISO date}  (dashboard user) -> queue + start the upload job
 // POST {action:"auto",   render_job_id}                                   (render job, x-cron-secret) -> queue if the channel's auto-publish is on
 // POST {action:"cancel", queue_id}                                       (dashboard user) -> cancel a post that isn't uploaded yet
+// POST {action:"blotato_accounts"}                                       (dashboard user) -> connected TikTok, Instagram and YouTube accounts
+// POST {action:"blotato_sync"}                                           (dashboard user) -> asks Blotato how its pending posts ended
 // POST {action:"token",  channel_id}                                     (publish job, x-cron-secret) -> short-lived YouTube access token
 // GitHub jobs read the cron secret from the database with their service key, then send it as x-cron-secret.
-// Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GITHUB_TOKEN, GITHUB_REPO
+// Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GITHUB_TOKEN, GITHUB_REPO, BLOTATO_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { nextFreeSlot } from "./slots.ts";
 
@@ -15,6 +17,9 @@ const CLIENT_ID = Deno.env.get("GOOGLE_CLIENT_ID") ?? "";
 const CLIENT_SECRET = Deno.env.get("GOOGLE_CLIENT_SECRET") ?? "";
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
+const BLOTATO = Deno.env.get("BLOTATO_API_KEY") ?? "";
+const BLOTATO_API = "https://backend.blotato.com/v2";
+const PLATFORMS = new Set(["youtube", "tiktok", "instagram"]);
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
@@ -42,7 +47,14 @@ function artifactInputs(job: any): Record<string, string> {
   return runId ? { run_id: runId, artifact: `video-${job.id}` } : {};
 }
 
-async function queue(jobId: string, when: string, onlyIfAuto: boolean) {
+/** Where a channel posts. A schedule saved before targets existed posts to YouTube with its one method. */
+function targetsOf(schedule: any): { platform: string; method: string; account_id: string | null }[] {
+  if (!Array.isArray(schedule.targets)) return [{ platform: "youtube", method: schedule.method, account_id: schedule.blotato_account_id || null }];
+  return schedule.targets.filter((x: any) => PLATFORMS.has(x?.platform))
+    .map((x: any) => ({ platform: x.platform, method: x.platform === "youtube" && x.method !== "blotato" ? "youtube" : "blotato", account_id: x.account_id ? String(x.account_id) : null }));
+}
+
+async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatform?: string) {
   const { data: job } = await db.from("render_jobs").select("*").eq("id", jobId).single();
   if (!job) return { error: "render not found", status: 404 };
   if (job.status !== "done") return { error: "This render isn't finished yet.", status: 400 };
@@ -52,13 +64,19 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean) {
   const { data: sched } = await db.from("publish_schedules").select("*").eq("channel_id", channelId).maybeSingle();
   const schedule = sched || DEFAULT_SCHEDULE;
   if (onlyIfAuto && !schedule.enabled) return { skipped: "auto-publish is off for this channel" };
-  if (schedule.method === "blotato" && !schedule.blotato_account_id) return { error: "Add the Blotato account ID for this channel in Automation.", status: 400 };
-  if (schedule.method === "youtube") {
+  const targets = targetsOf(schedule);
+  if (!targets.length) return { error: "This channel posts nowhere yet. Pick its accounts in Publish.", status: 400 };
+  if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account for this channel in Publish.", status: 400 };
+  if (targets.some((x) => x.method === "youtube")) {
     const { count } = await db.from("channel_tokens").select("channel_id", { count: "exact", head: true }).eq("channel_id", channelId);
     if (!count) return { error: "This channel isn't connected with Google. Connect it in Channels first.", status: 400 };
   }
-  const { data: existing } = await db.from("publish_queue").select("*").eq("render_job_id", jobId).maybeSingle();
-  if (existing && ["uploading", "scheduled", "published"].includes(existing.status)) return { row: existing, already: true };
+  const { data: existing } = await db.from("publish_queue").select("*").eq("render_job_id", jobId);
+  const isActive = (r: any) => ["queued", "uploading", "scheduled", "published"].includes(r.status);
+  const done = (existing || []).filter(isActive);
+  // a retry touches its own platform only: a post cancelled on another one stays cancelled
+  const todo = targets.filter((x) => !done.some((r: any) => r.platform === x.platform) && (!onlyPlatform || x.platform === onlyPlatform));
+  if (!todo.length) return done.length ? { row: done[0], rows: done, already: true } : { error: "This channel doesn't post there any more. Check Publish.", status: 400 };
 
   let slot: string | null = null;
   if (when === "now") slot = null;
@@ -76,16 +94,39 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean) {
 
   const { data: idea } = job.idea_id ? await db.from("ideas").select("*").eq("id", job.idea_id).single() : { data: null };
   const title = String(idea?.video_title || project?.title || job.params?.title || "New video").replace(/[<>]/g, "").slice(0, 100);
-  const row = {
-    render_job_id: jobId, channel_id: channelId, idea_id: job.idea_id || project?.idea_id || null, method: schedule.method,
-    title, description: String(idea?.video_description || "").slice(0, 4900), tags: (idea?.video_tags || []).slice(0, 30),
-    slot_at: slot, status: "queued", error: null, youtube_video_id: null, blotato_post_id: null,
-  };
-  const { data: saved, error } = await db.from("publish_queue").upsert(row, { onConflict: "render_job_id" }).select().single();
-  if (error) throw error;
-  const err = await dispatch({ queue_id: saved.id, ...artifactInputs(job) });
-  if (err) await db.from("publish_queue").update({ status: "failed", error: err }).eq("id", saved.id);
-  return { row: { ...saved, status: err ? "failed" : "queued", error: err } };
+  const rows: any[] = [];
+  for (const target of todo) {
+    const row = {
+      render_job_id: jobId, channel_id: channelId, idea_id: job.idea_id || project?.idea_id || null, method: target.method, platform: target.platform,
+      blotato_account_id: target.account_id || null, public_url: null,
+      title, description: String(idea?.video_description || "").slice(0, 4900), tags: (idea?.video_tags || []).slice(0, 30),
+      slot_at: slot, status: "queued", error: null, youtube_video_id: null, blotato_post_id: null,
+    };
+    const { data: saved, error } = await db.from("publish_queue").upsert(row, { onConflict: "render_job_id,platform" }).select().single();
+    if (error) throw error;
+    const err = await dispatch({ queue_id: saved.id, ...artifactInputs(job) });
+    if (err) await db.from("publish_queue").update({ status: "failed", error: err }).eq("id", saved.id);
+    rows.push({ ...saved, status: err ? "failed" : "queued", error: err });
+  }
+  return { row: rows[0], rows };
+}
+
+/** Blotato's answer for the posts it hasn't finished telling us about. */
+async function blotatoSync() {
+  if (!BLOTATO) return { checked: 0 };
+  const { data: pending } = await db.from("publish_queue").select("id,blotato_post_id,status,slot_at").eq("method", "blotato").not("blotato_post_id", "is", null)
+    .in("status", ["uploading", "scheduled"]).lte("slot_at", new Date().toISOString()).limit(25);
+  const { data: immediate } = await db.from("publish_queue").select("id,blotato_post_id,status,slot_at").eq("method", "blotato").not("blotato_post_id", "is", null)
+    .eq("status", "uploading").is("slot_at", null).limit(25);
+  const rows = [...(pending || []), ...(immediate || [])];
+  for (const row of rows) {
+    const r = await fetch(`${BLOTATO_API}/posts/${encodeURIComponent(row.blotato_post_id)}`, { headers: { "blotato-api-key": BLOTATO } });
+    if (!r.ok) continue;
+    const data = await r.json();
+    if (data.status === "published") await db.from("publish_queue").update({ status: "published", public_url: data.publicUrl || null }).eq("id", row.id);
+    else if (data.status === "failed") await db.from("publish_queue").update({ status: "failed", error: String(data.errorMessage || "Blotato couldn't publish this post.").slice(0, 2000) }).eq("id", row.id);
+  }
+  return { checked: rows.length };
 }
 
 Deno.serve(async (req) => {
@@ -120,14 +161,23 @@ Deno.serve(async (req) => {
 
     if (body.action === "queue") {
       if (!UUID.test(body.render_job_id || "")) return json({ error: "render_job_id required" }, 400);
-      const out: any = await queue(body.render_job_id, String(body.when || "next"), false);
+      const out: any = await queue(body.render_job_id, String(body.when || "next"), false, PLATFORMS.has(body.platform) ? body.platform : undefined);
       return json(out, out.status || 200);
     }
+    if (body.action === "blotato_accounts") {
+      if (!BLOTATO) return json({ error: "Add BLOTATO_API_KEY in Supabase Edge Function secrets.", accounts: [] }, 503);
+      const r = await fetch(`${BLOTATO_API}/users/me/accounts`, { headers: { "blotato-api-key": BLOTATO } });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) return json({ error: `Blotato ${r.status}: ${JSON.stringify(data).slice(0, 200)}`, accounts: [] }, 502);
+      const list = Array.isArray(data) ? data : data.items || data.accounts || [];
+      return json({ accounts: list.filter((x: any) => PLATFORMS.has(x.platform)).map((x: any) => ({ id: String(x.id), platform: x.platform, name: x.username || x.fullname || String(x.id) })) });
+    }
+    if (body.action === "blotato_sync") return json(await blotatoSync());
     if (body.action === "cancel") {
       if (!UUID.test(body.queue_id || "")) return json({ error: "queue_id required" }, 400);
       const { data: row } = await db.from("publish_queue").select("*").eq("id", body.queue_id).single();
       if (!row) return json({ error: "not found" }, 404);
-      if (!["queued", "failed"].includes(row.status)) return json({ error: "Already uploaded. Delete or reschedule it in YouTube Studio." }, 400);
+      if (!["queued", "failed"].includes(row.status)) return json({ error: row.method === "blotato" ? "Already sent. Cancel or change it in Blotato." : "Already uploaded. Delete or reschedule it in YouTube Studio." }, 400);
       await db.from("publish_queue").update({ status: "cancelled" }).eq("id", row.id);
       return json({ ok: true });
     }

@@ -1,4 +1,4 @@
-# YouTube Control
+# Short Viral
 
 Multi-channel YouTube research and control dashboard: keyword scores, outliers, trends,
 competitors, idea pipeline, and per-channel analytics for every channel you connect.
@@ -144,6 +144,10 @@ Secrets:
 
 Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
 Sound effects in `web/sfx/` are synthesized (no license needed). Fonts in `web/fonts/` are SIL Open Font License.
+
+Publish sets where each channel posts: YouTube directly or through Blotato, TikTok and Instagram Reels through Blotato
+(`render/blotato.mjs`). One render gets one queue row per platform. Calendar shows them all by day and asks Blotato how
+its posts ended. `BLOTATO_API_KEY` is needed in the GitHub repo secrets and the Supabase Edge Function secrets.
 
 The older one-click renderer (MoneyPrinterTurbo, `render.yml`) still works for past jobs.
 

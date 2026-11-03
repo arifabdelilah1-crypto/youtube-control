@@ -927,8 +927,12 @@ async function publishCall(body) {
   return data;
 }
 
+const PLATFORM_NAMES = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram" };
+const PLATFORM_TAGS = { youtube: "YT", tiktok: "TT", instagram: "IG" };
+
 VIEWS.automation = async () => {
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
+  const blotato = await publishCall({ action: "blotato_accounts" }).catch((e) => ({ accounts: [], error: e.message }));
   const [scheds, queue, jobs, tokens] = await Promise.all([
     q(sb.from("publish_schedules").select("*")),
     q(sb.from("publish_queue").select("*").neq("status", "cancelled").order("slot_at", { ascending: true, nullsFirst: true }).limit(200)),
@@ -963,11 +967,26 @@ VIEWS.automation = async () => {
     const sc = schedOf(c.id);
     const days = new Set(sc.days);
     const en = h("input", { type: "checkbox", checked: sc.enabled, id: `en-${c.id}` });
-    const method = h("select", { class: "field", id: `m-${c.id}` }, [["youtube", "YouTube (direct)"], ["blotato", "Blotato"]].map(([v, t]) => h("option", { value: v, selected: sc.method === v, text: t })));
-    const blot = h("input", { class: "field", id: `b-${c.id}`, value: sc.blotato_account_id || "", placeholder: "Blotato YouTube account ID" });
-    const blotWrap = h("div", { class: "field-wrap" }, h("label", { for: `b-${c.id}`, text: "Blotato account ID" }), blot);
+    // where this channel posts; a schedule from before targets existed posts to YouTube only
+    const saved = Array.isArray(sc.targets) ? sc.targets : [{ platform: "youtube", method: sc.method, account_id: sc.blotato_account_id }];
+    const savedOf = (platform) => saved.find((x) => x.platform === platform);
+    const accountMenu = (platform, id, off) => {
+      const current = savedOf(platform)?.account_id;
+      const list = blotato.accounts.filter((a) => a.platform === platform);
+      return h("select", { class: "field", id }, off ? h("option", { value: "", text: off }) : null,
+        list.map((a) => h("option", { value: a.id, selected: a.id === String(current), text: a.name })),
+        current && !list.some((a) => a.id === String(current)) ? h("option", { value: current, selected: true, text: `Account ${current} (not found in Blotato)` }) : null);
+    };
+    const yt = savedOf("youtube");
+    const method = h("select", { class: "field", id: `m-${c.id}` }, [["youtube", "Direct"], ["blotato", "Through Blotato"], ["off", "Don't post"]].map(([v, t]) => h("option", { value: v, selected: (yt ? yt.method || "youtube" : "off") === v, text: t })));
+    const blot = accountMenu("youtube", `b-${c.id}`, "Choose an account");
+    const blotWrap = h("div", { class: "field-wrap" }, h("label", { for: `b-${c.id}`, text: "YouTube account in Blotato" }), blot);
     const showBlot = () => { blotWrap.hidden = method.value !== "blotato"; };
     method.addEventListener("change", showBlot); showBlot();
+    const tiktok = accountMenu("tiktok", `tt-${c.id}`, "Don't post");
+    const insta = accountMenu("instagram", `ig-${c.id}`, "Don't post");
+    const ttPrivacy = h("select", { class: "field", id: `ttp-${c.id}` }, [["PUBLIC_TO_EVERYONE", "Public"], ["SELF_ONLY", "Only me"], ["MUTUAL_FOLLOW_FRIENDS", "Friends"], ["FOLLOWER_OF_CREATOR", "Followers"]].map(([v, t]) => h("option", { value: v, selected: (savedOf("tiktok")?.privacy || "PUBLIC_TO_EVERYONE") === v, text: t })));
+    const ttAi = h("input", { type: "checkbox", checked: savedOf("tiktok")?.ai !== false });
     const dayBtns = h("div", { class: "chips-tabs", role: "group", "aria-label": "Posting days" }, WEEKDAYS.map(([d, t]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(days.has(d)), text: t,
       onclick: (e) => { days.has(d) ? days.delete(d) : days.add(d); e.currentTarget.setAttribute("aria-pressed", String(days.has(d))); } })));
     const times = h("input", { class: "field", id: `t-${c.id}`, value: sc.times.join(", "), placeholder: "18:00, 21:00" });
@@ -981,8 +1000,14 @@ VIEWS.automation = async () => {
       const tlist = times.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
       if (tlist.some((x) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(x))) return toast("Times look like 18:00, 21:30");
       if (!days.size || !tlist.length) return toast("Pick at least one day and one time");
-      if (method.value === "blotato" && !blot.value.trim()) return toast("Add the Blotato account ID");
-      await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked, method: method.value, blotato_account_id: blot.value.trim() || null,
+      if (method.value === "blotato" && !blot.value) return toast("Choose the YouTube account in Blotato");
+      const targets = [
+        ...(method.value === "off" ? [] : [{ platform: "youtube", method: method.value, account_id: method.value === "blotato" ? blot.value : null, privacy: privacy.value, notify: notify.checked, synthetic: synth.checked }]),
+        ...(tiktok.value ? [{ platform: "tiktok", method: "blotato", account_id: tiktok.value, privacy: ttPrivacy.value, ai: ttAi.checked }] : []),
+        ...(insta.value ? [{ platform: "instagram", method: "blotato", account_id: insta.value }] : []),
+      ];
+      if (en.checked && !targets.length) return toast("Pick at least one place to post");
+      await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked, targets, method: method.value === "blotato" ? "blotato" : "youtube", blotato_account_id: method.value === "blotato" ? blot.value : null,
         days: [...days], times: tlist.map((x) => x.padStart(5, "0")), timezone: tz.value, privacy: privacy.value, category_id: cat.value,
         notify_subscribers: notify.checked, synthetic_media: synth.checked }, { onConflict: "channel_id" }));
       toast("Schedule saved"); render();
@@ -991,9 +1016,13 @@ VIEWS.automation = async () => {
       h("div", { class: "card-head" }, h("h3", { text: c.title }),
         connected.has(c.id) ? null : h("span", { class: "pill warn", title: "YouTube direct publishing needs the channel connected in Channels", text: "Not connected" })),
       h("label", { class: "pub-check", style: "font-weight:600" }, en, "Auto-publish finished renders"),
-      h("div", { class: "form-grid" }, fld(`m-${c.id}`, "Publish with", method), blotWrap),
+      h("span", { class: "ed-label", text: "Where it posts" }),
+      blotato.error ? h("p", { class: "muted small", style: "margin:0", text: `TikTok and Instagram accounts couldn't load: ${blotato.error}` }) : null,
+      !blotato.error && !blotato.accounts.some((a) => a.platform !== "youtube") ? h("p", { class: "muted small", style: "margin:0" }, "No TikTok or Instagram account yet. Connect them in ", h("a", { href: "https://my.blotato.com/accounts", target: "_blank", rel: "noopener", text: "Blotato" }), ", then reload.") : null,
+      h("div", { class: "form-grid" }, fld(`m-${c.id}`, "YouTube", method), blotWrap, fld(`tt-${c.id}`, "TikTok", tiktok), fld(`ttp-${c.id}`, "TikTok visibility", ttPrivacy), fld(`ig-${c.id}`, "Instagram Reels", insta)),
+      h("label", { class: "pub-check small" }, ttAi, "Mark TikTok posts as AI-generated"),
       h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Posting days" }), dayBtns),
-      h("div", { class: "form-grid" }, fld(`t-${c.id}`, "Times (local)", times), fld(`tz-${c.id}`, "Time zone", tz), fld(`p-${c.id}`, "Visibility", privacy), fld(`c-${c.id}`, "Category", cat)),
+      h("div", { class: "form-grid" }, fld(`t-${c.id}`, "Times (local)", times), fld(`tz-${c.id}`, "Time zone", tz), fld(`p-${c.id}`, "YouTube visibility", privacy), fld(`c-${c.id}`, "Category", cat)),
       h("label", { class: "pub-check small" }, notify, "Notify subscribers"),
       h("label", { class: "pub-check small" }, synth, "Label as altered/synthetic content (realistic AI people or events)"),
       h("div", { class: "row" }, save));
@@ -1034,12 +1063,13 @@ VIEWS.automation = async () => {
         h("span", { class: `pill ${label[r.status]?.[0] || "info"}`, text: label[r.status]?.[1] || r.status }),
         h("div", { style: "flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:4px" },
           h("div", { style: "font-weight:500", text: r.title }),
-          h("div", { class: "muted small", text: `${channelById(r.channel_id)?.title || ""} · ${r.slot_at ? inTz(r.slot_at, sc.timezone) : "as soon as uploaded"} · ${r.method === "blotato" ? "Blotato" : "YouTube"}` }),
+          h("div", { class: "muted small", text: `${channelById(r.channel_id)?.title || ""} · ${PLATFORM_NAMES[r.platform] || "YouTube"} · ${r.slot_at ? inTz(r.slot_at, sc.timezone) : "as soon as uploaded"} · ${r.method === "blotato" ? "Blotato" : "YouTube"}` }),
           r.error ? h("pre", { class: "err", text: r.error }) : null),
         h("div", { class: "row" },
+          r.public_url ? h("a", { class: "btn small", href: r.public_url, target: "_blank", rel: "noopener", text: "View post" }) : null,
           r.youtube_video_id ? h("a", { class: "btn small", href: `https://studio.youtube.com/video/${r.youtube_video_id}/edit`, target: "_blank", rel: "noopener", text: "YouTube Studio" }) : null,
           r.status === "failed" ? h("button", { class: "btn small primary", type: "button", text: "Retry", onclick: async () => {
-            try { await publishCall({ action: "queue", render_job_id: r.render_job_id, when: r.slot_at && Date.parse(r.slot_at) > Date.now() + 20 * 60e3 ? r.slot_at : "next" }); toast("Retrying"); } catch (e) { toast(e.message); } render();
+            try { await publishCall({ action: "queue", render_job_id: r.render_job_id, platform: r.platform, when: r.slot_at && Date.parse(r.slot_at) > Date.now() + 20 * 60e3 ? r.slot_at : "next" }); toast("Retrying"); } catch (e) { toast(e.message); } render();
           } }) : null,
           ["queued", "failed"].includes(r.status) ? h("button", { class: "btn small ghost", type: "button", text: "Cancel", onclick: async () => {
             try { await publishCall({ action: "cancel", queue_id: r.id }); toast("Cancelled"); } catch (e) { toast(e.message); } render();
@@ -1057,6 +1087,107 @@ VIEWS.automation = async () => {
 // ==================================================================
 // Channels
 // ==================================================================
+// ==================================================================
+// Calendar: every post by day, like Blotato's
+// ==================================================================
+const calendar = { anchor: null, mode: "month", platform: "all", status: "all", open: null };
+const POST_STATUS = { queued: ["info", "Queued"], uploading: ["info", "Uploading"], scheduled: ["warn", "Scheduled"], published: ["ok", "Published"], failed: ["crit", "Failed"] };
+const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const postTime = (r) => new Date(r.slot_at || r.created_at);
+// YouTube makes a scheduled video public by itself, without telling the app
+const postStatus = (r) => (r.status === "scheduled" && r.method !== "blotato" && r.slot_at && Date.parse(r.slot_at) <= Date.now() ? "published" : r.status);
+const postLink = (r) => r.public_url || (r.youtube_video_id ? `https://www.youtube.com/watch?v=${r.youtube_video_id}` : null);
+/** Monday of the week d is in. */
+const weekStart = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+
+VIEWS.calendar = async () => {
+  await publishCall({ action: "blotato_sync" }).catch(() => {});  // a calendar without it still shows what the app knows
+  const rows = await q(sb.from("publish_queue").select("*").neq("status", "cancelled").order("slot_at", { ascending: true, nullsFirst: false }).limit(1000));
+  if (!calendar.anchor) calendar.anchor = new Date();
+  const posts = rows.filter((r) => (state.channel === "all" || r.channel_id === state.channel)
+    && (calendar.platform === "all" || (r.platform || "youtube") === calendar.platform)
+    && (calendar.status === "all" || postStatus(r) === calendar.status));
+  const byDay = new Map();
+  for (const r of posts) { const k = dayKey(postTime(r)); byDay.set(k, [...(byDay.get(k) || []), r]); }
+  for (const list of byDay.values()) list.sort((a, b) => postTime(a) - postTime(b));
+
+  const a = calendar.anchor;
+  const first = calendar.mode === "week" ? weekStart(a) : weekStart(new Date(a.getFullYear(), a.getMonth(), 1));
+  const lastOfMonth = new Date(a.getFullYear(), a.getMonth() + 1, 0);
+  const count = calendar.mode === "week" ? 7 : Math.ceil(((lastOfMonth - first) / 864e5 + 1) / 7) * 7;
+  const days = Array.from({ length: count }, (_, i) => new Date(first.getFullYear(), first.getMonth(), first.getDate() + i));
+  const title = calendar.mode === "week"
+    ? `${days[0].toLocaleDateString(undefined, { day: "numeric", month: "short" })} – ${days[6].toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}`
+    : a.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const move = (step) => {
+    calendar.anchor = calendar.mode === "week" ? new Date(a.getFullYear(), a.getMonth(), a.getDate() + step * 7) : new Date(a.getFullYear(), a.getMonth() + step, 1);
+    calendar.open = null; render();
+  };
+  const today = dayKey(new Date());
+
+  const chip = (r) => {
+    const status = postStatus(r);
+    const platform = r.platform || "youtube";
+    return h("button", { class: `cal-post ${POST_STATUS[status]?.[0] || "info"}`, type: "button", "aria-expanded": calendar.open === r.id,
+      "aria-label": `${POST_STATUS[status]?.[1] || status}, ${PLATFORM_NAMES[platform]}, ${r.title}`,
+      onclick: () => { calendar.open = calendar.open === r.id ? null : r.id; render(); } },
+      h("span", { class: "cal-tag", text: PLATFORM_TAGS[platform] }),
+      h("span", { class: "cal-time", text: postTime(r).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) }),
+      h("span", { class: "cal-title", dir: "auto", text: r.title }));
+  };
+  const grid = h("div", { class: `cal-grid cal-${calendar.mode}` },
+    days.slice(0, 7).map((d) => h("div", { class: "cal-head", "aria-hidden": "true", text: d.toLocaleDateString(undefined, { weekday: "short" }) })),
+    days.map((d) => {
+      const k = dayKey(d);
+      const list = byDay.get(k) || [];
+      return h("div", { class: `cal-day${d.getMonth() !== a.getMonth() && calendar.mode === "month" ? " other" : ""}${k === today ? " today" : ""}${list.length ? "" : " no-posts"}`, role: "group", "aria-label": d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }) },
+        h("div", { class: "cal-date" }, h("span", { class: "cal-long", text: d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long" }) }), h("span", { class: "cal-short", text: String(d.getDate()) })),
+        list.map(chip));
+    }));
+
+  const openPost = rows.find((r) => r.id === calendar.open);
+  const detail = () => {
+    const r = openPost;
+    const status = postStatus(r);
+    const link = postLink(r);
+    return h("section", { class: "card cal-detail", "aria-label": "Post details" },
+      h("div", { class: "card-head" }, h("h2", { dir: "auto", text: r.title }), h("span", { class: `pill ${POST_STATUS[status]?.[0] || "info"}`, text: POST_STATUS[status]?.[1] || status })),
+      h("div", { class: "muted small", text: [PLATFORM_NAMES[r.platform || "youtube"], channelById(r.channel_id)?.title, postTime(r).toLocaleString(undefined, { dateStyle: "full", timeStyle: "short" }), r.method === "blotato" ? "through Blotato" : "direct"].filter(Boolean).join(" · ") }),
+      r.description ? h("p", { class: "small cal-text", dir: "auto", text: r.description }) : null,
+      r.error ? h("pre", { class: "err", text: r.error }) : null,
+      h("div", { class: "row" },
+        link ? h("a", { class: "btn small primary", href: link, target: "_blank", rel: "noopener", text: "View post" }) : null,
+        r.youtube_video_id ? h("a", { class: "btn small", href: `https://studio.youtube.com/video/${r.youtube_video_id}/edit`, target: "_blank", rel: "noopener", text: "YouTube Studio" }) : null,
+        r.method === "blotato" && status === "scheduled" ? h("a", { class: "btn small", href: "https://my.blotato.com/calendar", target: "_blank", rel: "noopener", text: "Open in Blotato" }) : null,
+        r.status === "failed" ? h("button", { class: "btn small primary", type: "button", text: "Retry", onclick: async () => {
+          try { await publishCall({ action: "queue", render_job_id: r.render_job_id, platform: r.platform, when: r.slot_at && Date.parse(r.slot_at) > Date.now() + 20 * 60e3 ? r.slot_at : "next" }); toast("Queued again"); } catch (e) { toast(e.message); } render();
+        } }) : null,
+        ["queued", "failed"].includes(r.status) ? h("button", { class: "btn small ghost", type: "button", text: "Cancel post", onclick: async () => {
+          try { await publishCall({ action: "cancel", queue_id: r.id }); toast("Cancelled"); calendar.open = null; } catch (e) { toast(e.message); } render();
+        } }) : null,
+        r.run_url ? h("a", { class: "btn small ghost", href: r.run_url, target: "_blank", rel: "noopener", text: "Log" }) : null));
+  };
+
+  const menu = (label, value, options, onchange) => h("label", { class: "cal-filter" }, h("span", { class: "muted small", text: label }),
+    h("select", { class: "field", onchange: (e) => onchange(e.target.value) }, options.map(([v, t]) => h("option", { value: v, selected: v === value, text: t }))));
+  const toolbar = h("div", { class: "cal-bar" },
+    h("div", { class: "row" },
+      h("button", { class: "btn small", type: "button", "aria-label": calendar.mode === "week" ? "Previous week" : "Previous month", text: "‹", onclick: () => move(-1) }),
+      h("button", { class: "btn small", type: "button", text: "Today", onclick: () => { calendar.anchor = new Date(); calendar.open = null; render(); } }),
+      h("button", { class: "btn small", type: "button", "aria-label": calendar.mode === "week" ? "Next week" : "Next month", text: "›", onclick: () => move(1) }),
+      h("h2", { class: "cal-month", "aria-live": "polite", text: title })),
+    h("div", { class: "row" },
+      h("div", { class: "chips-tabs", role: "group", "aria-label": "View" }, [["month", "Month"], ["week", "Week"]].map(([v, t]) => h("button", { class: "chip-tab", type: "button", "aria-pressed": calendar.mode === v, text: t, onclick: () => { calendar.mode = v; render(); } }))),
+      menu("Platform", calendar.platform, [["all", "All"], ...Object.entries(PLATFORM_NAMES)], (v) => { calendar.platform = v; calendar.open = null; render(); }),
+      menu("Status", calendar.status, [["all", "All"], ...Object.entries(POST_STATUS).map(([k, [, t]]) => [k, t])], (v) => { calendar.status = v; calendar.open = null; render(); })));
+
+  const shown = days.reduce((n, d) => n + (byDay.get(dayKey(d))?.length || 0), 0);
+  if (rows.some((r) => ["queued", "uploading"].includes(r.status))) state.timer = setInterval(() => render(), 30000);
+  return [pageHead("Calendar", "Every post in one place: scheduled, published or failed."),
+    h("section", { class: "card" }, toolbar, grid, shown ? null : h("p", { class: "muted small cal-none", text: "No posts here. Finished videos appear once you schedule them in Publish." })),
+    openPost ? detail() : null];
+};
+
 VIEWS.channels = async () => {
   const [rows, snaps, vids] = await Promise.all([
     q(sb.rpc("channel_overview", { p_days: 28 })),
