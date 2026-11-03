@@ -190,7 +190,7 @@ const FX_SLIDERS = [
 function ListenButton({ language, voice, style, toast }) {
   const [on, setOn] = useState(false);
   const click = async () => {
-    try { setOn(await playSample(sampleUrl(language, voice, style))); } catch { setOn(false); toast("This sample isn't available yet."); }
+    try { setOn(await playSample(sampleUrl(language, voice, style))); } catch (e) { setOn(false); if (e.name !== "AbortError") toast("This sample isn't available yet."); }
   };
   useEffect(() => { setOn(false); }, [language, voice, style]);
   return <button type="button" className="btn small" aria-pressed={on} onClick={click}>{on ? "■ Stop" : "▶ Listen"}</button>;

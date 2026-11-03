@@ -130,8 +130,8 @@ const MARKETS = [["GLOBAL", "Global"], ["US", "United States"], ["GB", "United K
 const LANGS = [["en", "English"], ["fr", "French"], ["ar", "Arabic"], ["es", "Spanish"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"], ["nl", "Dutch"]];
 const marketName = (m) => (MARKETS.find(([k]) => k === m) || [m, m])[1];
 const VOICES = {
-  en: [["en-US-AndrewNeural-Male", "Andrew (US, male)"], ["en-US-BrianNeural-Male", "Brian (US, male)"], ["en-US-ChristopherNeural-Male", "Christopher (US, male)"],
-       ["en-US-GuyNeural-Male", "Guy (US, male)"], ["en-US-AvaNeural-Female", "Ava (US, female)"], ["en-US-JennyNeural-Female", "Jenny (US, female)"],
+  en: [["en-US-AndrewNeural-Male", "Andrew (US, male) · warm, confident"], ["en-US-BrianNeural-Male", "Brian (US, male) · casual, sincere"], ["en-US-ChristopherNeural-Male", "Christopher (US, male) · reliable, authority"],
+       ["en-US-GuyNeural-Male", "Guy (US, male) · passion"], ["en-US-AvaNeural-Female", "Ava (US, female) · expressive, caring"], ["en-US-JennyNeural-Female", "Jenny (US, female) · friendly, comforting"],
        ["en-GB-RyanNeural-Male", "Ryan (UK, male)"], ["en-GB-SoniaNeural-Female", "Sonia (UK, female)"]],
   fr: [["fr-FR-HenriNeural-Male", "Henri (male)"], ["fr-FR-RemyMultilingualNeural-Male", "Rémy (male)"], ["fr-FR-DeniseNeural-Female", "Denise (female)"],
        ["fr-FR-VivienneMultilingualNeural-Female", "Vivienne (female)"]],
@@ -747,7 +747,7 @@ async function studioEditor(ideaId) {
   const pickedFx = () => (f.voiceStyle.value === "custom" ? startFx : presetFx(f.voiceStyle.value));
   const listen = h("button", { class: "btn small", type: "button", text: "▶ Listen", onclick: async () => {
     try { listen.textContent = (await playSample(sampleUrl(f.language.value, f.voice.value, f.voiceStyle.value))) ? "■ Stop" : "▶ Listen"; }
-    catch { listen.textContent = "▶ Listen"; toast("This sample isn't available yet."); }
+    catch (e) { listen.textContent = "▶ Listen"; if (e.name !== "AbortError") toast("This sample isn't available yet."); }
   } });
   for (const el of [f.language, f.voice, f.voiceStyle]) el.addEventListener("change", () => { listen.textContent = "▶ Listen"; });
   f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9)"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
