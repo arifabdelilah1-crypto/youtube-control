@@ -6,7 +6,7 @@ import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
 import { PRESETS, playSample, presetFx, sampleUrl, voiceFx } from "../web/voicefx.js";
 import { Thumbnail } from "../video/Thumbnail.jsx";
-import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, THUMBNAIL_STYLES, buildProps, creditsText, foundMusic, hasThumbnail, mergeSettings, thumbnailKey, thumbnailProps, thumbnailSize, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
+import { DEFAULT_SETTINGS, MAX_SCENE_SOUNDS, MUSIC_UNDER_VOICE, SOUND_BASE, THUMBNAIL_STYLES, buildProps, creditsText, foundMusic, hasThumbnail, mergeSettings, sceneSounds, thumbnailKey, thumbnailProps, thumbnailSize, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
   ["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
@@ -121,7 +121,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         </button>
         <div className="ed-scene-meta">
           <span className={`pill ${voiceState[0]}`}>{voiceState[1]}</span>
-          <span className="muted small">{clip.type === "card" ? "No clip" : clip.source === "youtube" ? "YouTube CC · file needed" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license || clip.credit?.license ? ` · ${clip.license || clip.credit.license}` : ""}`}</span>
+          <span className="muted small">{clip.type === "card" ? "No clip" : clip.source === "youtube" ? "YouTube CC · file needed" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license || clip.credit?.license ? ` · ${clip.license || clip.credit.license}` : ""}`}{sceneSounds(scene).length ? ` · ${sceneSounds(scene).length} sound${sceneSounds(scene).length > 1 ? "s" : ""}` : ""}</span>
         </div>
         <div className="ed-scene-tools">
           <button type="button" className="btn small ghost" disabled={index === 0} onClick={() => onMove(-1)} aria-label="Move up">↑</button>
@@ -745,6 +745,87 @@ function MusicPanel({ sb, project, tracks, signed, sign, onSettings }) {
   );
 }
 
+const SOUND_PAGE = 30;
+
+/** Sound effects: the library (web/sfx-library.json, files on the VDS) and what each scene plays. */
+function SoundsPanel({ scenes, currentScene, onSounds, onSeek }) {
+  const [library, setLibrary] = useState(null);
+  const [error, setError] = useState("");
+  const [picked, setPicked] = useState(null);  // scene id; follows the preview until one is chosen
+  const [category, setCategory] = useState("");
+  const [q, setQ] = useState("");
+  const [shown, setShown] = useState(SOUND_PAGE);
+  useEffect(() => {
+    fetch("sfx-library.json").then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); }).then(setLibrary)
+      .catch((e) => setError(`The sound library didn't load (${e.message}). Reload the page to try again.`));
+  }, []);
+  const scene = scenes.find((s) => s.id === picked) || scenes[Math.max(currentScene, 0)] || scenes[0];
+  const index = scenes.indexOf(scene);
+  const placed = sceneSounds(scene);
+  const set = (next) => { setPicked(scene.id); onSounds(scene.id, next); };
+  const patch = (i, change) => set(placed.map((x, j) => (j === i ? { ...x, ...change } : x)));
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const results = (library?.sounds || []).filter((x) => (!category || x.category === category) && words.every((w) => `${x.title} ${x.keywords || ""} ${x.category}`.toLowerCase().includes(w)));
+  const categories = [...new Set((library?.sounds || []).map((x) => x.category))];
+  const full = placed.length >= MAX_SCENE_SOUNDS;
+  if (!scene) return <div className="ed-panel"><p className="muted small">Add a scene first.</p></div>;
+  return (
+    <div className="ed-panel">
+      <h3>Sounds on a scene</h3>
+      <Field label="Scene">
+        <select className="field" value={scene.id} onChange={(e) => setPicked(e.target.value)}>
+          {scenes.map((s, i) => <option key={s.id} value={s.id}>{`${i + 1}. ${s.text.slice(0, 50)}${sceneSounds(s).length ? ` (${sceneSounds(s).length} sound${sceneSounds(s).length > 1 ? "s" : ""})` : ""}`}</option>)}
+        </select>
+      </Field>
+      {!placed.length ? <p className="muted small">No sound on scene {index + 1} yet. Pick one below.</p> : null}
+      {placed.map((x, i) => (
+        <div key={`${x.id}-${i}`} className="ed-music-track picked">
+          <div className="ed-music-info">
+            <strong>{x.title}</strong>
+            <span className="muted small">{fmtS(x.duration)}</span>
+          </div>
+          <Field label={`Level · ${Math.round(Number(x.volume ?? 0.6) * 100)}%`}>
+            <input type="range" min="0" max="1" step="0.05" value={x.volume ?? 0.6} aria-label={`${x.title} level`} onChange={(e) => patch(i, { volume: Number(e.target.value) })} />
+          </Field>
+          <Field label="Start after (seconds)">
+            <input className="field ed-trim" type="number" min="0" step="0.1" value={x.at ?? 0} aria-label={`${x.title} start`} onChange={(e) => patch(i, { at: Math.max(0, Number(e.target.value) || 0) })} />
+          </Field>
+          <label className="row ed-check"><input type="checkbox" checked={x.cut !== false} onChange={(e) => patch(i, { cut: e.target.checked })} /> Stop when the scene ends</label>
+          <button type="button" className="btn small ghost" onClick={() => set(placed.filter((_, j) => j !== i))}>Remove</button>
+        </div>
+      ))}
+      {placed.length ? <button type="button" className="btn small" onClick={() => { setPicked(scene.id); onSeek(index); }}>Hear scene {index + 1}</button> : null}
+      <h3>Sound library</h3>
+      {error ? <p className="muted small" role="alert">{error}</p> : null}
+      {!library && !error ? <p className="muted small" role="status">Loading sounds…</p> : null}
+      {library ? (
+        <div className="ed-music-search">
+          <div className="ed-music-moods">
+            <button type="button" className={`btn small${!category ? " primary" : ""}`} aria-pressed={!category} onClick={() => { setCategory(""); setShown(SOUND_PAGE); }}>All</button>
+            {categories.map((c) => <button key={c} type="button" className={`btn small${category === c ? " primary" : ""}`} aria-pressed={category === c} onClick={() => { setCategory(c); setShown(SOUND_PAGE); }}>{c}</button>)}
+          </div>
+          <div className="row">
+            <input className="field ed-music-q" type="search" aria-label="Search sounds" placeholder="Type a word in English: scream, rain, ghost…" value={q} onChange={(e) => { setQ(e.target.value); setShown(SOUND_PAGE); }} />
+          </div>
+          <p className="muted small" role="status">{results.length ? `${results.length} sound${results.length > 1 ? "s" : ""}, free to use with no credit (CC0).` : "No sound found. Try another word."}</p>
+          {results.slice(0, shown).map((x) => (
+            <div key={x.id} className="ed-music-track">
+              <div className="ed-music-info">
+                <strong>{x.title}</strong>
+                <span className="muted small">{x.category} · {fmtS(x.duration)}</span>
+              </div>
+              <audio controls preload="none" src={`${SOUND_BASE}${x.id}.mp3`} onPlay={playOnlyThis} />
+              <button type="button" className="btn small primary" disabled={full} title={full ? `A scene can have ${MAX_SCENE_SOUNDS} sounds` : undefined}
+                onClick={() => set([...placed, { id: x.id, title: x.title, url: `${SOUND_BASE}${x.id}.mp3`, duration: x.duration, volume: 0.6, at: 0, cut: true }])}>Add to scene {index + 1}</button>
+            </div>
+          ))}
+          {results.length > shown ? <button type="button" className="btn small" onClick={() => setShown(shown + SOUND_PAGE)}>More sounds</button> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------
 async function saveCredits(sb, ideaId, credits) {
   const { data, error } = await sb.from("ideas").select("video_description").eq("id", ideaId).maybeSingle();
@@ -1084,6 +1165,7 @@ function Editor({ ctx }) {
               controls
               clickToPlay
               acknowledgeRemotionLicense
+              numberOfSharedAudioTags={24}
               style={{ width: "100%", height: "100%" }}
             />
           </div>
@@ -1096,7 +1178,7 @@ function Editor({ ctx }) {
 
         <section className="ed-side">
           <div className="tabs" role="tablist">
-            {[["scenes", `Scenes (${scenes.length})`], ["style", "Style"], ["music", "Music"], ["thumbnail", "Thumbnail"], ["publish", "Publish"]].map(([k, t]) => (
+            {[["scenes", `Scenes (${scenes.length})`], ["style", "Style"], ["music", "Music"], ["sounds", "Sounds"], ["thumbnail", "Thumbnail"], ["publish", "Publish"]].map(([k, t]) => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{t}</button>
             ))}
           </div>
@@ -1118,6 +1200,8 @@ function Editor({ ctx }) {
           {tab === "publish" ? <PublishPanel sb={sb} project={project} jobs={jobs} scenes={scenes} stale={stale} toast={toast} onProject={saveProject} onRender={() => setCheck(issues)} /> : null}
           {tab === "thumbnail" ? <ThumbnailPanel sb={sb} project={project} scenes={scenes} signed={signed} sign={sign} toast={toast} creating={!!creatingThumb} onCreate={createThumbnail} onThumbnail={(thumbnail) => saveProject({ settings: { ...project.settings, thumbnail } })} /> : null}
           {tab === "music" ? <MusicPanel sb={sb} project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
+          {tab === "sounds" ? <SoundsPanel scenes={scenes} currentScene={currentScene} onSounds={(id, sounds) => patchScene(id, { sounds })}
+            onSeek={(i) => { const p = props.scenes[i]; if (p && player.current) { player.current.seekTo(p.from); player.current.play(); } }} /> : null}
         </section>
       </div>
 

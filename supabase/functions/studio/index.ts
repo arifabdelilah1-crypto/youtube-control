@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
         const clip = keepClip ? prev.clip : null;  // picked below so scenes don't repeat the same clip
         const keepVoice = sameVoice && prev?.voice_path && prev.voice_text === p.text;
         return {
-          project_id: projectId, idx, text: p.text, terms, title, footage, card, clip, candidates,
+          project_id: projectId, idx, text: p.text, terms, title, footage, card, clip, candidates, sounds: prev?.sounds || [],
           voice_path: keepVoice ? prev.voice_path : null, voice_text: keepVoice ? prev.voice_text : null,
           voice_duration: keepVoice ? prev.voice_duration : null, words: keepVoice ? prev.words : null,
         };

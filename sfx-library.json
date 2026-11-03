@@ -1,0 +1,3044 @@
+{
+"license": "CC0 1.0",
+"source": "https://kmontesdev.itch.io/fantasy-ambient-sound-effects-pack-cc0",
+"sounds": [
+{
+"id": "cave-2-079eb",
+"title": "Cave 2",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "cave-ambience-creepy-5c035",
+"title": "Cave Ambience Creepy",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "cave-ambience-drips-12506",
+"title": "Cave Ambience Drips",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "cave-ambience-wind-73326",
+"title": "Cave Ambience Wind",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "cave-dark-01-fffb9",
+"title": "Cave Dark 01",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "cave-evil-whispers-4c471",
+"title": "Cave Evil Whispers",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "demon-claw-07701",
+"title": "Demon claw",
+"category": "Horror",
+"duration": 0.7,
+"keywords": "demon monsters"
+},
+{
+"id": "demon-movement-r-e57e3",
+"title": "Demon movement r",
+"category": "Horror",
+"duration": 0.8,
+"keywords": "demon monsters"
+},
+{
+"id": "demon-vocal-a-3ebc9",
+"title": "Demon vocal a",
+"category": "Horror",
+"duration": 0.8,
+"keywords": "demon monsters"
+},
+{
+"id": "disparo-flama-arma-e02d6",
+"title": "Disparo flama Arma",
+"category": "Horror",
+"duration": 1.6,
+"keywords": "demon monsters"
+},
+{
+"id": "drips-cave-cavern-2b-d4e8a",
+"title": "Drips Cave Cavern 2B",
+"category": "Horror",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "enemy-walker-bug-detect-e7cb1",
+"title": "Enemy Walker Bug Detect",
+"category": "Horror",
+"duration": 0.7,
+"keywords": "ghoul monsters"
+},
+{
+"id": "enemy-walker-bug-landfoliage-02493",
+"title": "Enemy Walker Bug LandFoliage",
+"category": "Horror",
+"duration": 0.8,
+"keywords": "demon monsters"
+},
+{
+"id": "enemy-wormboss-generic-damage-9b515",
+"title": "Enemy WormBoss Generic Damage",
+"category": "Horror",
+"duration": 0.9,
+"keywords": "demon monsters"
+},
+{
+"id": "ghost-attack-a-25ff4",
+"title": "Ghost attack a",
+"category": "Horror",
+"duration": 0.7,
+"keywords": "ghost monsters"
+},
+{
+"id": "ghost-attack-b-93f3d",
+"title": "Ghost attack b",
+"category": "Horror",
+"duration": 0.7,
+"keywords": "ghost monsters"
+},
+{
+"id": "ghost-death-476e5",
+"title": "Ghost death",
+"category": "Horror",
+"duration": 1.7,
+"keywords": "ghost monsters"
+},
+{
+"id": "ghost-movement-85f72",
+"title": "Ghost movement",
+"category": "Horror",
+"duration": 0.9,
+"keywords": "ghost monsters"
+},
+{
+"id": "ghost-vocal-a-37a5a",
+"title": "Ghost vocal a",
+"category": "Horror",
+"duration": 1.6,
+"keywords": "ghost monsters"
+},
+{
+"id": "ghost-vocal-b-12f9a",
+"title": "Ghost vocal b",
+"category": "Horror",
+"duration": 1.7,
+"keywords": "ghost monsters"
+},
+{
+"id": "ghoul-bite-c1426",
+"title": "Ghoul bite",
+"category": "Horror",
+"duration": 0.5,
+"keywords": "ghoul monsters"
+},
+{
+"id": "ghoul-claw-3be34",
+"title": "Ghoul claw",
+"category": "Horror",
+"duration": 0.4,
+"keywords": "ghoul monsters"
+},
+{
+"id": "ghoul-death-39a1f",
+"title": "Ghoul death",
+"category": "Horror",
+"duration": 1.8,
+"keywords": "ghoul monsters"
+},
+{
+"id": "ghoul-movement-l-34145",
+"title": "Ghoul movement l",
+"category": "Horror",
+"duration": 0.4,
+"keywords": "ghoul monsters"
+},
+{
+"id": "ghoul-movement-r-36200",
+"title": "Ghoul movement r",
+"category": "Horror",
+"duration": 0.4,
+"keywords": "ghoul monsters"
+},
+{
+"id": "ghoul-vocal-a-823d6",
+"title": "Ghoul vocal a",
+"category": "Horror",
+"duration": 1.0,
+"keywords": "ghoul monsters"
+},
+{
+"id": "monster-footsteps-1-18449",
+"title": "Monster Footsteps 1",
+"category": "Horror",
+"duration": 1.3,
+"keywords": "footsteps"
+},
+{
+"id": "monster-footsteps-2-c849e",
+"title": "Monster Footsteps 2",
+"category": "Horror",
+"duration": 1.1,
+"keywords": "footsteps"
+},
+{
+"id": "monster-footsteps-3-b66d1",
+"title": "Monster Footsteps 3",
+"category": "Horror",
+"duration": 1.2,
+"keywords": "footsteps"
+},
+{
+"id": "monster-footsteps-4-9ebc4",
+"title": "Monster Footsteps 4",
+"category": "Horror",
+"duration": 1.2,
+"keywords": "footsteps"
+},
+{
+"id": "monster-footsteps-5-17ed2",
+"title": "Monster Footsteps 5",
+"category": "Horror",
+"duration": 1.2,
+"keywords": "footsteps"
+},
+{
+"id": "monster-footsteps-6-8db1f",
+"title": "Monster Footsteps 6",
+"category": "Horror",
+"duration": 1.3,
+"keywords": "footsteps"
+},
+{
+"id": "muerte-001-69add",
+"title": "Muerte 001",
+"category": "Horror",
+"duration": 1.7,
+"keywords": "demon monsters"
+},
+{
+"id": "alas-pesadas-01-e80fa",
+"title": "Alas pesadas 01",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "alas-pesadas-02-38027",
+"title": "Alas pesadas 02",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "dragon-01-e25ef",
+"title": "Dragon 01",
+"category": "Monsters",
+"duration": 5.2,
+"keywords": "dragon"
+},
+{
+"id": "dragon-02-2e314",
+"title": "Dragon 02",
+"category": "Monsters",
+"duration": 13.2,
+"keywords": "dragon"
+},
+{
+"id": "dragon-03-47c94",
+"title": "Dragon 03",
+"category": "Monsters",
+"duration": 5.8,
+"keywords": "dragon"
+},
+{
+"id": "dragon-04-e060d",
+"title": "Dragon 04",
+"category": "Monsters",
+"duration": 6.0,
+"keywords": "dragon"
+},
+{
+"id": "dragon-05-a99ef",
+"title": "Dragon 05",
+"category": "Monsters",
+"duration": 11.1,
+"keywords": "dragon"
+},
+{
+"id": "dragon-06-df27b",
+"title": "Dragon 06",
+"category": "Monsters",
+"duration": 6.3,
+"keywords": "dragon"
+},
+{
+"id": "dragon-07-44f58",
+"title": "Dragon 07",
+"category": "Monsters",
+"duration": 2.8,
+"keywords": "dragon"
+},
+{
+"id": "dragon-08-8bdc9",
+"title": "Dragon 08",
+"category": "Monsters",
+"duration": 3.6,
+"keywords": "dragon"
+},
+{
+"id": "dragon-09-e48a9",
+"title": "Dragon 09",
+"category": "Monsters",
+"duration": 1.9,
+"keywords": "dragon"
+},
+{
+"id": "dragon-10-a139c",
+"title": "Dragon 10",
+"category": "Monsters",
+"duration": 3.7,
+"keywords": "dragon"
+},
+{
+"id": "dragon-11-e9497",
+"title": "Dragon 11",
+"category": "Monsters",
+"duration": 5.1,
+"keywords": "dragon"
+},
+{
+"id": "dragon-12-ca338",
+"title": "Dragon 12",
+"category": "Monsters",
+"duration": 10.2,
+"keywords": "dragon"
+},
+{
+"id": "dragon-13-1c3d8",
+"title": "Dragon 13",
+"category": "Monsters",
+"duration": 10.8,
+"keywords": "dragon"
+},
+{
+"id": "dragon-14-e43e4",
+"title": "Dragon 14",
+"category": "Monsters",
+"duration": 6.7,
+"keywords": "dragon"
+},
+{
+"id": "dragon-15-c4b79",
+"title": "Dragon 15",
+"category": "Monsters",
+"duration": 5.4,
+"keywords": "dragon"
+},
+{
+"id": "dragon-16-cc753",
+"title": "Dragon 16",
+"category": "Monsters",
+"duration": 5.9,
+"keywords": "dragon"
+},
+{
+"id": "dragon-17-a7884",
+"title": "Dragon 17",
+"category": "Monsters",
+"duration": 1.4,
+"keywords": "dragon"
+},
+{
+"id": "dragon-18-3000a",
+"title": "Dragon 18",
+"category": "Monsters",
+"duration": 2.3,
+"keywords": "dragon"
+},
+{
+"id": "dragon-19-04974",
+"title": "Dragon 19",
+"category": "Monsters",
+"duration": 7.7,
+"keywords": "dragon"
+},
+{
+"id": "dragon-20-5083f",
+"title": "Dragon 20",
+"category": "Monsters",
+"duration": 3.4,
+"keywords": "dragon"
+},
+{
+"id": "dragon-21-69f29",
+"title": "Dragon 21",
+"category": "Monsters",
+"duration": 6.1,
+"keywords": "dragon"
+},
+{
+"id": "dragon-22-31a8e",
+"title": "Dragon 22",
+"category": "Monsters",
+"duration": 16.2,
+"keywords": "dragon"
+},
+{
+"id": "dragon-23-ec5fc",
+"title": "Dragon 23",
+"category": "Monsters",
+"duration": 2.7,
+"keywords": "dragon"
+},
+{
+"id": "dragon-24-96474",
+"title": "Dragon 24",
+"category": "Monsters",
+"duration": 4.7,
+"keywords": "dragon"
+},
+{
+"id": "dragon-25-c6286",
+"title": "Dragon 25",
+"category": "Monsters",
+"duration": 2.3,
+"keywords": "dragon"
+},
+{
+"id": "dragon-26-c3955",
+"title": "Dragon 26",
+"category": "Monsters",
+"duration": 3.0,
+"keywords": "dragon"
+},
+{
+"id": "dragon-27-98b41",
+"title": "Dragon 27",
+"category": "Monsters",
+"duration": 3.3,
+"keywords": "dragon"
+},
+{
+"id": "dragon-28-feb9c",
+"title": "Dragon 28",
+"category": "Monsters",
+"duration": 3.6,
+"keywords": "dragon"
+},
+{
+"id": "dragon-29-1c6e6",
+"title": "Dragon 29",
+"category": "Monsters",
+"duration": 3.4,
+"keywords": "dragon"
+},
+{
+"id": "dragon-30-ffea7",
+"title": "Dragon 30",
+"category": "Monsters",
+"duration": 3.2,
+"keywords": "dragon"
+},
+{
+"id": "dragon-31-bfdfe",
+"title": "Dragon 31",
+"category": "Monsters",
+"duration": 30.0,
+"keywords": "dragon"
+},
+{
+"id": "elemental-earth-death-873a9",
+"title": "Elemental earth death",
+"category": "Monsters",
+"duration": 1.4,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "elemental-earth-movement-l-64ae3",
+"title": "Elemental earth movement l",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "elemental-earth-movement-r-1da19",
+"title": "Elemental earth movement r",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "elemental-earth-vocal-a-edd25",
+"title": "Elemental earth vocal a",
+"category": "Monsters",
+"duration": 0.6,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "elemental-earth-vocal-b-ee5f2",
+"title": "Elemental earth vocal b",
+"category": "Monsters",
+"duration": 0.6,
+"keywords": "earth elemental monsters"
+},
+{
+"id": "elemental-fire-attack-a-23e88",
+"title": "Elemental fire attack a",
+"category": "Monsters",
+"duration": 0.8,
+"keywords": "fire elemental monsters"
+},
+{
+"id": "elemental-fire-attack-b-56c18",
+"title": "Elemental fire attack b",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "fire elemental monsters"
+},
+{
+"id": "elemental-fire-death-3008a",
+"title": "Elemental fire death",
+"category": "Monsters",
+"duration": 1.6,
+"keywords": "fire elemental monsters"
+},
+{
+"id": "elemental-fire-movement-loop-776db",
+"title": "Elemental fire movement loop",
+"category": "Monsters",
+"duration": 2.5,
+"keywords": "fire elemental monsters"
+},
+{
+"id": "elemental-fire-vocal-a-2d62b",
+"title": "Elemental fire vocal a",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "fire elemental monsters"
+},
+{
+"id": "elemental-fire-vocal-b-e81ff",
+"title": "Elemental fire vocal b",
+"category": "Monsters",
+"duration": 1.0,
+"keywords": "fire elemental monsters"
+},
+{
+"id": "enemigo-embiste-a-zand-002-6873b",
+"title": "Enemigo embiste a Zand 002",
+"category": "Monsters",
+"duration": 0.3,
+"keywords": "minotaur monsters"
+},
+{
+"id": "enemy-walker-rock-detect-7b8d1",
+"title": "Enemy Walker Rock Detect",
+"category": "Monsters",
+"duration": 1.8,
+"keywords": "giant monsters"
+},
+{
+"id": "enemy-walker-rock-grunts-01-7b723",
+"title": "Enemy Walker Rock Grunts 01",
+"category": "Monsters",
+"duration": 0.9,
+"keywords": "giant monsters"
+},
+{
+"id": "enemy-walker-rock-grunts-02-043e8",
+"title": "Enemy Walker Rock Grunts 02",
+"category": "Monsters",
+"duration": 1.1,
+"keywords": "giant monsters"
+},
+{
+"id": "enemy-walker-rock-landrock-5cf12",
+"title": "Enemy Walker Rock LandRock",
+"category": "Monsters",
+"duration": 1.7,
+"keywords": "giant monsters"
+},
+{
+"id": "giant-attack-a-65283",
+"title": "Giant attack a",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "giant monsters"
+},
+{
+"id": "giant-attack-b-a9623",
+"title": "Giant attack b",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "giant monsters"
+},
+{
+"id": "giant-movement-r-825f1",
+"title": "Giant movement r",
+"category": "Monsters",
+"duration": 1.7,
+"keywords": "giant monsters"
+},
+{
+"id": "goblin-death-2059e",
+"title": "Goblin death",
+"category": "Monsters",
+"duration": 1.0,
+"keywords": "goblin monsters"
+},
+{
+"id": "goblin-movement-l-7479c",
+"title": "Goblin movement l",
+"category": "Monsters",
+"duration": 0.2,
+"keywords": "goblin monsters"
+},
+{
+"id": "goblin-movement-r-20976",
+"title": "Goblin movement r",
+"category": "Monsters",
+"duration": 0.2,
+"keywords": "goblin monsters"
+},
+{
+"id": "goblin-vocal-a-2bd53",
+"title": "Goblin vocal a",
+"category": "Monsters",
+"duration": 0.4,
+"keywords": "goblin monsters"
+},
+{
+"id": "goblin-vocal-b-ca468",
+"title": "Goblin vocal b",
+"category": "Monsters",
+"duration": 0.4,
+"keywords": "goblin monsters"
+},
+{
+"id": "horse-death-fcc53",
+"title": "Horse death",
+"category": "Monsters",
+"duration": 1.5,
+"keywords": "horse monsters"
+},
+{
+"id": "horse-run-loop-3d97a",
+"title": "Horse run loop",
+"category": "Monsters",
+"duration": 1.8,
+"keywords": "horse monsters"
+},
+{
+"id": "horse-vocal-a-25161",
+"title": "Horse vocal a",
+"category": "Monsters",
+"duration": 1.9,
+"keywords": "horse monsters"
+},
+{
+"id": "horse-vocal-b-f006c",
+"title": "Horse vocal b",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "horse monsters"
+},
+{
+"id": "horse-walk-loop-c71c3",
+"title": "Horse walk loop",
+"category": "Monsters",
+"duration": 1.3,
+"keywords": "horse monsters"
+},
+{
+"id": "minotaur-death-ec05a",
+"title": "Minotaur death",
+"category": "Monsters",
+"duration": 1.3,
+"keywords": "minotaur monsters"
+},
+{
+"id": "minotaur-gore-a165b",
+"title": "Minotaur gore",
+"category": "Monsters",
+"duration": 0.4,
+"keywords": "minotaur monsters"
+},
+{
+"id": "minotaur-movement-r-8230b",
+"title": "Minotaur movement r",
+"category": "Monsters",
+"duration": 0.3,
+"keywords": "minotaur monsters"
+},
+{
+"id": "minotaur-punch-02912",
+"title": "Minotaur punch",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "minotaur monsters"
+},
+{
+"id": "minotaur-vocal-a-caedb",
+"title": "Minotaur vocal a",
+"category": "Monsters",
+"duration": 0.8,
+"keywords": "minotaur monsters"
+},
+{
+"id": "minotaur-vocal-b-7c94b",
+"title": "Minotaur vocal b",
+"category": "Monsters",
+"duration": 0.8,
+"keywords": "minotaur monsters"
+},
+{
+"id": "orc-death-ddb79",
+"title": "Orc death",
+"category": "Monsters",
+"duration": 1.3,
+"keywords": "orc monsters"
+},
+{
+"id": "orc-movement-l-ab2a3",
+"title": "Orc movement l",
+"category": "Monsters",
+"duration": 0.2,
+"keywords": "orc monsters"
+},
+{
+"id": "orc-movement-r-2c9c5",
+"title": "Orc movement r",
+"category": "Monsters",
+"duration": 0.3,
+"keywords": "orc monsters"
+},
+{
+"id": "orc-vocal-a-4ae39",
+"title": "Orc vocal a",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "orc monsters"
+},
+{
+"id": "orc-vocal-b-1462b",
+"title": "Orc vocal b",
+"category": "Monsters",
+"duration": 0.6,
+"keywords": "orc monsters"
+},
+{
+"id": "troll-bite-bec64",
+"title": "Troll bite",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "troll monsters"
+},
+{
+"id": "troll-claw-b5285",
+"title": "Troll claw",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "troll monsters"
+},
+{
+"id": "troll-death-cc78a",
+"title": "Troll death",
+"category": "Monsters",
+"duration": 0.8,
+"keywords": "troll monsters"
+},
+{
+"id": "troll-movement-l-9ee6b",
+"title": "Troll movement l",
+"category": "Monsters",
+"duration": 0.3,
+"keywords": "troll monsters"
+},
+{
+"id": "troll-movement-r-4fefa",
+"title": "Troll movement r",
+"category": "Monsters",
+"duration": 0.3,
+"keywords": "troll monsters"
+},
+{
+"id": "troll-vocal-a-9d4de",
+"title": "Troll vocal a",
+"category": "Monsters",
+"duration": 0.5,
+"keywords": "troll monsters"
+},
+{
+"id": "troll-vocal-b-9f40c",
+"title": "Troll vocal b",
+"category": "Monsters",
+"duration": 0.7,
+"keywords": "troll monsters"
+},
+{
+"id": "crowd-panic-f30d1",
+"title": "Crowd Panic",
+"category": "Screams",
+"duration": 25.8,
+"keywords": "human"
+},
+{
+"id": "male-screams-3e803",
+"title": "Male Screams",
+"category": "Screams",
+"duration": 5.5,
+"keywords": "human"
+},
+{
+"id": "male-screams-2-aef0d",
+"title": "Male Screams 2",
+"category": "Screams",
+"duration": 3.4,
+"keywords": "human"
+},
+{
+"id": "male-screams-3-85b51",
+"title": "Male Screams 3",
+"category": "Screams",
+"duration": 5.6,
+"keywords": "human"
+},
+{
+"id": "male-screams-4-18ca6",
+"title": "Male Screams 4",
+"category": "Screams",
+"duration": 15.6,
+"keywords": "human"
+},
+{
+"id": "male-screams-5-3683a",
+"title": "Male Screams 5",
+"category": "Screams",
+"duration": 10.7,
+"keywords": "human"
+},
+{
+"id": "scream-female-1-59cac",
+"title": "Scream Female 1",
+"category": "Screams",
+"duration": 3.2,
+"keywords": "human"
+},
+{
+"id": "scream-female-2-1bbc4",
+"title": "Scream Female 2",
+"category": "Screams",
+"duration": 1.1,
+"keywords": "human"
+},
+{
+"id": "scream-female-25-63ef1",
+"title": "Scream Female 25",
+"category": "Screams",
+"duration": 1.9,
+"keywords": "human"
+},
+{
+"id": "scream-female-28-d2eae",
+"title": "Scream Female 28",
+"category": "Screams",
+"duration": 2.2,
+"keywords": "human"
+},
+{
+"id": "scream-female-29-3a04c",
+"title": "Scream Female 29",
+"category": "Screams",
+"duration": 2.9,
+"keywords": "human"
+},
+{
+"id": "scream-female-3-a7235",
+"title": "Scream Female 3",
+"category": "Screams",
+"duration": 3.2,
+"keywords": "human"
+},
+{
+"id": "scream-female-30-63ff2",
+"title": "Scream Female 30",
+"category": "Screams",
+"duration": 1.2,
+"keywords": "human"
+},
+{
+"id": "scream-female-4-1f4db",
+"title": "Scream Female 4",
+"category": "Screams",
+"duration": 1.1,
+"keywords": "human"
+},
+{
+"id": "scream-female-6-49ed7",
+"title": "Scream Female 6",
+"category": "Screams",
+"duration": 0.5,
+"keywords": "human"
+},
+{
+"id": "scream-male-26-b5f41",
+"title": "Scream Male 26",
+"category": "Screams",
+"duration": 1.0,
+"keywords": "human"
+},
+{
+"id": "scream-male-28-cd128",
+"title": "Scream Male 28",
+"category": "Screams",
+"duration": 1.2,
+"keywords": "human"
+},
+{
+"id": "scream-male-47-0a1ce",
+"title": "Scream Male 47",
+"category": "Screams",
+"duration": 1.4,
+"keywords": "human"
+},
+{
+"id": "scream-male-59-82408",
+"title": "Scream Male 59",
+"category": "Screams",
+"duration": 2.4,
+"keywords": "human"
+},
+{
+"id": "scream-male-60-5e384",
+"title": "Scream Male 60",
+"category": "Screams",
+"duration": 1.9,
+"keywords": "human"
+},
+{
+"id": "scream-male-61-1a640",
+"title": "Scream Male 61",
+"category": "Screams",
+"duration": 1.5,
+"keywords": "human"
+},
+{
+"id": "scream-male-62-7edbb",
+"title": "Scream Male 62",
+"category": "Screams",
+"duration": 2.1,
+"keywords": "human"
+},
+{
+"id": "arrow-impacts-on-chain-mail-armour-df9e6",
+"title": "Arrow Impacts on Chain Mail Armour",
+"category": "Impacts",
+"duration": 5.9,
+"keywords": "battle"
+},
+{
+"id": "arrow-impacts-on-flesh-2d195",
+"title": "Arrow Impacts on Flesh",
+"category": "Impacts",
+"duration": 5.4,
+"keywords": "battle"
+},
+{
+"id": "arrow-impacts-on-leather-armour-c0541",
+"title": "Arrow Impacts on Leather Armour",
+"category": "Impacts",
+"duration": 5.9,
+"keywords": "battle"
+},
+{
+"id": "arrow-impacts-on-plate-mail-armour-810ad",
+"title": "Arrow Impacts on Plate Mail Armour",
+"category": "Impacts",
+"duration": 5.9,
+"keywords": "battle"
+},
+{
+"id": "arrow-impacts-on-wood-015b3",
+"title": "Arrow Impacts on Wood",
+"category": "Impacts",
+"duration": 6.5,
+"keywords": "battle"
+},
+{
+"id": "battle-axe-impacts-on-flesh-da657",
+"title": "Battle Axe Impacts on Flesh",
+"category": "Impacts",
+"duration": 5.2,
+"keywords": "battle"
+},
+{
+"id": "battle-axe-impacts-on-shield-652bd",
+"title": "Battle Axe Impacts on Shield",
+"category": "Impacts",
+"duration": 5.5,
+"keywords": "battle"
+},
+{
+"id": "battle-axe-impacts-on-sword-6e457",
+"title": "Battle Axe Impacts on Sword",
+"category": "Impacts",
+"duration": 6.3,
+"keywords": "battle"
+},
+{
+"id": "block-shield-c-c2d91",
+"title": "Block shield c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "block-shield-d-da9c5",
+"title": "Block shield d",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "block-shield-e-f5894",
+"title": "Block shield e",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "block-sword-c-76d7b",
+"title": "Block sword c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "block-sword-d-577bd",
+"title": "Block sword d",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "block-sword-e-e2f39",
+"title": "Block sword e",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "body-fall-23-ab4d7",
+"title": "Body Fall 23",
+"category": "Impacts",
+"duration": 1.7,
+"keywords": "battle"
+},
+{
+"id": "body-fall-heavy-5-a3cf9",
+"title": "Body Fall Heavy 5",
+"category": "Impacts",
+"duration": 2.3,
+"keywords": "battle"
+},
+{
+"id": "body-fall-heavy-7-42081",
+"title": "Body Fall Heavy 7",
+"category": "Impacts",
+"duration": 2.2,
+"keywords": "battle"
+},
+{
+"id": "body-fall-snow-1-1e95c",
+"title": "Body Fall Snow 1",
+"category": "Impacts",
+"duration": 1.4,
+"keywords": "battle"
+},
+{
+"id": "body-fall-snow-4-bedd1",
+"title": "Body Fall Snow 4",
+"category": "Impacts",
+"duration": 1.4,
+"keywords": "battle"
+},
+{
+"id": "body-fall-snow-5-99b94",
+"title": "Body Fall Snow 5",
+"category": "Impacts",
+"duration": 1.5,
+"keywords": "battle"
+},
+{
+"id": "body-fall-tarp-3-c4222",
+"title": "Body Fall Tarp 3",
+"category": "Impacts",
+"duration": 1.2,
+"keywords": "battle"
+},
+{
+"id": "body-hits-01-7c47d",
+"title": "Body Hits 01",
+"category": "Impacts",
+"duration": 9.8,
+"keywords": "hits"
+},
+{
+"id": "body-hits-02-44861",
+"title": "Body Hits 02",
+"category": "Impacts",
+"duration": 10.1,
+"keywords": "hits"
+},
+{
+"id": "body-hits-03-f3223",
+"title": "Body Hits 03",
+"category": "Impacts",
+"duration": 7.4,
+"keywords": "hits"
+},
+{
+"id": "bow-impact-c-863dd",
+"title": "Bow impact c",
+"category": "Impacts",
+"duration": 0.2,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-impact-d-f4c86",
+"title": "Bow impact d",
+"category": "Impacts",
+"duration": 0.2,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-impact-e-284ca",
+"title": "Bow impact e",
+"category": "Impacts",
+"duration": 0.2,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-hit-metal-c-7b994",
+"title": "Dagger hit metal c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-hit-metal-d-e9676",
+"title": "Dagger hit metal d",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-hit-metal-e-39b65",
+"title": "Dagger hit metal e",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-hit-wood-c-6b711",
+"title": "Dagger hit wood c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-hit-wood-d-7f74a",
+"title": "Dagger hit wood d",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-hit-wood-e-1faf2",
+"title": "Dagger hit wood e",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "fight-kit-punches-9691e",
+"title": "Fight Kit Punches",
+"category": "Impacts",
+"duration": 16.7,
+"keywords": "battle"
+},
+{
+"id": "hit-01-30e92",
+"title": "Hit 01",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "hits"
+},
+{
+"id": "hit-02-def78",
+"title": "Hit 02",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "hits"
+},
+{
+"id": "hit-03-61473",
+"title": "Hit 03",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "hits"
+},
+{
+"id": "hit-04-9548a",
+"title": "Hit 04",
+"category": "Impacts",
+"duration": 0.7,
+"keywords": "hits"
+},
+{
+"id": "hits-fight-01-4ab57",
+"title": "Hits Fight 01",
+"category": "Impacts",
+"duration": 9.3,
+"keywords": "hits"
+},
+{
+"id": "impact-body-fall-1-9af85",
+"title": "Impact Body Fall 1",
+"category": "Impacts",
+"duration": 1.1,
+"keywords": "battle"
+},
+{
+"id": "impact-body-fall-2-d7459",
+"title": "Impact Body Fall 2",
+"category": "Impacts",
+"duration": 1.5,
+"keywords": "battle"
+},
+{
+"id": "impact-body-fall-3-4a0af",
+"title": "Impact Body Fall 3",
+"category": "Impacts",
+"duration": 1.6,
+"keywords": "battle"
+},
+{
+"id": "impact-body-fall-4-9024f",
+"title": "Impact Body Fall 4",
+"category": "Impacts",
+"duration": 2.1,
+"keywords": "battle"
+},
+{
+"id": "impacto-generico-001-7a3b1",
+"title": "Impacto generico 001",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "metal-hit-01-bd7a6",
+"title": "Metal Hit 01",
+"category": "Impacts",
+"duration": 4.5,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-02-d9053",
+"title": "Metal Hit 02",
+"category": "Impacts",
+"duration": 3.7,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-03-a1a5f",
+"title": "Metal Hit 03",
+"category": "Impacts",
+"duration": 3.0,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-04-7e3a2",
+"title": "Metal Hit 04",
+"category": "Impacts",
+"duration": 4.5,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-05-2769e",
+"title": "Metal Hit 05",
+"category": "Impacts",
+"duration": 1.7,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-06-252fb",
+"title": "Metal Hit 06",
+"category": "Impacts",
+"duration": 1.7,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-07-12106",
+"title": "Metal Hit 07",
+"category": "Impacts",
+"duration": 2.8,
+"keywords": "hits"
+},
+{
+"id": "metal-hit-08-42f3a",
+"title": "Metal Hit 08",
+"category": "Impacts",
+"duration": 1.7,
+"keywords": "hits"
+},
+{
+"id": "punch-hit-c-2aecf",
+"title": "Punch hit c",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "punch-hit-d-74068",
+"title": "Punch hit d",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "punch-hit-e-1143b",
+"title": "Punch hit e",
+"category": "Impacts",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "punch-thud-2-c1902",
+"title": "Punch Thud 2",
+"category": "Impacts",
+"duration": 2.1,
+"keywords": "battle"
+},
+{
+"id": "punch-thud-3-bc749",
+"title": "Punch Thud 3",
+"category": "Impacts",
+"duration": 2.1,
+"keywords": "battle"
+},
+{
+"id": "punch-thud-4-237b2",
+"title": "Punch Thud 4",
+"category": "Impacts",
+"duration": 2.1,
+"keywords": "battle"
+},
+{
+"id": "punch-thud-5-36681",
+"title": "Punch Thud 5",
+"category": "Impacts",
+"duration": 1.9,
+"keywords": "battle"
+},
+{
+"id": "punch-thud-6-b9c1b",
+"title": "Punch Thud 6",
+"category": "Impacts",
+"duration": 1.6,
+"keywords": "battle"
+},
+{
+"id": "punch-thud-7-f9a58",
+"title": "Punch Thud 7",
+"category": "Impacts",
+"duration": 1.6,
+"keywords": "battle"
+},
+{
+"id": "sharp-punch-7-48955",
+"title": "Sharp Punch 7",
+"category": "Impacts",
+"duration": 2.6,
+"keywords": "battle"
+},
+{
+"id": "sharp-punch-9-3540d",
+"title": "Sharp Punch 9",
+"category": "Impacts",
+"duration": 1.9,
+"keywords": "battle"
+},
+{
+"id": "skull-crush-body-falls-b27cc",
+"title": "Skull Crush Body Falls",
+"category": "Impacts",
+"duration": 1.7,
+"keywords": "battle"
+},
+{
+"id": "soldier-head-and-body-fall-to-ground-537be",
+"title": "Soldier Head and Body Fall to Ground",
+"category": "Impacts",
+"duration": 3.6,
+"keywords": "battle"
+},
+{
+"id": "staff-hit-c-bf443",
+"title": "Staff hit c",
+"category": "Impacts",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "staff-hit-d-a37aa",
+"title": "Staff hit d",
+"category": "Impacts",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "staff-hit-e-5b3ea",
+"title": "Staff hit e",
+"category": "Impacts",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-flesh-a-b0239",
+"title": "Sword hit flesh a",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-flesh-b-a67c1",
+"title": "Sword hit flesh b",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-flesh-c-46e60",
+"title": "Sword hit flesh c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-flesh-e-105c8",
+"title": "Sword hit flesh e",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-metal-c-85fba",
+"title": "Sword hit metal c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-metal-d-b2ea0",
+"title": "Sword hit metal d",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-metal-e-8b04f",
+"title": "Sword hit metal e",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-wood-c-ebe7f",
+"title": "Sword hit wood c",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-wood-d-00fbd",
+"title": "Sword hit wood d",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-hit-wood-e-b4033",
+"title": "Sword hit wood e",
+"category": "Impacts",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-impacts-on-plate-mail-armour-0fd78",
+"title": "Sword Impacts on Plate Mail Armour",
+"category": "Impacts",
+"duration": 5.8,
+"keywords": "battle"
+},
+{
+"id": "sword-impacts-on-shield-1-83744",
+"title": "Sword Impacts on Shield (1)",
+"category": "Impacts",
+"duration": 7.2,
+"keywords": "battle"
+},
+{
+"id": "sword-impacts-on-wood-46454",
+"title": "Sword Impacts on Wood",
+"category": "Impacts",
+"duration": 5.6,
+"keywords": "battle"
+},
+{
+"id": "sword-on-sword-impacts-644ca",
+"title": "Sword on Sword Impacts",
+"category": "Impacts",
+"duration": 7.2,
+"keywords": "battle"
+},
+{
+"id": "dagger-swing-c-dada1",
+"title": "Dagger swing c",
+"category": "Whoosh",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-swing-d-15069",
+"title": "Dagger swing d",
+"category": "Whoosh",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "punch-swing-c-fc130",
+"title": "Punch swing c",
+"category": "Whoosh",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "punch-swing-d-b2532",
+"title": "Punch swing d",
+"category": "Whoosh",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "punch-swing-e-ab81d",
+"title": "Punch swing e",
+"category": "Whoosh",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "staff-swing-d-afc18",
+"title": "Staff swing d",
+"category": "Whoosh",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "staff-swing-e-79c3d",
+"title": "Staff swing e",
+"category": "Whoosh",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-swing-c-e5f08",
+"title": "Sword swing c",
+"category": "Whoosh",
+"duration": 0.6,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-swing-d-cb9cd",
+"title": "Sword swing d",
+"category": "Whoosh",
+"duration": 0.6,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-swing-e-d33ab",
+"title": "Sword swing e",
+"category": "Whoosh",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "barefoot-footsteps-on-grass-d03d6",
+"title": "Barefoot Footsteps On Grass",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-balcony-4b8ba",
+"title": "Footsteps Balcony",
+"category": "Footsteps",
+"duration": 9.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-branches-f58dc",
+"title": "Footsteps Branches",
+"category": "Footsteps",
+"duration": 1.2,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-bridge-1-00d7b",
+"title": "Footsteps Bridge 1",
+"category": "Footsteps",
+"duration": 7.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-bridge-2-62f32",
+"title": "Footsteps Bridge 2",
+"category": "Footsteps",
+"duration": 10.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-cement-12-39600",
+"title": "Footsteps Cement 12",
+"category": "Footsteps",
+"duration": 4.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-cement-14-acb05",
+"title": "Footsteps Cement 14",
+"category": "Footsteps",
+"duration": 8.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-cement-19-c2548",
+"title": "Footsteps Cement 19",
+"category": "Footsteps",
+"duration": 6.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-dirt-7-49cc1",
+"title": "Footsteps Dirt 7",
+"category": "Footsteps",
+"duration": 4.8,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-dirt-8-ab8fc",
+"title": "Footsteps Dirt 8",
+"category": "Footsteps",
+"duration": 2.5,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-dirt-8b-ef709",
+"title": "Footsteps Dirt 8b",
+"category": "Footsteps",
+"duration": 2.5,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-dirt-8bb-47a47",
+"title": "Footsteps Dirt 8bb",
+"category": "Footsteps",
+"duration": 2.5,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-forest-2-8d290",
+"title": "Footsteps Forest 2",
+"category": "Footsteps",
+"duration": 7.7,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-forest-2b-4d9eb",
+"title": "Footsteps Forest 2b",
+"category": "Footsteps",
+"duration": 7.7,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-forest-3-2f009",
+"title": "Footsteps Forest 3",
+"category": "Footsteps",
+"duration": 16.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-forest-3b-74d3e",
+"title": "Footsteps Forest 3b",
+"category": "Footsteps",
+"duration": 16.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-forest-7-a34cb",
+"title": "Footsteps Forest 7",
+"category": "Footsteps",
+"duration": 20.8,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-forest-7b-c02c1",
+"title": "Footsteps Forest 7b",
+"category": "Footsteps",
+"duration": 20.8,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-glasses-fbe58",
+"title": "Footsteps Glasses",
+"category": "Footsteps",
+"duration": 1.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-grass-1-32408",
+"title": "Footsteps Grass 1",
+"category": "Footsteps",
+"duration": 4.4,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-grass-2-67885",
+"title": "Footsteps Grass 2",
+"category": "Footsteps",
+"duration": 3.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-grass-2b-a1147",
+"title": "Footsteps Grass 2b",
+"category": "Footsteps",
+"duration": 3.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-grass-3-1bfb7",
+"title": "Footsteps Grass 3",
+"category": "Footsteps",
+"duration": 7.2,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-grass-4-8aedb",
+"title": "Footsteps Grass 4",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-gravel-11-98d33",
+"title": "Footsteps Gravel 11",
+"category": "Footsteps",
+"duration": 8.9,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-gravel-14-3b014",
+"title": "Footsteps Gravel 14",
+"category": "Footsteps",
+"duration": 22.4,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-gravel-15-977c7",
+"title": "Footsteps Gravel 15",
+"category": "Footsteps",
+"duration": 14.5,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-gravel-16-66e02",
+"title": "Footsteps Gravel 16",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-gravel-4-57e69",
+"title": "Footsteps Gravel 4",
+"category": "Footsteps",
+"duration": 5.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-mud-4-0b8de",
+"title": "Footsteps Mud 4",
+"category": "Footsteps",
+"duration": 5.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-mud-5-ac96d",
+"title": "Footsteps Mud 5",
+"category": "Footsteps",
+"duration": 3.5,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-rocks-6-8926b",
+"title": "Footsteps Rocks 6",
+"category": "Footsteps",
+"duration": 9.2,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-sand-2-dfbe5",
+"title": "Footsteps Sand 2",
+"category": "Footsteps",
+"duration": 9.4,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-sewer-1-0de81",
+"title": "Footsteps Sewer 1",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-sewer-2-e9b2b",
+"title": "Footsteps Sewer 2",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-snow-14-be3b9",
+"title": "Footsteps Snow 14",
+"category": "Footsteps",
+"duration": 27.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-snow-14b-d3658",
+"title": "Footsteps Snow 14b",
+"category": "Footsteps",
+"duration": 27.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-snow-3-48b32",
+"title": "Footsteps Snow 3",
+"category": "Footsteps",
+"duration": 12.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-water-f592f",
+"title": "Footsteps Water",
+"category": "Footsteps",
+"duration": 9.5,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-wood-31-b23f8",
+"title": "Footsteps Wood 31",
+"category": "Footsteps",
+"duration": 5.1,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-wood-32-f2cdd",
+"title": "Footsteps Wood 32",
+"category": "Footsteps",
+"duration": 13.0,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-wood-33-ceb30",
+"title": "Footsteps Wood 33",
+"category": "Footsteps",
+"duration": 10.6,
+"keywords": "footsteps"
+},
+{
+"id": "footsteps-wood-39-c074a",
+"title": "Footsteps Wood 39",
+"category": "Footsteps",
+"duration": 6.2,
+"keywords": "footsteps"
+},
+{
+"id": "frost-footsteps-f84b5",
+"title": "Frost Footsteps",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "jump-footsteps-dirt-3-1e798",
+"title": "Jump Footsteps Dirt 3",
+"category": "Footsteps",
+"duration": 0.5,
+"keywords": "footsteps"
+},
+{
+"id": "landing-jump-footsteps-gravel-1-54fe6",
+"title": "Landing Jump Footsteps Gravel 1",
+"category": "Footsteps",
+"duration": 0.7,
+"keywords": "footsteps"
+},
+{
+"id": "landing-jump-footsteps-gravel-9-2f047",
+"title": "Landing Jump Footsteps Gravel 9",
+"category": "Footsteps",
+"duration": 0.9,
+"keywords": "footsteps"
+},
+{
+"id": "leaves-footsteps-6913f",
+"title": "Leaves Footsteps",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "pebbles-footsteps-walk-run-702cd",
+"title": "Pebbles Footsteps Walk Run",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "puddle-footsteps-and-splashes-a644d",
+"title": "Puddle Footsteps And Splashes",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "sand-barefoot-footsteps-walk-run-c1df9",
+"title": "Sand Barefoot Footsteps Walk Run",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "sand-footsteps-walk-run-ddfcd",
+"title": "Sand Footsteps Walk Run",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "snow-footsteps-3f72e",
+"title": "Snow Footsteps",
+"category": "Footsteps",
+"duration": 30.0,
+"keywords": "footsteps"
+},
+{
+"id": "barn-60d97",
+"title": "Barn",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "birds-forest-3-1ba9d",
+"title": "Birds Forest 3",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "blacksmith-01-dce17",
+"title": "Blacksmith 01",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "blacksmith-02-25425",
+"title": "Blacksmith 02",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "calm-river-2209d",
+"title": "Calm River",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "countryside-village-ambience-4352f",
+"title": "Countryside Village Ambience",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "crickets-night-33070",
+"title": "Crickets Night",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "crickets-night-2-f37e1",
+"title": "Crickets Night 2",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "crickets-night-3-63557",
+"title": "Crickets Night 3",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "desert-kalnight-52e92",
+"title": "Desert KalNight",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-1-a1f2f",
+"title": "Forest 1",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-2-54674",
+"title": "Forest 2",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-3-3e66f",
+"title": "Forest 3",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-4b-de59b",
+"title": "Forest 4b",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-night-crickets-5f6e4",
+"title": "Forest Night Crickets",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-rain-2-aca91",
+"title": "Forest Rain 2",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-rain-3-759b2",
+"title": "Forest Rain 3",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "forest-rain-4-b5417",
+"title": "Forest Rain 4",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "lake-shore-2-86b6e",
+"title": "Lake Shore 2",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "lake-shore-windy-day-6e6b8",
+"title": "Lake Shore Windy Day",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "library-corridor-01-bc5a2",
+"title": "Library corridor 01",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "potion-shop-01-ae943",
+"title": "Potion shop 01",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "potion-shop-02-9b544",
+"title": "Potion shop 02",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "rain-3-90d2c",
+"title": "Rain 3",
+"category": "Ambience",
+"duration": 3.3,
+"keywords": "ambience"
+},
+{
+"id": "rain-downpour-1-afdeb",
+"title": "Rain Downpour 1",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "rain-downpour-2-061d0",
+"title": "Rain Downpour 2",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "rain-gutter-b509d",
+"title": "Rain Gutter",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "rain-light-1-e9b70",
+"title": "Rain Light 1",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "rain-light-4-6ff11",
+"title": "Rain Light 4",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "rain-light-7-7f9bf",
+"title": "Rain Light 7",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "shore-01-0ee22",
+"title": "Shore 01",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "small-waves-lapping-beach-6a2fa",
+"title": "Small Waves Lapping Beach",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "ssfx-crickets-3-5f60e",
+"title": "SSFX Crickets 3",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "town-01-8ca0b",
+"title": "Town 01",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "town-02-0d8de",
+"title": "Town 02",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "town-03-3b20e",
+"title": "Town 03",
+"category": "Ambience",
+"duration": 30.0,
+"keywords": "locations"
+},
+{
+"id": "battle-ambience-with-heavy-crowd-and-sword-fight-9f92b",
+"title": "Battle Ambience with Heavy Crowd and Sword Fightin",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "crowd-walla-murmurs-2-27a3e",
+"title": "Crowd Walla Murmurs 2",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "group-walla-9d391",
+"title": "Group Walla",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "human-crowd-walla-3-30bac",
+"title": "Human Crowd Walla 3",
+"category": "Crowd",
+"duration": 24.7,
+"keywords": "human"
+},
+{
+"id": "human-crowd39-17d4b",
+"title": "Human Crowd39",
+"category": "Crowd",
+"duration": 8.0,
+"keywords": "human"
+},
+{
+"id": "human-crowd77-db5c4",
+"title": "Human Crowd77",
+"category": "Crowd",
+"duration": 3.3,
+"keywords": "human"
+},
+{
+"id": "large-exterior-crowd-84c21",
+"title": "Large Exterior Crowd",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "ambience"
+},
+{
+"id": "large-exterior-crowd-2-3b1d1",
+"title": "Large Exterior Crowd 2",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "mob-fight-1-19056",
+"title": "Mob Fight 1",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "mob-fight-2-0d2c6",
+"title": "Mob Fight 2",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "mob-fight-3-44c5c",
+"title": "Mob Fight 3",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "mob-walla-e881b",
+"title": "Mob Walla",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "more-walla-29e63",
+"title": "More Walla",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "walla-4-f29b4",
+"title": "Walla 4",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "walla-outdoor-da6dd",
+"title": "Walla Outdoor",
+"category": "Crowd",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "01-1d122",
+"title": "01",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "people_amb_outdoor human"
+},
+{
+"id": "arrow-draw-back-and-fire-13d12",
+"title": "Arrow Draw Back and Fire",
+"category": "Battle",
+"duration": 5.7,
+"keywords": "battle"
+},
+{
+"id": "battle-01-10ea0",
+"title": "Battle 01",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "human"
+},
+{
+"id": "battle-reaccs-78b4b",
+"title": "Battle Reaccs",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "bow-draw-b-389b2",
+"title": "Bow draw b",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-draw-c-363f4",
+"title": "Bow draw c",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-fire-c-39474",
+"title": "Bow fire c",
+"category": "Battle",
+"duration": 0.6,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-fire-d-7dddc",
+"title": "Bow fire d",
+"category": "Battle",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-fire-e-446bf",
+"title": "Bow fire e",
+"category": "Battle",
+"duration": 0.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-pull-b-8c7ff",
+"title": "Bow pull b",
+"category": "Battle",
+"duration": 1.2,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "bow-pull-c-8be60",
+"title": "Bow pull c",
+"category": "Battle",
+"duration": 1.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "crossbow-fire-b-488ba",
+"title": "Crossbow fire b",
+"category": "Battle",
+"duration": 0.4,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "crossbow-fire-c-17d56",
+"title": "Crossbow fire c",
+"category": "Battle",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "crossbow-load-b-f333e",
+"title": "Crossbow load b",
+"category": "Battle",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "crossbow-load-c-0d490",
+"title": "Crossbow load c",
+"category": "Battle",
+"duration": 0.3,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "dagger-scrape-3-307bb",
+"title": "Dagger Scrape 3",
+"category": "Battle",
+"duration": 1.6,
+"keywords": "sword"
+},
+{
+"id": "group-of-archers-draw-and-fire-arrows-strike-ene-da2a5",
+"title": "Group of Archers Draw and Fire Arrows Strike Enemies",
+"category": "Battle",
+"duration": 8.7,
+"keywords": "battle"
+},
+{
+"id": "implements-rolling-up-to-lay-siege-0d489",
+"title": "Implements Rolling up to Lay Siege",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "knife-sharpen-blade-6-e0c20",
+"title": "Knife Sharpen Blade 6",
+"category": "Battle",
+"duration": 0.5,
+"keywords": "sword"
+},
+{
+"id": "knife-sharpen-blade-7-d494d",
+"title": "Knife Sharpen Blade 7",
+"category": "Battle",
+"duration": 0.4,
+"keywords": "sword"
+},
+{
+"id": "medieval-battle-with-sword-and-armour-clanks-81e75",
+"title": "Medieval Battle with Sword and Armour Clanks",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "medium-group-of-soldiers-sword-battle-4cf96",
+"title": "Medium Group of Soldiers Sword Battle",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "small-group-fight-with-swords-while-on-horseback-ea317",
+"title": "Small Group Fight with Swords While on Horseback",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "soldier-bow-fire-01-5c730",
+"title": "Soldier bow fire 01",
+"category": "Battle",
+"duration": 7.8,
+"keywords": "battle"
+},
+{
+"id": "staff-draw-b-c9d2a",
+"title": "Staff draw b",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "staff-draw-c-ce3c1",
+"title": "Staff draw c",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-battle-1-b4ed6",
+"title": "Sword Battle 1",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "sword-battle-2-747aa",
+"title": "Sword Battle 2",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "sword-battle-3-e298b",
+"title": "Sword Battle 3",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "sword-battle-4-781af",
+"title": "Sword Battle 4",
+"category": "Battle",
+"duration": 30.0,
+"keywords": "battle"
+},
+{
+"id": "sword-draw-c-c21b4",
+"title": "Sword draw c",
+"category": "Battle",
+"duration": 0.8,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-draw-d-72de6",
+"title": "Sword draw d",
+"category": "Battle",
+"duration": 1.5,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-draw-e-6e211",
+"title": "Sword draw e",
+"category": "Battle",
+"duration": 1.1,
+"keywords": "weapons magic wepones"
+},
+{
+"id": "sword-fight-rapier-2-cf172",
+"title": "Sword Fight Rapier 2",
+"category": "Battle",
+"duration": 2.8,
+"keywords": "sword"
+},
+{
+"id": "sword-fight-rapier-3-729a7",
+"title": "Sword Fight Rapier 3",
+"category": "Battle",
+"duration": 3.6,
+"keywords": "sword"
+},
+{
+"id": "sword-fight-rapier-4-aa15b",
+"title": "Sword Fight Rapier 4",
+"category": "Battle",
+"duration": 3.7,
+"keywords": "sword"
+},
+{
+"id": "sword-fight-rapier-5-5d3ad",
+"title": "Sword Fight Rapier 5",
+"category": "Battle",
+"duration": 4.7,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-1-cdb06",
+"title": "Sword Scrape 1",
+"category": "Battle",
+"duration": 3.1,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-10-853f9",
+"title": "Sword Scrape 10",
+"category": "Battle",
+"duration": 1.6,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-11-91688",
+"title": "Sword Scrape 11",
+"category": "Battle",
+"duration": 0.7,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-12-1ed5e",
+"title": "Sword Scrape 12",
+"category": "Battle",
+"duration": 0.7,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-14-48428",
+"title": "Sword Scrape 14",
+"category": "Battle",
+"duration": 1.5,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-2-611d4",
+"title": "Sword Scrape 2",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-7-2462c",
+"title": "Sword Scrape 7",
+"category": "Battle",
+"duration": 1.9,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-7b-1fef0",
+"title": "Sword Scrape 7b",
+"category": "Battle",
+"duration": 1.9,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-8-b0be9",
+"title": "Sword Scrape 8",
+"category": "Battle",
+"duration": 1.3,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-9-cf2fa",
+"title": "Sword Scrape 9",
+"category": "Battle",
+"duration": 1.8,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-blade-6058b",
+"title": "Sword Scrape Blade",
+"category": "Battle",
+"duration": 2.2,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-court-sword-1-b29ee",
+"title": "Sword Scrape Court Sword 1",
+"category": "Battle",
+"duration": 2.8,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-court-sword-5-f6199",
+"title": "Sword Scrape Court Sword 5",
+"category": "Battle",
+"duration": 1.3,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-court-sword-6-19941",
+"title": "Sword Scrape Court Sword 6",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-court-sword-7-4b827",
+"title": "Sword Scrape Court Sword 7",
+"category": "Battle",
+"duration": 1.5,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-fencing-2-be988",
+"title": "Sword Scrape Fencing 2",
+"category": "Battle",
+"duration": 1.4,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-34c48",
+"title": "Sword Scrape Rapier",
+"category": "Battle",
+"duration": 0.9,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-10-9cb54",
+"title": "Sword Scrape Rapier 10",
+"category": "Battle",
+"duration": 0.9,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-11-a9564",
+"title": "Sword Scrape Rapier 11",
+"category": "Battle",
+"duration": 0.6,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-12-18bff",
+"title": "Sword Scrape Rapier 12",
+"category": "Battle",
+"duration": 2.4,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-13-b7b16",
+"title": "Sword Scrape Rapier 13",
+"category": "Battle",
+"duration": 4.9,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-14-d4b32",
+"title": "Sword Scrape Rapier 14",
+"category": "Battle",
+"duration": 1.7,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-2-a8035",
+"title": "Sword Scrape Rapier 2",
+"category": "Battle",
+"duration": 1.1,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-3-09a39",
+"title": "Sword Scrape Rapier 3",
+"category": "Battle",
+"duration": 1.5,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-4-7f2f7",
+"title": "Sword Scrape Rapier 4",
+"category": "Battle",
+"duration": 1.5,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-5-ac31b",
+"title": "Sword Scrape Rapier 5",
+"category": "Battle",
+"duration": 1.3,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-6-a47d6",
+"title": "Sword Scrape Rapier 6",
+"category": "Battle",
+"duration": 1.0,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-7-9cd84",
+"title": "Sword Scrape Rapier 7",
+"category": "Battle",
+"duration": 0.9,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-8-88101",
+"title": "Sword Scrape Rapier 8",
+"category": "Battle",
+"duration": 1.1,
+"keywords": "sword"
+},
+{
+"id": "sword-scrape-rapier-9-7a278",
+"title": "Sword Scrape Rapier 9",
+"category": "Battle",
+"duration": 0.8,
+"keywords": "sword"
+},
+{
+"id": "sword-scrapes-against-metal-shield-69046",
+"title": "Sword Scrapes Against Metal Shield",
+"category": "Battle",
+"duration": 6.8,
+"keywords": "battle"
+},
+{
+"id": "sword-stab-with-yell-87016",
+"title": "Sword Stab with Yell",
+"category": "Battle",
+"duration": 3.5,
+"keywords": "battle"
+},
+{
+"id": "sword-stab-with-yell-opponent-falls-on-ground-eed8b",
+"title": "Sword Stab with Yell Opponent Falls on Ground",
+"category": "Battle",
+"duration": 3.5,
+"keywords": "battle"
+},
+{
+"id": "sword-stabbed-into-flesh-and-pulled-out-1-909c8",
+"title": "Sword Stabbed into Flesh and Pulled Out (1)",
+"category": "Battle",
+"duration": 7.4,
+"keywords": "battle"
+},
+{
+"id": "sword-stabbed-into-flesh-and-pulled-out-1-01-2f3b5",
+"title": "Sword Stabbed into Flesh and Pulled Out (1)-01",
+"category": "Battle",
+"duration": 7.3,
+"keywords": "battle"
+},
+{
+"id": "sword-stabbed-into-leather-armour-293dc",
+"title": "Sword Stabbed into Leather Armour",
+"category": "Battle",
+"duration": 5.9,
+"keywords": "battle"
+},
+{
+"id": "sword-stabbed-into-plate-mail-armour-and-pulled--bc00e",
+"title": "Sword Stabbed into Plate Mail Armour and Pulled Out",
+"category": "Battle",
+"duration": 9.1,
+"keywords": "battle"
+},
+{
+"id": "sword-strike-5-c6b5f",
+"title": "Sword Strike 5",
+"category": "Battle",
+"duration": 2.1,
+"keywords": "sword"
+},
+{
+"id": "horse-breath-heavy-0dfd9",
+"title": "Horse Breath Heavy",
+"category": "Animals",
+"duration": 2.7,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-1-21db2",
+"title": "Horse Clydesdale 1",
+"category": "Animals",
+"duration": 1.0,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-12-3a99c",
+"title": "Horse Clydesdale 12",
+"category": "Animals",
+"duration": 2.0,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-13-bfdc6",
+"title": "Horse Clydesdale 13",
+"category": "Animals",
+"duration": 1.7,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-14-cb153",
+"title": "Horse Clydesdale 14",
+"category": "Animals",
+"duration": 2.1,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-3-5fb12",
+"title": "Horse Clydesdale 3",
+"category": "Animals",
+"duration": 8.3,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-4-2ecf4",
+"title": "Horse Clydesdale 4",
+"category": "Animals",
+"duration": 8.5,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-5-172b7",
+"title": "Horse Clydesdale 5",
+"category": "Animals",
+"duration": 6.7,
+"keywords": "horse"
+},
+{
+"id": "horse-clydesdale-6-cc2b3",
+"title": "Horse Clydesdale 6",
+"category": "Animals",
+"duration": 6.1,
+"keywords": "horse"
+},
+{
+"id": "horse-gallop-pass-by-1-494cb",
+"title": "Horse Gallop Pass By 1",
+"category": "Animals",
+"duration": 18.3,
+"keywords": "horse"
+},
+{
+"id": "horse-gallop-pass-by-2-8a883",
+"title": "Horse Gallop Pass By 2",
+"category": "Animals",
+"duration": 18.3,
+"keywords": "horse"
+},
+{
+"id": "horse-hoof-movement-9dbca",
+"title": "Horse Hoof Movement",
+"category": "Animals",
+"duration": 15.5,
+"keywords": "horse"
+},
+{
+"id": "horse-neigh-1-4f7e8",
+"title": "Horse Neigh 1",
+"category": "Animals",
+"duration": 1.3,
+"keywords": "horse"
+},
+{
+"id": "horse-neigh-2-d4286",
+"title": "Horse Neigh 2",
+"category": "Animals",
+"duration": 1.4,
+"keywords": "horse"
+},
+{
+"id": "horse-neigh-3-bd82c",
+"title": "Horse Neigh 3",
+"category": "Animals",
+"duration": 1.4,
+"keywords": "horse"
+},
+{
+"id": "horse-neigh-4-a6b13",
+"title": "Horse Neigh 4",
+"category": "Animals",
+"duration": 1.5,
+"keywords": "horse"
+},
+{
+"id": "horse-neigh-5-a15d9",
+"title": "Horse Neigh 5",
+"category": "Animals",
+"duration": 0.7,
+"keywords": "horse"
+},
+{
+"id": "horse-pass-by-1-ddc41",
+"title": "Horse Pass By 1",
+"category": "Animals",
+"duration": 5.1,
+"keywords": "horse"
+},
+{
+"id": "horse-pass-by-2-9927e",
+"title": "Horse Pass By 2",
+"category": "Animals",
+"duration": 11.4,
+"keywords": "horse"
+},
+{
+"id": "horse-pass-by-6-0a932",
+"title": "Horse Pass By 6",
+"category": "Animals",
+"duration": 7.4,
+"keywords": "horse"
+},
+{
+"id": "horse-pass-by-7-3b778",
+"title": "Horse Pass By 7",
+"category": "Animals",
+"duration": 8.6,
+"keywords": "horse"
+},
+{
+"id": "horse-snort-1-9dc1e",
+"title": "Horse Snort 1",
+"category": "Animals",
+"duration": 0.7,
+"keywords": "horse"
+},
+{
+"id": "horse-trot-by-gravel-1-2b61a",
+"title": "Horse Trot By Gravel 1",
+"category": "Animals",
+"duration": 15.3,
+"keywords": "horse"
+},
+{
+"id": "horse-walk-by-gravel-ff844",
+"title": "Horse Walk By Gravel",
+"category": "Animals",
+"duration": 9.9,
+"keywords": "horse"
+},
+{
+"id": "horse-walk-steady-10f05",
+"title": "Horse Walk Steady",
+"category": "Animals",
+"duration": 24.6,
+"keywords": "horse"
+},
+{
+"id": "horse-whinny-1-8175d",
+"title": "Horse Whinny 1",
+"category": "Animals",
+"duration": 2.1,
+"keywords": "horse"
+},
+{
+"id": "stagecoach-01-63548",
+"title": "Stagecoach 01",
+"category": "Animals",
+"duration": 22.1,
+"keywords": "horse"
+},
+{
+"id": "stagecoach-6-f820b",
+"title": "Stagecoach 6",
+"category": "Animals",
+"duration": 30.0,
+"keywords": "horse"
+}
+]
+}

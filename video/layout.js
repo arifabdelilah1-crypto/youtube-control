@@ -76,6 +76,15 @@ export function foundMusic(music) {
   } catch { return null; }
 }
 
+export const SOUND_BASE = "https://control.homerecipe.casa/sfx-library/";
+export const MAX_SCENE_SOUNDS = 4;
+
+/** A scene's sound effects, only from our library on the VDS (scenes can be edited from the browser). */
+export function sceneSounds(scene) {
+  const list = Array.isArray(scene?.sounds) ? scene.sounds : [];
+  return list.filter((x) => String(x?.url || "").startsWith(SOUND_BASE) && /^[\w-]+\.mp3$/.test(String(x.url).slice(SOUND_BASE.length))).slice(0, MAX_SCENE_SOUNDS);
+}
+
 /** Credit lines for footage and music that get one. Empty string when none. */
 export function creditsText(scenes, music, thumbnail) {
   const seen = new Set();
@@ -180,6 +189,11 @@ export function buildProps(project, scenes, urls = {}) {
       title: settings.titles.enabled && s.title ? s.title : null,
       card,
       voiceUrl: voiceOk ? urls.voice[s.id] : null,
+      sounds: sceneSounds(s).map((x) => {
+        const start = Math.min(Math.max(0, Math.round(Number(x.at || 0) * FPS)), dur - 1);
+        const whole = Math.max(1, Math.ceil(Number(x.duration || 1) * FPS));
+        return { url: x.url, volume: Math.min(Math.max(0, Number(x.volume ?? 0.6)), 1), start, frames: x.cut === false ? whole : Math.min(whole, dur - start), fade: x.cut !== false && whole > dur - start };
+      }),
       groups: captionGroups(words, settings.captions.words || 3),
       clip: {
         type: clip.type || "card",

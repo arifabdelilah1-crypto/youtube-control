@@ -228,6 +228,11 @@ export function Main(props) {
       {sfx.enabled && sfx.hit && hook.enabled ? (
         <Sequence from={0} durationInFrames={Math.round(fps * 1.5)}><Html5Audio src={src(sfx.hit)} volume={Number(sfx.volume ?? 0.5)} /></Sequence>
       ) : null}
+      {scenes.flatMap((s) => s.sounds.map((x, i) => (
+        <Sequence key={`s${s.id}${i}`} from={s.from + x.start} durationInFrames={x.frames} name="Sound">
+          <Html5Audio src={x.url} volume={(f) => x.volume * (x.fade ? interpolate(f, [x.frames - 8, x.frames - 1], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" }) : 1)} />
+        </Sequence>
+      )))}
       {music.url ? <Html5Audio src={music.url} loop volume={musicVolume} trimBefore={Math.round(Number(music.start || 0) * fps)} /> : null}
       {hook.enabled && hook.text ? (
         <Sequence from={0} durationInFrames={Math.round(fps * 2.5)}><Hook text={hook.text} font={font} rtl={rtl} width={width} /></Sequence>

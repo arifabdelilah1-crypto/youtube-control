@@ -143,7 +143,7 @@ Secrets:
 | GitHub repo secrets and Supabase Edge Function secrets | `MEDIA_URL`, `MEDIA_SECRET` | The VDS video store: `https://control.homerecipe.casa/media.php` and the shared secret in `/home/controlapp/.media-secret` |
 
 Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
-Sound effects in `web/sfx/` are synthesized (no license needed). Fonts in `web/fonts/` are SIL Open Font License.
+The whoosh and hit in `web/sfx/` are synthesized (no license needed). The Sounds tab's library is listed in `web/sfx-library.json`; its CC0 files live on the VDS in `public_html/sfx-library/`, copied by hand and not in this repo. Fonts in `web/fonts/` are SIL Open Font License.
 
 A network is one brand with all its accounts (a row in `channels`; YouTube is optional). Its page sets where it posts:
 YouTube directly or through Blotato; TikTok, Instagram Reels, X and Facebook Page Reels through Blotato
