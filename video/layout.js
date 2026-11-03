@@ -9,6 +9,14 @@ export const WORDS_PER_SECOND = 2.6;
 
 export const MUSIC_UNDER_VOICE = 0.55;
 
+export const THUMBNAIL_STYLES = {
+  dark: { label: "Dark psycho", color: "#FFFFFF", accent: "#E10600" },
+  horror: { label: "Horror", color: "#F2F2F2", accent: "#D00000" },
+  love: { label: "Love", color: "#FFFFFF", accent: "#FF7AA8" },
+  funny: { label: "Funny", color: "#FFE600", accent: "#FFFFFF" },
+  clean: { label: "Clean", color: "#111111", accent: "#E10600" },
+};
+
 export const DEFAULT_SETTINGS = {
   captions: { enabled: true, position: "bottom", color: "#FFFFFF", highlight: "#FFE600", size: 84, uppercase: true, words: 3 },
   hook: { enabled: true, text: "" },
@@ -69,11 +77,16 @@ export function foundMusic(music) {
 }
 
 /** Credit lines for footage and music that get one. Empty string when none. */
-export function creditsText(scenes, music) {
+export function creditsText(scenes, music, thumbnail) {
   const seen = new Set();
   const lines = [];
   const track = foundMusic(music);
   if (track) lines.push(`- Music: "${track.title}" by ${track.author}, ${track.license}, via Jamendo: ${track.page}`);
+  const pictured = thumbnail?.image && creditOf(thumbnail.image);
+  if (pictured) {
+    seen.add(pictured.page);
+    lines.push(`- Thumbnail: "${pictured.tags || "Photo"}" by ${pictured.author || "unknown author"}, ${pictured.license || "see source"}, via ${pictured.via}: ${pictured.page}`);
+  }
   for (const s of [...scenes].sort((a, b) => a.idx - b.idx)) {
     const c = creditOf(s.clip);
     if (!c || seen.has(c.page)) continue;
@@ -81,6 +94,25 @@ export function creditsText(scenes, music) {
     lines.push(`- "${c.tags || "Footage"}" by ${c.author || "unknown author"}, ${c.license || "see source"}, via ${c.via}: ${c.page}`);
   }
   return lines.length ? `Credits:\n${lines.join("\n")}` : "";
+}
+
+const THUMBNAIL_FIELDS = ["image", "text", "style", "color", "accent", "size", "position"];
+
+/** Is there anything to make a thumbnail from? */
+export const hasThumbnail = (t) => !!(t && (String(t.text || "").trim() || t.image?.url || t.image?.path));
+
+/** Changes whenever the picture would change: tells a saved thumbnail from an outdated one. 8 hex characters. */
+export function thumbnailKey(t = {}) {
+  const image = t.image ? { url: t.image.url, path: t.image.path, trim: t.image.trim } : null;
+  const text = JSON.stringify(THUMBNAIL_FIELDS.map((k) => (k === "image" ? image : t[k] ?? null)));
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+  return (h >>> 0).toString(16).padStart(8, "0");
+}
+
+export function thumbnailProps(t = {}, language = "en", assetBase = null) {
+  const { image, text, style, color, accent, size, position } = t;
+  return { image: image || null, text: text || "", style: style || "dark", color: color || null, accent: accent || null, size: Number(size) || 110, position: position || "bottom", language, assetBase };
 }
 
 /** Description with its "Credits:" block replaced (or added at the end, or removed when there are no credits). */

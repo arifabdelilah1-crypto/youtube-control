@@ -124,6 +124,7 @@ navigation moves to bottom tabs and tables turn into cards.
 | AI script | `ai` edge function: `index.ts` (capture, blueprint, script), `prompts.ts` (DeepSeek prompts and lengths) |
 | Voice + word timings | `prepare.yml` → `collectors/prepare_job.py`: Edge TTS, or `collectors/supertonic_voice.py` for Supertonic-3 |
 | Preview | `web/editor.bundle.js` (Remotion Player), built from `editor-src/` + `video/` |
+| Thumbnail | Editor → Thumbnail tab; `thumbnail.yml` → `render/thumbnail.mjs` makes a 1280×720 JPEG on the VDS, also made with the final render when out of date. Publishing sends it to YouTube after the video |
 | Final MP4 | `video.yml` → `render/render.mjs` (Remotion), uploaded to the VDS (`render/media.mjs`, `vds/media.php`), or to the private `renders` bucket if the VDS isn't set up or fails |
 
 After changing `web/`, `editor-src/` or `video/`, run `./sync-root.sh` (GitHub Pages serves the repo root).

@@ -8,8 +8,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, selectComposition } from "@remotion/renderer";
-import { buildProps, foundMusic } from "../video/layout.js";
+import { buildProps, foundMusic, hasThumbnail, thumbnailKey } from "../video/layout.js";
 import { mediaReady, uploadToVds } from "./media.mjs";
+import { makeThumbnail } from "./thumbnail.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -132,6 +133,11 @@ async function main() {
       concurrency: os.cpus().length, crf: 23, encodingMaxRate: "5M", encodingBufferSize: "10M", x264Preset: "veryfast", audioBitrate: "128k", timeoutInMilliseconds: 120000,
       onProgress: ({ progress }) => { const p = Math.floor(progress * 10); if (p !== last) { last = p; log(`render ${p * 10}%`); } },
     });
+    // so auto-publishing has an up-to-date thumbnail; the video never waits or fails for it
+    const thumb = project.settings?.thumbnail;
+    if (hasThumbnail(thumb) && thumb.file?.key !== thumbnailKey(thumb)) {
+      try { await makeThumbnail(project, serveUrl); } catch (e) { log(`Thumbnail skipped: ${e.message}`); }
+    }
     const duration = inputProps.totalFrames / inputProps.fps;
     const size = fs.statSync(out).size;
     const objectPath = `videos/${jobId}.mp4`;

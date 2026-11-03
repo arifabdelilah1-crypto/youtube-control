@@ -5,7 +5,8 @@ import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
 import { PRESETS, playSample, presetFx, sampleUrl, voiceFx } from "../web/voicefx.js";
-import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, buildProps, creditsText, foundMusic, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
+import { Thumbnail } from "../video/Thumbnail.jsx";
+import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, THUMBNAIL_STYLES, buildProps, creditsText, foundMusic, hasThumbnail, mergeSettings, thumbnailKey, thumbnailProps, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
   ["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
@@ -355,6 +356,103 @@ function MusicSearch({ sb, found, onPick }) {
   );
 }
 
+function ThumbnailPanel({ sb, project, scenes, signed, sign, onThumbnail, onCreate, creating, toast }) {
+  const t = project.settings?.thumbnail || {};
+  const style = THUMBNAIL_STYLES[t.style] ? t.style : "dark";
+  const set = (patch) => onThumbnail({ ...t, style, ...patch });
+  const [results, setResults] = useState([]);
+  const [q, setQ] = useState("");
+  const [state, setState] = useState("");
+  const [ideas, setIdeas] = useState([]);
+  useEffect(() => { if (t.image?.path) sign([t.image.path]); }, [t.image?.path, sign]);
+  const fromScenes = scenes.map((s) => s.clip).filter((c) => c && c.type !== "card" && (c.url || c.path)).filter((c, i, all) => all.findIndex((x) => (x.url || x.path) === (c.url || c.path)) === i);
+  useEffect(() => { sign(fromScenes.map((c) => c.path).filter(Boolean)); }, [scenes, sign]);
+  const search = async (e) => {
+    e.preventDefault();
+    if (!q.trim()) return;
+    setState("Searching…");
+    try {
+      const data = await invoke(sb, { action: "search", q: q.trim(), kind: "image", aspect: "16:9" });
+      setResults(data.results || []);
+      setState((data.results || []).length ? "" : "No photos found. Try another word.");
+    } catch (err) { setState(err.message); }
+  };
+  const upload = async (file) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) return toast("Choose an image under 10 MB.");
+    const path = `projects/${project.id}/media/thumb-${Date.now()}-${file.name.replace(/[^\w.-]+/g, "_")}`;
+    setState("Uploading…");
+    const { error } = await sb.storage.from("renders").upload(path, file, { contentType: file.type });
+    setState(error ? `Upload failed: ${error.message}` : "");
+    if (!error) { await sign([path]); set({ image: { type: "image", source: "upload", path } }); }
+  };
+  const suggest = async () => {
+    setState("Writing ideas…");
+    try {
+      const { data, error } = await sb.functions.invoke("ai", { body: { action: "thumbnail_text", idea_id: project.idea_id, title: project.title, language: project.language } });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      setIdeas(data.options || []);
+      setState("");
+    } catch (err) { setState(err.message || "Couldn't write ideas."); }
+  };
+  const save = async () => {
+    try {
+      const { url } = await invoke(sb, { action: "thumbnail_link", project_id: project.id });
+      window.location.href = url;
+    } catch (err) { toast(err.message); }
+  };
+  const same = (c) => t.image && (c.url ? t.image.url === c.url : t.image.path === c.path);
+  const pick = (c) => set({ image: { type: c.type, source: c.source, id: c.id, url: c.url, preview: c.preview, thumb: c.thumb, path: c.path, trim: c.trim || 0, tags: c.tags, author: c.author, license: c.license, page: c.page, credit: c.credit, download_location: c.download_location } });
+  const tile = (c, i) => {
+    const src = c.path ? signed.get(c.path) : c.thumb || c.preview || c.url;
+    return (
+      <button key={`${c.source}-${c.id || c.path}-${i}`} type="button" className={`ed-thumb-tile${same(c) ? " picked" : ""}`} aria-pressed={!!same(c)} aria-label={`Use ${c.tags || "this image"}`} onClick={() => pick(c)}>
+        {src ? <img src={src} alt="" loading="lazy" /> : null}
+      </button>
+    );
+  };
+  const current = t.file?.key === thumbnailKey(t);
+  return (
+    <div className="ed-panel">
+      <h3>Thumbnail</h3>
+      <p className="muted small" style={{ margin: 0 }}>Sent to YouTube with the video. Long videos show it everywhere; YouTube may ignore it on a Short.</p>
+      <Field label="Text" hint="2 to 5 big words work best. The last word takes the accent colour.">
+        <input className="field" dir="auto" maxLength={60} value={t.text || ""} onChange={(e) => set({ text: e.target.value })} placeholder="They never told you" />
+      </Field>
+      {project.idea_id ? <button type="button" className="btn small" onClick={suggest} disabled={state === "Writing ideas…"}>Suggest text</button> : null}
+      {ideas.length ? <div className="ed-thumb-styles">{ideas.map((o) => <button key={o} type="button" className="btn small ghost" onClick={() => set({ text: o })}>{o}</button>)}</div> : null}
+      <span className="ed-label">Style</span>
+      <div className="ed-thumb-styles" role="group" aria-label="Thumbnail style">
+        {Object.entries(THUMBNAIL_STYLES).map(([k, s]) => <button key={k} type="button" className={`btn small${style === k ? " primary" : ""}`} aria-pressed={style === k} onClick={() => set({ style: k, color: null, accent: null })}>{s.label}</button>)}
+      </div>
+      <div className="form-grid">
+        <Field label={`Text size · ${t.size || 110}`}><input type="range" min="60" max="170" step="5" value={t.size || 110} aria-label="Text size" onChange={(e) => set({ size: Number(e.target.value) })} /></Field>
+        <Field label="Position">
+          <select className="field" value={t.position || "bottom"} onChange={(e) => set({ position: e.target.value })}><option value="top">Top</option><option value="center">Middle</option><option value="bottom">Bottom</option></select>
+        </Field>
+        <Field label="Text colour"><input type="color" className="ed-thumb-color" value={t.color || THUMBNAIL_STYLES[style].color} onChange={(e) => set({ color: e.target.value })} /></Field>
+        <Field label="Accent colour"><input type="color" className="ed-thumb-color" value={t.accent || THUMBNAIL_STYLES[style].accent} onChange={(e) => set({ accent: e.target.value })} /></Field>
+      </div>
+      <span className="ed-label">Image from your scenes</span>
+      {fromScenes.length ? <div className="ed-thumb-grid">{fromScenes.map(tile)}</div> : <p className="muted small" style={{ margin: 0 }}>Your scenes have no clips yet.</p>}
+      <form className="row" onSubmit={search}>
+        <input className="field ed-music-q" type="search" aria-label="Search photos" placeholder="Search photos: dark corridor, shadow…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <button type="submit" className="btn small">Search</button>
+      </form>
+      {results.length ? <div className="ed-thumb-grid">{results.slice(0, 12).map(tile)}</div> : null}
+      <label className="btn small ed-thumb-upload">Upload an image<input type="file" accept="image/*" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} /></label>
+      {state ? <p className="muted small" role="status" style={{ margin: 0 }}>{state}</p> : null}
+      {t.error ? <pre className="err">{t.error}</pre> : null}
+      <div className="row">
+        <button type="button" className="btn primary" disabled={!hasThumbnail(t) || creating} onClick={onCreate}>{creating ? "Creating… about 2 minutes" : current ? "Create it again" : "Create thumbnail"}</button>
+        {t.file?.path ? <button type="button" className="btn small" onClick={save}>Save image</button> : null}
+        {hasThumbnail(t) ? <span className={`pill ${current ? "ok" : "warn"}`}>{current ? "Ready" : t.file ? "Changed" : "Not created"}</span> : null}
+      </div>
+    </div>
+  );
+}
+
 /** How loud the music is. Under the voice it plays at MUSIC_UNDER_VOICE of this level (video/Main.jsx). */
 function MusicLevel({ volume, onChange }) {
   const level = Math.round(volume * 100);
@@ -439,7 +537,7 @@ async function saveCredits(sb, ideaId, credits) {
 }
 
 function Credits({ sb, project, scenes, toast }) {
-  const text = creditsText(scenes, project.settings?.music);
+  const text = creditsText(scenes, project.settings?.music, project.settings?.thumbnail);
   if (!text) return null;
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); toast("Credits copied"); } catch { toast("Copy failed: select the text and copy it"); }
@@ -532,11 +630,32 @@ function Editor({ ctx }) {
   // poll while the voice or a render is running
   const preparing = project?.status === "preparing";
   const rendering = jobs.some((j) => ["queued", "dispatched", "running"].includes(j.status));
+  const [creatingThumb, setCreatingThumb] = useState(null);  // when it started
   useEffect(() => {
-    if (!preparing && !rendering) return undefined;
-    const t = setInterval(load, preparing ? 5000 : 10000);
+    if (!preparing && !rendering && !creatingThumb) return undefined;
+    const t = setInterval(load, preparing || creatingThumb ? 5000 : 10000);
     return () => clearInterval(t);
-  }, [preparing, rendering, load]);
+  }, [preparing, rendering, creatingThumb, load]);
+  useEffect(() => {
+    if (!creatingThumb) return;
+    const th = project?.settings?.thumbnail;
+    if (th?.error) setCreatingThumb(null);
+    else if (th?.file?.key === thumbnailKey(th) && Date.parse(th.file.at) >= creatingThumb) { setCreatingThumb(null); toast("Thumbnail ready"); }
+    else if (Date.now() - creatingThumb > 6 * 60e3) { setCreatingThumb(null); toast("The thumbnail is taking too long. Try again."); }
+  }, [project, creatingThumb, toast]);
+  const createThumbnail = async () => {
+    const started = Date.now();
+    try {
+      const settings = { ...project.settings, thumbnail: { ...project.settings.thumbnail, error: null } };
+      clearTimeout(saveTimer.current);
+      const { error } = await sb.from("video_projects").update({ settings, title: project.title }).eq("id", project.id);
+      if (error) throw error;
+      setProject((p) => ({ ...p, settings }));
+      await invoke(sb, { action: "thumbnail", project_id: project.id });
+      setCreatingThumb(started);
+      toast("Creating the thumbnail: about 2 minutes");
+    } catch (e) { toast(e.message); }
+  };
 
   const props = useMemo(() => {
     if (!project) return null;
@@ -647,7 +766,7 @@ function Editor({ ctx }) {
     setBusy("Starting render…");
     try {
       await invoke(sb, { action: "render", project_id: project.id });
-      const credits = creditsText(scenes, project.settings?.music);
+      const credits = creditsText(scenes, project.settings?.music, project.settings?.thumbnail);
       const err = credits && project.idea_id ? await saveCredits(sb, project.idea_id, credits) : null;
       toast(err ? `Render started, but the photo credits weren't saved to the description: ${err}` : "Final render started: usually 3–6 minutes");
       setCheck(null); await load();
@@ -701,7 +820,17 @@ function Editor({ ctx }) {
 
       <div className="ed-grid">
         <section className="ed-preview" aria-label="Preview">
-          <div className={`ed-player ar-${project.aspect.replace(":", "x")}`}>
+          {tab === "thumbnail" ? (
+            <div key="thumbnail" className="ed-player ar-16x9">
+              <Player
+                component={Thumbnail}
+                inputProps={thumbnailProps({ ...project.settings?.thumbnail, image: project.settings?.thumbnail?.image?.path ? { ...project.settings.thumbnail.image, url: signed.get(project.settings.thumbnail.image.path) } : project.settings?.thumbnail?.image }, project.language, new URL("./", location.href).href)}
+                durationInFrames={1} fps={30} compositionWidth={1280} compositionHeight={720}
+                style={{ width: "100%", height: "100%" }}
+              />
+            </div>
+          ) : (
+          <div key="video" className={`ed-player ar-${project.aspect.replace(":", "x")}`}>
             <Player
               ref={player}
               component={Main}
@@ -716,6 +845,7 @@ function Editor({ ctx }) {
               style={{ width: "100%", height: "100%" }}
             />
           </div>
+          )}
           {foundMusic(project.settings?.music) || tracks.some((t) => t.id === project.settings?.music?.track_id) ? (
             <MusicLevel volume={mergeSettings(project.settings).music.volume} onChange={(volume) => saveProject({ settings: { ...project.settings, music: { ...mergeSettings(project.settings).music, volume } } })} />
           ) : null}
@@ -724,7 +854,7 @@ function Editor({ ctx }) {
 
         <section className="ed-side">
           <div className="tabs" role="tablist">
-            {[["scenes", `Scenes (${scenes.length})`], ["style", "Style"], ["music", "Music"]].map(([k, t]) => (
+            {[["scenes", `Scenes (${scenes.length})`], ["style", "Style"], ["music", "Music"], ["thumbnail", "Thumbnail"]].map(([k, t]) => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{t}</button>
             ))}
           </div>
@@ -743,6 +873,7 @@ function Editor({ ctx }) {
             </div>
           ) : null}
           {tab === "style" ? <StylePanel project={project} ctx={ctx} toast={toast} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
+          {tab === "thumbnail" ? <ThumbnailPanel sb={sb} project={project} scenes={scenes} signed={signed} sign={sign} toast={toast} creating={!!creatingThumb} onCreate={createThumbnail} onThumbnail={(thumbnail) => saveProject({ settings: { ...project.settings, thumbnail } })} /> : null}
           {tab === "music" ? <MusicPanel sb={sb} project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
         </section>
       </div>

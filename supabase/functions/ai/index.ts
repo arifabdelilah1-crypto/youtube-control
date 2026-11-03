@@ -140,6 +140,15 @@ Deno.serve(async (req) => {
     const { data: idea } = await db.from("ideas").select("*").eq("id", ideaId).single();
     if (!idea) return json({ error: "idea not found" }, 404);
 
+    // ---------- short lines for the thumbnail ----------
+    if (body.action === "thumbnail_text") {
+      const language = clean(body.language, 8) || "en";
+      const out = await deepseek(db, ideaId, "thumbnail",
+        `You write the text on YouTube thumbnails. Answer as JSON: {"options": ["...", "...", "..."]}. Three different options of 2 to 5 words each, in the language with code "${language}". Make people curious without lying about the video. No hashtags, no emoji, no quotes.`,
+        `Title: ${clean(body.title || idea.video_title || idea.title, 200)}\n\nScript:\n${String(idea.script || "").slice(0, 4000)}`, user?.id ?? null);
+      return json({ options: (Array.isArray(out.options) ? out.options : []).map((o: unknown) => clean(o, 60)).filter(Boolean).slice(0, 3) });
+    }
+
     // ---------- capture ----------
     if (body.action === "capture") {
       const ref = (idea.sources || []).find((s: any) => s.type === "outlier")?.ref;

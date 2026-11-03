@@ -3,6 +3,7 @@
 // Every request carries a link signed with the shared secret (render/media.mjs, studio function):
 //   PUT  ?p=videos/<id>.mp4&e=<expiry>&s=<hmac>&offset=N[&reset=1][&final=1&size=N&sha256=H]   upload in chunks
 //   GET  ?p=videos/<id>.mp4&e=<expiry>&s=<hmac>[&dl=name]                                      play or download
+// Thumbnails work the same way, as thumbs/<project id>-<8 hex>.jpg.
 // Files live outside the web root; the secret too.
 // This server drops Content-Length from PHP responses, and video players and Blotato need it. public_html/.htaccess restores it:
 //   <Files "media.php">
@@ -31,7 +32,7 @@ if ($signedMethod !== 'GET' && $signedMethod !== 'PUT') fail(405, 'method not al
 $path = (string)($_GET['p'] ?? '');
 $expiry = (int)($_GET['e'] ?? 0);
 $signature = (string)($_GET['s'] ?? '');
-if (!preg_match('#^videos/[0-9a-f-]{36}\.mp4$#', $path)) fail(404, 'not found');
+if (!preg_match('#^(videos/[0-9a-f-]{36}\.mp4|thumbs/[0-9a-f-]{36}-[0-9a-f]{8}\.jpg)$#', $path)) fail(404, 'not found');
 
 $secret = trim((string)@file_get_contents(SECRET_FILE));
 if (strlen($secret) < 32) fail(503, 'store not set up');
@@ -82,10 +83,11 @@ $size = (int)filesize($file);
 $start = 0;
 $end = $size - 1;
 header('Accept-Ranges: bytes');
-header('Content-Type: video/mp4');
+$isImage = str_ends_with($path, '.jpg');
+header('Content-Type: ' . ($isImage ? 'image/jpeg' : 'video/mp4'));
 header('Cache-Control: private, max-age=3600');
 $name = preg_replace('/[^\w-]+/', '_', (string)($_GET['dl'] ?? ''));
-if ($name !== '') header('Content-Disposition: attachment; filename="' . substr($name, 0, 80) . '.mp4"');
+if ($name !== '') header('Content-Disposition: attachment; filename="' . substr($name, 0, 80) . ($isImage ? '.jpg' : '.mp4') . '"');
 if (preg_match('/^bytes=(\d*)-(\d*)$/', (string)($_SERVER['HTTP_RANGE'] ?? ''), $m) && ($m[1] !== '' || $m[2] !== '')) {
   if ($m[1] === '') { $start = max(0, $size - (int)$m[2]); }
   else { $start = (int)$m[1]; if ($m[2] !== '') $end = min((int)$m[2], $size - 1); }

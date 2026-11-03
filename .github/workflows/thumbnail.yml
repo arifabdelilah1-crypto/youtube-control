@@ -1,0 +1,32 @@
+name: Create thumbnail
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: "video_projects.id"
+        required: true
+concurrency: { group: "thumbnail-${{ github.event.inputs.project_id }}", cancel-in-progress: true }
+jobs:
+  thumbnail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Cache the headless browser
+        uses: actions/cache@v4
+        with:
+          path: node_modules/.remotion
+          key: remotion-browser-${{ hashFiles('package-lock.json') }}
+      - name: Create
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MEDIA_URL: ${{ secrets.MEDIA_URL }}
+          MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+        run: node render/thumbnail.mjs "$PROJECT_ID"

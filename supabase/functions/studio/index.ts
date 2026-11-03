@@ -8,6 +8,8 @@
 // POST {action:"music_search", mood? | q?, page?}  -> background music with a licence for monetized videos. Returns {results}
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
 // POST {action:"video_link", job_id, download?}    -> a link (1 hour) to a final video on the VDS (vds/media.php)
+// POST {action:"thumbnail", project_id}            -> creates the thumbnail in the "Create thumbnail" workflow
+// POST {action:"thumbnail_link", project_id}       -> a link (1 hour) to the thumbnail, to save it
 // Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY, YOUTUBE_API_KEY, MEDIA_URL, MEDIA_SECRET
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { type Footage, parseScript, parseTerm, searchTerm } from "./script.ts";
@@ -225,6 +227,24 @@ Deno.serve(async (req) => {
       const err = await dispatch("prepare.yml", { project_id: body.project_id, scene_ids: ids.join(",") });
       if (err) await db.from("video_projects").update({ status: "failed", error: err }).eq("id", body.project_id);
       return json({ status: err ? "failed" : "preparing", error: err }, err ? 503 : 200);
+    }
+
+    if (body.action === "thumbnail") {
+      if (!UUID.test(body.project_id || "")) return json({ error: "project_id required" }, 400);
+      const { data: project } = await db.from("video_projects").select("settings").eq("id", body.project_id).maybeSingle();
+      if (!project) return json({ error: "project not found" }, 404);
+      await trackUnsplashDownloads(KEYS.unsplash, [project.settings?.thumbnail?.image]);
+      const err = await dispatch("thumbnail.yml", { project_id: body.project_id });
+      return json({ error: err }, err ? 503 : 200);
+    }
+
+    if (body.action === "thumbnail_link") {
+      if (!UUID.test(body.project_id || "")) return json({ error: "project_id required" }, 400);
+      const { data: project } = await db.from("video_projects").select("settings").eq("id", body.project_id).maybeSingle();
+      const file = String(project?.settings?.thumbnail?.file?.path || "");
+      if (!file.startsWith("vds:")) return json({ error: "No thumbnail yet." }, 404);
+      if (!MEDIA_URL || !MEDIA_SECRET) return json({ error: "The video store isn't set up: add MEDIA_URL and MEDIA_SECRET in Supabase Edge Function secrets." }, 503);
+      return json({ url: await mediaLink(MEDIA_URL, MEDIA_SECRET, file.slice(4), 3600, "thumbnail") });
     }
 
     if (body.action === "render") {

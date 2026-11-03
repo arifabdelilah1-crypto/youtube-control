@@ -56,7 +56,33 @@ async function signedUrl(objectPath) {
   return `${URL_}/storage/v1${(await r.json()).signedURL}`;
 }
 
-async function toYouTube(row, sched, file) {
+/** The project's thumbnail goes up after the video. A refusal never undoes the upload: it's reported on the queue row. */
+async function setThumbnail(row, job, videoId, token) {
+  if (!job.project_id) return null;
+  const [project] = await rest("GET", "video_projects", `?id=eq.${job.project_id}&select=settings`);
+  const objectPath = project?.settings?.thumbnail?.file?.path;
+  if (!isVds(objectPath)) return null;
+  try {
+    const image = await fetch(mediaLink("GET", vdsPath(objectPath)));
+    if (!image.ok) throw new Error(`the image isn't on the VDS (${image.status})`);
+    const body = Buffer.from(await image.arrayBuffer());
+    const r = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}&uploadType=media`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "image/jpeg", "Content-Length": String(body.length) }, body,
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      const reason = data.error?.errors?.[0]?.reason || data.error?.message || r.status;
+      throw new Error(reason === "forbidden" ? "this channel can't use custom thumbnails yet: verify it by phone in YouTube Studio" : String(reason));
+    }
+    log("Thumbnail set");
+    return null;
+  } catch (e) {
+    log(`Thumbnail not set: ${e.message}`);
+    return `The video went up, but its thumbnail didn't: ${e.message}`.slice(0, 500);
+  }
+}
+
+async function toYouTube(row, sched, file, job) {
   const { access_token } = await fn("publish", { action: "token", channel_id: row.channel_id });
   const future = row.slot_at && Date.parse(row.slot_at) > Date.now() + 5 * 60e3;
   const privacy = sched?.privacy || "public";
@@ -90,7 +116,8 @@ async function toYouTube(row, sched, file) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.id) throw new Error(`YouTube upload ${res.status}: ${JSON.stringify(data.error || data).slice(0, 400)}`);
-  return { youtube_video_id: data.id, status: meta.status.publishAt ? "scheduled" : "published" };
+  const warning = await setThumbnail(row, job, data.id, access_token);
+  return { youtube_video_id: data.id, status: meta.status.publishAt ? "scheduled" : "published", warning };
 }
 
 async function toBlotato(row, sched, job) {
@@ -132,8 +159,9 @@ async function main() {
     const [job] = await rest("GET", "render_jobs", `?id=eq.${row.render_job_id}&select=*`);
     const [sched] = await rest("GET", "publish_schedules", `?channel_id=eq.${row.channel_id}&select=*`);
     const settings = sched || { method: "youtube", privacy: "public", notify_subscribers: true, category_id: "22" };
-    const result = row.method === "blotato" ? await toBlotato(row, settings, job) : await toYouTube(row, settings, await videoFile(job));
-    await rest("PATCH", "publish_queue", `?id=eq.${queueId}`, { ...result, error: null });
+    const result = row.method === "blotato" ? await toBlotato(row, settings, job) : await toYouTube(row, settings, await videoFile(job), job);
+    const { warning, ...saved } = result;
+    await rest("PATCH", "publish_queue", `?id=eq.${queueId}`, { ...saved, error: warning || null });
     if (row.idea_id) await rest("PATCH", "ideas", `?id=eq.${row.idea_id}`, { stage: result.status === "published" ? "published" : "scheduled" });
     log(`${result.status === "published" ? "Published" : `Scheduled for ${row.slot_at}`}${result.youtube_video_id ? `: https://youtu.be/${result.youtube_video_id}` : ""}`);
   } catch (e) {

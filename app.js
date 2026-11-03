@@ -901,7 +901,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "10";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "11";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
