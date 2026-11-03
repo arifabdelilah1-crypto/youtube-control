@@ -239,7 +239,8 @@ const LICENSE_NAMES: Record<string, string> = { by: "CC BY", cc0: "CC0" };
 export async function openverseMusic(q: string, page = 1): Promise<MusicTrack[]> {
   if (!q.trim()) return [];
   const params = new URLSearchParams({ q: q.slice(0, 100), license: "by,cc0", category: "music", source: "jamendo", page: String(page), page_size: "20" });
-  const r = await fetch(`https://api.openverse.org/v1/audio/?${params}`, { headers: { "User-Agent": UA } });
+  const r = await fetch(`https://api.openverse.org/v1/audio/?${params}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) })
+    .catch(() => { throw new Error("The music search isn't responding right now. Try again later, or use your own tracks."); });
   if (r.status === 429) throw new Error("The music search is busy. Try again in a minute.");
   if (!r.ok) return [];  // past the last page, too
   // deno-lint-ignore no-explicit-any

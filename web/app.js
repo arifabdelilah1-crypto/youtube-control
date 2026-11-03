@@ -644,9 +644,17 @@ VIEWS.ideas = async () => {
 // ==================================================================
 VIEWS.studio = async (route) => {
   if (route.id) return studioEditor(route.id);
+  // every video belongs to a network: choose it first
+  if (state.channel === "all") {
+    return [pageHead("Studio", "Which network are you working on?"),
+      state.channels.length ? h("section", { class: "grid-cards wide" }, state.channels.map((c) => h("button", { class: "ch-card net-pick", type: "button", onclick: () => setChannel(c.id) },
+        h("div", { class: "row", style: "gap:12px;flex-wrap:nowrap" }, c.thumbnail_url ? h("img", { class: "avatar", src: c.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
+          h("div", { style: "min-width:0;text-align:left" }, h("div", { style: "font-weight:600", text: c.title }), h("div", { class: "muted small", text: `${state.niches.find((n) => n.id === c.niche_id)?.name || "No niche"} · ${(c.language || "—").toUpperCase()}` }))))))
+        : empty("No networks yet.", h("a", { class: "btn primary", href: "#/channels", text: "Create a network" }))];
+  }
   let iq = sb.from("ideas").select("*").in("stage", ["shortlisted", "assigned", "scripted", "produced", "scheduled"]).order("updated_at", { ascending: false });
   if (state.channel !== "all") iq = iq.eq("channel_id", state.channel);
-  const [ideas, jobs] = await Promise.all([q(iq), q(sb.from("render_jobs").select("*").order("created_at", { ascending: false }).limit(15))]);
+  const [ideas, jobs] = await Promise.all([q(iq), q(sb.from("render_jobs").select("*").eq("channel_id", state.channel).order("created_at", { ascending: false }).limit(15))]);
   const newBtn = h("button", { class: "btn primary", type: "button", text: "+ New video", onclick: async () => {
     const idea = await q(sb.from("ideas").insert({ title: "Untitled video", stage: "assigned", channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] }).select().single());
     go(`#/studio/${idea.id}`);
@@ -683,6 +691,7 @@ function renderRow(j) {
         const url = await videoLink(j, true);
         if (url) location.href = url;
       } }) : null,
+      j.status === "done" && j.project_id ? h("a", { class: "btn small", href: `#/edit/${j.project_id}?tab=publish`, text: "Publish" }) : null,
       j.status === "failed" ? h("button", { class: "btn small", type: "button", text: "Retry", onclick: async () => {
         const { error } = await sb.functions.invoke("render", { body: { retry: j.id } }); toast(error ? "Retry failed" : "Render restarted"); render();
       } }) : null,
@@ -721,7 +730,7 @@ async function studioEditor(ideaId) {
   const f = {};
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
   f.title = h("input", { id: "s-title", class: "field", dir: "auto", value: project?.title || idea.video_title || idea.title });
-  f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No network" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === idea.channel_id, text: c.title })));
+  f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No network" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === (idea.channel_id || (state.channel !== "all" ? state.channel : null)), text: c.title })));
   f.script = h("textarea", { id: "s-script", class: "field script", rows: "14", dir: "auto", value: idea.script || "",
     placeholder: "One line = one scene. First line = the hook.\nAdd footage words in brackets at the end of a line:\n\nWhat if Lamine Yamal signed for Real Madrid? [football stadium night, crowd cheering]\nThe Bernabéu explodes. [stadium fireworks]\n\nOr one block per scene (every line but VO is optional):\n\nTITLE: YAMAL TO MADRID?\nVO: What if Lamine Yamal signed for Real Madrid?\nFOOTAGE: image: Lamine Yamal | video: football stadium night\nCARD: Lamine Yamal | 19 goals | #A50044 #004D98" });
   const counter = h("div", { class: "muted small" });
@@ -793,9 +802,9 @@ async function studioEditor(ideaId) {
       if (data.error) toast(data.error);
       else if (!data.footage) toast("Scenes ready. Stock clip search isn't set up yet (PEXELS_API_KEY or PIXABAY_API_KEY in Supabase).");
       go(`#/edit/${data.project_id}`);
-    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = project ? "Rebuild scenes from script" : "Create scenes →"; }
+    } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = project ? "Rebuild scenes →" : "Create scenes →"; }
   };
-  const buildBtn = h("button", { class: `btn ${project ? "" : "primary"}`, type: "button", text: project ? "Rebuild scenes from script" : "Create scenes →", onclick: (e) => build(e.currentTarget) });
+  const buildBtn = h("button", { class: "btn primary", type: "button", text: project ? "Rebuild scenes →" : "Create scenes →", onclick: (e) => build(e.currentTarget) });
   const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this network’s default voice & format", onclick: async () => {
     if (!f.channel.value) return toast("Pick a network first");
     const cur = channelById(f.channel.value)?.video_style || {};
@@ -805,26 +814,41 @@ async function studioEditor(ideaId) {
 
   const aiPanel = studioAiPanel(idea, f, buildBtn, save);
 
-  return [
-    h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: project?.title || idea.video_title || idea.title })),
-      h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }), buildBtn,
-        project ? h("a", { class: "btn primary", href: `#/edit/${project.id}`, text: "Open editor →" }) : null)),
-    project ? h("p", { class: "muted small", style: "margin:0", text: "Rebuilding keeps the voice and clip of every line you didn't change." }) : null,
+  const flow = h("ol", { class: "flow", "aria-label": "Steps" },
+    h("li", { "aria-current": "step" }, h("span", { text: "1. Script" })),
+    h("li", {}, project ? h("a", { href: `#/edit/${project.id}`, text: "2. Scenes & style" }) : h("span", { class: "muted", text: "2. Scenes & style" })),
+    h("li", {}, project ? h("a", { href: `#/edit/${project.id}`, text: "3. Render" }) : h("span", { class: "muted", text: "3. Render" })),
+    h("li", {}, project ? h("a", { href: `#/edit/${project.id}?tab=publish`, text: "4. Publish" }) : h("span", { class: "muted", text: "4. Publish" })));
+  // a new video follows the network it's for, until you change something yourself
+  f.channel.addEventListener("change", () => {
+    const style = channelById(f.channel.value)?.video_style;
+    if (project || !style) return;
+    if (style.language) { f.language.value = style.language; fillVoices(); }
+    if (style.voice) f.voice.value = style.voice;
+    if (style.voice_rate) { if (![...f.rate.options].some((o) => Number(o.value) === Number(style.voice_rate))) f.rate.append(h("option", { value: style.voice_rate, text: `${style.voice_rate}×` })); f.rate.value = String(style.voice_rate); }
+    if (style.aspect) { f.aspect.value = style.aspect; f.aspect.dispatchEvent(new Event("change")); }
+    const fx = voiceFx(style.editor);
+    if (PRESETS[fx.style]) f.voiceStyle.value = fx.style;
+  });
+  return [flow,
+    h("header", { class: "head" }, h("div", { class: "head-text" }, h("a", { href: "#/studio", class: "small", text: "← Studio" }), h("h1", { text: project?.title || idea.video_title || idea.title }))),
     aiPanel,
-    h("div", { class: "cols" },
-      h("section", { class: "card grow3" }, h("h2", { text: "Script" }),
-        field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
-        h("p", { class: "muted small", style: "margin:0", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pexels, Unsplash, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
-        field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
-      h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),
-        field("s-channel", "Network", f.channel),
-        h("div", { class: "form-grid" }, field("s-lang", "Language", f.language), field("s-voice", "Voice", f.voice), field("s-voice-style", "Voice style", f.voiceStyle), field("s-rate", "Voice speed", f.rate), field("s-aspect", "Format", f.aspect)),
-        h("div", { class: "row" }, listen),
-        saveStyle,
-        h("p", { class: "muted small", style: "margin:0", text: "Captions, hook text, music and sound effects are set in the editor." }))),
-    h("details", { class: "card" }, h("summary", { text: "Publishing details (description, tags)" }),
+    h("section", { class: "card" }, h("h2", { text: "Your script" }),
+      field("s-title", "Video title", f.title), field("s-script", "Voice-over · one line per scene, or TITLE / VO / FOOTAGE / CARD blocks", f.script), counter,
+      h("details", {}, h("summary", { class: "small", text: "Footage and format tips" }),
+        h("p", { class: "muted small", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pexels, Unsplash, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
+        field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”."))),
+    h("section", { class: "card" }, h("h2", { text: "Voice" }),
+      h("div", { class: "form-grid" }, field("s-voice", "Voice", f.voice), field("s-voice-style", "Voice style", f.voiceStyle), field("s-rate", "Voice speed", f.rate)),
+      h("div", { class: "row" }, listen, saveStyle),
+      h("p", { class: "muted small", style: "margin:0", text: "Captions, hook text, music, sound effects and the thumbnail are set in the next step." })),
+    h("details", { class: "card" }, h("summary", { text: "Description and tags" }),
       field("s-desc", "Description", f.desc), field("s-tags", "Tags (comma-separated)", f.tags),
       h("p", { class: "muted small", style: "margin:0", text: "Turn on “Altered or synthetic content” when uploading videos with realistic AI visuals of real people." })),
+    h("div", { class: "studio-actions" },
+      h("span", { class: "muted small", text: project ? "Rebuilding keeps the voice and clip of every line you didn't change." : "Next: scenes, style, render and publish." }),
+      h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }),
+        project ? h("a", { class: "btn", href: `#/edit/${project.id}`, text: "Open editor" }) : null, buildBtn)),
     jobs.length ? h("section", { class: "card" }, h("h2", { text: "Earlier quick renders" }), jobs.map((j) => renderRow(j))) : null,
   ];
 }
@@ -846,7 +870,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
   const status = h("span", { class: "muted small", role: "status" });
   const busy = (on) => [genBtn, goBtn, improveBtn, restoreBtn].forEach((b) => { if (b) b.disabled = on; });
   const run = async ({ thenBuild = false, improve = false } = {}) => {
-    if (!f.channel.value) return toast("Pick the network first (right column): the script is written for its audience.");
+    if (!f.channel.value) return toast("Pick the network first: the script is written for its audience.");
     busy(true);
     try {
       // saved first, so Improve and Restore work from exactly what is on screen now
@@ -861,7 +885,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
       status.textContent = "";
       if (thenBuild) { busy(false); buildBtn.click(); return; }
       studioPicks.set(idea.id, { language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value, voice_style: f.voiceStyle.value });
-      toast(improve ? "Script improved: check it, then Create scenes" : "Script ready: check it, then Create scenes"); render();
+      toast(improve ? "Script improved: check it, then continue at the bottom" : "Script ready: check it, then continue at the bottom"); render();
     } catch (e) { status.textContent = ""; toast(e.message); busy(false); }
   };
   const genBtn = h("button", { class: `btn ${idea.script ? "" : "primary"}`, type: "button", text: idea.script ? "Regenerate script" : "✨ Generate script", onclick: () => run() });
@@ -879,7 +903,9 @@ function studioAiPanel(idea, f, buildBtn, save) {
 
   const field = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
   return h("section", { class: "card ai-card" },
-    h("div", { class: "card-head" }, h("h2", { text: "AI script" }), h("span", { class: "muted small", text: "DeepSeek copies the format and uses your keyword research, in new words for your channel" })),
+    h("div", { class: "card-head" }, h("h2", { text: "Write with AI" }), h("span", { class: "muted small", text: "Choose these first, then generate" })),
+    h("div", { class: "form-grid" }, field("s-channel", "Network", f.channel), field("s-lang", "Language", f.language), field("s-aspect", "Format", f.aspect), field("ai-length", "Length", length)),
+    field("ai-angle", "Angle (optional)", angle),
     src ? h("div", { class: "ai-src" },
       src.thumbnail ? h("a", { href: src.url, target: "_blank", rel: "noopener", class: "ai-thumb" }, h("img", { src: src.thumbnail, alt: "" })) : null,
       h("div", { style: "min-width:0;display:flex;flex-direction:column;gap:4px" },
@@ -895,7 +921,6 @@ function studioAiPanel(idea, f, buildBtn, save) {
         bp.title_pattern ? h("div", {}, h("b", { text: "Title pattern: " }), bp.title_pattern) : null,
         bp.why_it_worked?.length ? h("div", {}, h("b", { text: "Why it worked" }), h("ul", { style: "margin:4px 0 0;padding-left:18px" }, bp.why_it_worked.map((w) => h("li", { text: w })))) : null)) : null,
     isOutlier ? h("details", {}, h("summary", { text: idea.transcript ? "Transcript (pasted)" : "Paste the transcript (optional, better copy of the structure)" }), transcript) : null,
-    h("div", { class: "ai-opts" }, field("ai-length", "Length", length), field("ai-angle", "Angle (optional)", angle)),
     h("div", { class: "row" }, genBtn, idea.script ? null : goBtn, improveBtn, restoreBtn, status),
     idea.ai_status === "failed" && idea.ai_error ? h("pre", { class: "err", text: idea.ai_error }) : null,
     ai?.title_options?.length ? h("div", { class: "field-wrap" }, h("span", { class: "muted small", text: "Title options (click to use)" }),
@@ -907,11 +932,11 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "13";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "14";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
-  state.unmount = mod.mountEditor(el, { sb, projectId: route.id, toast, VOICES, LANGS });
+  state.unmount = mod.mountEditor(el, { sb, projectId: route.id, toast, VOICES, LANGS, initialTab: route.params.get("tab") });
   return el;
 };
 

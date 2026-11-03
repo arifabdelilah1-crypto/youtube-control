@@ -1,5 +1,6 @@
 // Publishing queue.
-// POST {action:"queue",  render_job_id, when: "next" | "now" | ISO date}  (dashboard user) -> queue + start the upload job
+// POST {action:"queue",  render_job_id, when: "next" | "now" | ISO date, platform?}  (dashboard user) -> queue + start the upload job
+//      The project's settings.publish applies: {mode: "ask" | "next" | "now" | "date", at, exclude: [platform], text: {platform: {title, description}}, options: {platform: {privacy}}}
 // POST {action:"auto",   render_job_id}                                   (render job, x-cron-secret) -> queue if the channel's auto-publish is on
 // POST {action:"cancel", queue_id}                                       (dashboard user) -> cancel a post that isn't uploaded yet
 // POST {action:"blotato_accounts"}                                       (dashboard user) -> connected accounts, and each Facebook account's Pages
@@ -63,9 +64,16 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   if (!channelId) return { error: "This video has no network. Set the network on its Studio page first.", status: 400 };
   const { data: sched } = await db.from("publish_schedules").select("*").eq("channel_id", channelId).maybeSingle();
   const schedule = sched || DEFAULT_SCHEDULE;
-  if (onlyIfAuto && !schedule.enabled) return { skipped: "auto-publish is off for this channel" };
-  const targets = targetsOf(schedule);
-  if (!targets.length) return { error: "This network posts nowhere yet. Pick its accounts on its Networks page.", status: 400 };
+  // what was chosen for this video wins over the network's schedule
+  const plan = project?.settings?.publish || {};
+  if (onlyIfAuto) {
+    if (plan.mode === "ask") return { skipped: "this video waits for you to publish it" };
+    if (plan.mode === "now" || plan.mode === "date") when = plan.mode === "now" ? "now" : (Date.parse(plan.at) > Date.now() + 15 * 60e3 ? plan.at : "next");
+    else if (plan.mode !== "next" && !schedule.enabled) return { skipped: "auto-publish is off for this channel" };
+  }
+  const excluded = new Set(Array.isArray(plan.exclude) ? plan.exclude : []);
+  const targets = targetsOf(schedule).filter((x) => !excluded.has(x.platform));
+  if (!targets.length) return { error: excluded.size ? "Every account is switched off for this video. Turn one on in its Publish tab." : "This network posts nowhere yet. Pick its accounts on its Networks page.", status: 400 };
   if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account on this network's page.", status: 400 };
   if (targets.some((x) => x.method === "youtube")) {
     const { count } = await db.from("channel_tokens").select("channel_id", { count: "exact", head: true }).eq("channel_id", channelId);
@@ -99,7 +107,9 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
     const row = {
       render_job_id: jobId, channel_id: channelId, idea_id: job.idea_id || project?.idea_id || null, method: target.method, platform: target.platform,
       blotato_account_id: target.account_id || null, public_url: null,
-      title, description: String(idea?.video_description || "").slice(0, 4900), tags: (idea?.video_tags || []).slice(0, 30),
+      title: String(plan.text?.[target.platform]?.title ?? plan.text?.all?.title ?? title).replace(/[<>]/g, "").slice(0, target.platform === "twitter" ? 280 : 100) || title,
+      description: String(plan.text?.[target.platform]?.description ?? plan.text?.all?.description ?? idea?.video_description ?? "").slice(0, 4900),
+      tags: (idea?.video_tags || []).slice(0, 30), options: plan.options?.[target.platform] || {},
       slot_at: slot, status: "queued", error: null, youtube_video_id: null, blotato_post_id: null,
     };
     const { data: saved, error } = await db.from("publish_queue").upsert(row, { onConflict: "render_job_id,platform" }).select().single();

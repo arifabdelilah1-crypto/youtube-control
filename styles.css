@@ -278,6 +278,29 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .login-card label { font-size: 12.5px; font-weight: 600; color: var(--graphite); }
 .login-card input { min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r); padding: 0 12px; font: 400 15px/1 var(--display); }
 .login-card .btn { min-height: 44px; }
+.studio-actions { position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 -4px 18px rgba(0, 0, 0, .08); }
+.flow { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; padding: 0; font-size: 13px; }
+.flow li { display: flex; }
+.flow a, .flow button, .flow span { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); color: var(--graphite); font: inherit; text-decoration: none; }
+.flow button { cursor: pointer; }
+.flow button:disabled { cursor: default; opacity: .6; }
+.flow li[aria-current="step"] > * { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 600; }
+.flow li.done > *::after { content: " ✓"; }
+.net-pick { width: 100%; font: inherit; text-align: left; cursor: pointer; }
+.ed-network { align-self: flex-start; margin-top: 4px; }
+.ed-publish { display: flex; flex-direction: column; gap: 12px; }
+.ed-publish h3 { margin: 6px 0 0; }
+.ed-accounts { display: flex; flex-direction: column; gap: 8px; }
+.ed-account { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r); }
+.ed-account.off { background: var(--panel-2); }
+.ed-account.off strong { color: var(--graphite); text-decoration: line-through; }
+.ed-account .ed-check { min-height: 0; align-items: center; }
+.ed-account pre, .ed-account-text { flex: 1 1 100%; min-width: 0; }
+.ed-account-text { display: flex; flex-direction: column; gap: 8px; }
+.ed-privacy { min-height: 32px; width: auto; padding-block: 0; font-size: 13px; }
+.ed-when { display: flex; flex-direction: column; gap: 4px; }
+.ed-when .ed-check { min-height: 28px; align-items: center; }
+.ed-warnings { display: flex; flex-direction: column; gap: 6px; }
 .net-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .net-new, .net-accounts { display: flex; flex-direction: column; gap: 12px; }
 .net-row { display: grid; grid-template-columns: 96px 104px minmax(0, 1fr); align-items: center; gap: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
@@ -502,3 +525,4 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .pub-check { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
 .pub-check input { margin-top: 3px; flex: none; }
 @media (max-width: 420px) { .side-links a { font-size: 9.5px; letter-spacing: -.01em; } }
+@media (max-width: 860px) { .studio-actions { bottom: 72px; } }

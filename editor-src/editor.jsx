@@ -238,6 +238,197 @@ function VoiceStyle({ project, onProject, toast }) {
 }
 
 /** New videos in the network start from what's on screen: not this video's words, photo or chosen track. */
+const PLATFORMS = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram Reels", twitter: "X", facebook: "Facebook Reels" };
+const PRIVACY = {
+  youtube: [["public", "Public"], ["unlisted", "Unlisted"], ["private", "Private"]],
+  tiktok: [["PUBLIC_TO_EVERYONE", "Public"], ["SELF_ONLY", "Only me"], ["MUTUAL_FOLLOW_FRIENDS", "Friends"], ["FOLLOWER_OF_CREATOR", "Followers"]],
+};
+const POST_STATUS = { queued: ["info", "Queued"], uploading: ["info", "Sending"], scheduled: ["warn", "Scheduled"], published: ["ok", "Published"], failed: ["crit", "Failed"], cancelled: ["short", "Cancelled"] };
+
+async function publishCall(sb, body) {
+  const { data, error } = await sb.functions.invoke("publish", { body });
+  if (error) {
+    let msg = error.message;
+    try { msg = (await error.context.json()).error || msg; } catch { /* keep */ }
+    throw new Error(msg);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+/** Local value for a datetime-local field. */
+const toLocalInput = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
+/** The last step: which accounts get this video, with what words, and when. Saved on the project, so it holds through the render. */
+function PublishPanel({ sb, project, jobs, scenes, stale, onProject, onRender, toast }) {
+  const plan = project.settings?.publish || {};
+  const [network, setNetwork] = useState({ loading: true, channels: [], schedule: null, idea: null });
+  const [posts, setPosts] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [busy, setBusy] = useState("");
+  const done = jobs.find((j) => j.status === "done");
+  const rendering = jobs.some((j) => ["queued", "dispatched", "running"].includes(j.status));
+
+  const load = useCallback(async () => {
+    const [ch, sc, idea, rows] = await Promise.all([
+      sb.from("channels").select("id,title,network_name,youtube_channel_id,connected").order("created_at"),
+      project.channel_id ? sb.from("publish_schedules").select("*").eq("channel_id", project.channel_id).maybeSingle() : { data: null },
+      project.idea_id ? sb.from("ideas").select("video_title,video_description").eq("id", project.idea_id).maybeSingle() : { data: null },
+      done ? sb.from("publish_queue").select("*").eq("render_job_id", done.id) : { data: [] },
+    ]);
+    setNetwork({ loading: false, channels: ch.data || [], schedule: sc.data, idea: idea.data });
+    setPosts(rows.data || []);
+  }, [sb, project.channel_id, project.idea_id, done?.id]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!posts.some((r) => ["queued", "uploading"].includes(r.status))) return undefined;
+    const t = setInterval(load, 8000);
+    return () => clearInterval(t);
+  }, [posts, load]);
+
+  if (network.loading) return <div className="ed-panel"><p className="muted small" role="status">Loading the network…</p></div>;
+  const channel = network.channels.find((c) => c.id === project.channel_id);
+  const nameOf = (c) => c.network_name || c.title;
+  if (!channel) {
+    return (
+      <div className="ed-panel">
+        <h3>Publish</h3>
+        <Field label="Which network is this video for?">
+          <select className="field" value="" onChange={(e) => e.target.value && onProject({ channel_id: e.target.value })}>
+            <option value="">Choose a network</option>
+            {network.channels.map((c) => <option key={c.id} value={c.id}>{nameOf(c)}</option>)}
+          </select>
+        </Field>
+      </div>
+    );
+  }
+  const s = network.schedule;
+  const targets = Array.isArray(s?.targets) ? s.targets : channel.youtube_channel_id ? [{ platform: "youtube", method: s?.method || "youtube" }] : [];
+  const excluded = new Set(plan.exclude || []);
+  const included = targets.filter((t) => !excluded.has(t.platform));
+  const mode = plan.mode || (s?.enabled ? "next" : "ask");
+  const save = (patch) => onProject({ settings: { ...project.settings, publish: { mode, ...plan, ...patch } } });
+  const postOf = (platform) => posts.find((r) => r.platform === platform && r.status !== "cancelled");
+  const defaults = { title: network.idea?.video_title || project.title || "", description: network.idea?.video_description || "" };
+  const text = { ...defaults, ...(plan.text?.all || {}) };
+  const textFor = (platform) => ({ ...text, ...(plan.text?.[platform] || {}) });
+  const setText = (key, patch) => save({ text: { ...(plan.text || {}), [key]: { ...(plan.text?.[key] || {}), ...patch } } });
+  const toggle = (platform, on) => { const next = new Set(excluded); if (on) next.delete(platform); else next.add(platform); save({ exclude: [...next] }); };
+  const free = included.filter((t) => !postOf(t.platform) || postOf(t.platform).status === "failed");
+  const dateOk = mode !== "date" || Date.parse(plan.at) > Date.now() + 15 * 60e3;
+
+  const warnings = [];
+  if (!targets.length) warnings.push("This network posts nowhere yet.");
+  if (targets.length && !included.length) warnings.push("Every account is switched off for this video.");
+  if (!text.title.trim()) warnings.push("The video has no title.");
+  if (included.some((t) => t.platform === "twitter") && textFor("twitter").title.length > 280) warnings.push("X takes 280 characters: the title will be cut.");
+  if (project.aspect !== "9:16" && included.some((t) => ["tiktok", "instagram", "facebook"].includes(t.platform))) warnings.push(`This video is ${project.aspect}. TikTok and Reels are made for 9:16.`);
+  const t = project.settings?.thumbnail;
+  if (hasThumbnail(t) && t.file?.key !== thumbnailKey(t, project.aspect)) warnings.push("The thumbnail changed since it was created. It's made again with the next render.");
+  if (!hasThumbnail(t)) warnings.push("No thumbnail yet: each app picks a frame from the video.");
+  if (mode === "date" && !dateOk) warnings.push("Pick a time at least 15 minutes from now.");
+  if (stale) warnings.push(`${stale} scene(s) changed since their voice was made. Update the voice and render again.`);
+  const newerEdits = done && Date.parse(project.updated_at) > Date.parse(done.finished_at || done.created_at);
+
+  const publish = async (when) => {
+    setBusy("Sending…");
+    try {
+      // the words and accounts on screen, saved before the job reads them
+      const { error } = await sb.from("video_projects").update({ settings: project.settings }).eq("id", project.id);
+      if (error) throw error;
+      for (const target of free) {
+        await publishCall(sb, { action: "queue", render_job_id: done.id, when, platform: target.platform });
+      }
+      toast(when === "now" ? "Publishing now" : "Scheduled");
+      await load();
+    } catch (e) { toast(e.message); } finally { setBusy(""); }
+  };
+  const whenValue = mode === "date" && dateOk ? new Date(plan.at).toISOString() : mode === "now" ? "now" : "next";
+
+  return (
+    <div className="ed-panel ed-publish">
+      <h3>Publish on {nameOf(channel)}</h3>
+      {!targets.length ? <p className="muted small" style={{ margin: 0 }}><a href={`#/channel/${channel.id}`}>Connect this network's accounts</a> first.</p> : null}
+      <div className="ed-accounts" role="group" aria-label="Accounts">
+        {targets.map((target) => {
+          const post = postOf(target.platform);
+          const on = !excluded.has(target.platform);
+          const options = PRIVACY[target.platform];
+          const custom = textFor(target.platform);
+          return (
+            <div key={target.platform} className={`ed-account${on ? "" : " off"}`}>
+              <label className="row ed-check">
+                <input type="checkbox" checked={on} disabled={!!post && post.status !== "failed"} onChange={(e) => toggle(target.platform, e.target.checked)} />
+                <strong>{PLATFORMS[target.platform] || target.platform}</strong>
+              </label>
+              <div className="row">
+                {post ? <span className={`pill ${POST_STATUS[post.status]?.[0] || "info"}`}>{POST_STATUS[post.status]?.[1] || post.status}</span> : on ? null : <span className="pill short">Skipped</span>}
+                {post?.slot_at && post.status === "scheduled" ? <span className="muted small">{new Date(post.slot_at).toLocaleString()}</span> : null}
+                {post?.public_url || post?.youtube_video_id ? <a className="small" href={post.public_url || `https://www.youtube.com/watch?v=${post.youtube_video_id}`} target="_blank" rel="noopener">View post</a> : null}
+                {on && !post && options ? (
+                  <select className="field ed-privacy" aria-label={`${PLATFORMS[target.platform]} visibility`} value={plan.options?.[target.platform]?.privacy || (target.platform === "tiktok" ? target.privacy || "PUBLIC_TO_EVERYONE" : s?.privacy || "public")}
+                    onChange={(e) => save({ options: { ...(plan.options || {}), [target.platform]: { privacy: e.target.value } } })}>
+                    {options.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+                  </select>
+                ) : null}
+                {on && !post ? <button type="button" className="btn small ghost" aria-expanded={open === target.platform} onClick={() => setOpen(open === target.platform ? null : target.platform)}>Edit text</button> : null}
+                {post?.status === "failed" ? <button type="button" className="btn small" disabled={!!busy || !done} onClick={async () => { try { await publishCall(sb, { action: "queue", render_job_id: done.id, when: whenValue, platform: target.platform }); await load(); } catch (e) { toast(e.message); } }}>Retry</button> : null}
+                {post && ["queued", "failed"].includes(post.status) ? <button type="button" className="btn small ghost" onClick={async () => { try { await publishCall(sb, { action: "cancel", queue_id: post.id }); await load(); } catch (e) { toast(e.message); } }}>Cancel</button> : null}
+              </div>
+              {post?.error ? <pre className={post.status === "failed" ? "err" : "note"}>{post.error}</pre> : null}
+              {open === target.platform ? (
+                <div className="ed-account-text">
+                  <Field label={target.platform === "twitter" ? `Post text · ${custom.title.length}/280` : "Title"}>
+                    <input className="field" dir="auto" maxLength={target.platform === "twitter" ? 280 : 100} value={custom.title} onChange={(e) => setText(target.platform, { title: e.target.value })} />
+                  </Field>
+                  {target.platform === "twitter" ? null : (
+                    <Field label={`Caption · ${custom.description.length} characters`}>
+                      <textarea className="field" dir="auto" rows={4} value={custom.description} onChange={(e) => setText(target.platform, { description: e.target.value })} />
+                    </Field>
+                  )}
+                  {plan.text?.[target.platform] ? <button type="button" className="btn small ghost" onClick={() => { const { [target.platform]: _drop, ...rest } = plan.text; save({ text: rest }); }}>Use the common text</button> : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+
+      <h3>Text for all accounts</h3>
+      <Field label="Title"><input className="field" dir="auto" maxLength={100} value={text.title} onChange={(e) => setText("all", { title: e.target.value })} /></Field>
+      <Field label="Caption and hashtags" hint="Credits for music and photos stay at the end."><textarea className="field" dir="auto" rows={5} value={text.description} onChange={(e) => setText("all", { description: e.target.value })} /></Field>
+
+      <h3>When</h3>
+      <div className="ed-when" role="radiogroup" aria-label="When to publish">
+        {[["ask", "I'll choose after the render"], ["next", "Next free slot"], ["now", "As soon as it's ready"], ["date", "On a date"]].map(([v, label]) => (
+          <label key={v} className="row ed-check"><input type="radio" name="publish-when" checked={mode === v} onChange={() => save({ mode: v })} /> {label}</label>
+        ))}
+        {mode === "date" ? <input className="field" type="datetime-local" aria-label="Publish on" value={toLocalInput(plan.at)} onChange={(e) => save({ at: e.target.value ? new Date(e.target.value).toISOString() : null })} /> : null}
+      </div>
+
+      {warnings.length ? <div className="ed-warnings">{warnings.map((w) => <div key={w} className="row"><span className="pill warn">Note</span><span className="small">{w}</span></div>)}</div> : null}
+
+      {done && newerEdits ? <div className="row"><span className="pill warn">Note</span><span className="small">You edited this project after the last render. Render again to include those changes.</span></div> : null}
+
+      <div className="row">
+        {done ? (
+          <>
+            <button type="button" className="btn primary" disabled={!!busy || !free.length || !text.title.trim()} onClick={() => publish("now")}>{busy || `Publish now (${free.length})`}</button>
+            {mode === "date" ? <button type="button" className="btn" disabled={!!busy || !free.length || !dateOk} onClick={() => publish(new Date(plan.at).toISOString())}>Schedule for that date</button>
+              : <button type="button" className="btn" disabled={!!busy || !free.length} onClick={() => publish("next")}>Schedule in next slot</button>}
+          </>
+        ) : rendering ? <span className="pill info">Rendering… these choices apply when it's ready</span>
+          : <button type="button" className="btn primary" onClick={onRender}>Render final video</button>}
+        <a className="btn small ghost" href="#/calendar">Calendar</a>
+      </div>
+    </div>
+  );
+}
+
 function NetworkDefaults({ sb, project, toast }) {
   const [saving, setSaving] = useState(false);
   const save = async () => {
@@ -586,7 +777,7 @@ function Credits({ sb, project, scenes, toast }) {
   );
 }
 
-function Renders({ sb, jobs, onRetry }) {
+function Renders({ sb, jobs, onRetry, onPublish }) {
   const [urls, setUrls] = useState({});
   if (!jobs.length) return null;
   const cls = { done: "ok", failed: "crit", running: "info", dispatched: "info", queued: "warn" };
@@ -610,7 +801,8 @@ function Renders({ sb, jobs, onRetry }) {
           <div className="row">
             {j.status === "done" && !j.output_path && j.run_url ? <a className="btn small primary" href={j.run_url} target="_blank" rel="noopener">Download from GitHub</a> : null}
             {j.status === "done" && j.output_path && !urls[j.id] ? <button type="button" className="btn small" onClick={async () => { const u = await signed(j); if (u) setUrls((x) => ({ ...x, [j.id]: u })); }}>Watch</button> : null}
-            {j.status === "done" && j.output_path ? <button type="button" className="btn small primary" onClick={async () => { const u = await signed(j, true); if (u) location.href = u; }}>Download</button> : null}
+            {j.status === "done" && j.output_path ? <button type="button" className="btn small" onClick={async () => { const u = await signed(j, true); if (u) location.href = u; }}>Download</button> : null}
+            {j.status === "done" ? <button type="button" className="btn small primary" onClick={onPublish}>Publish</button> : null}
             {j.status === "failed" ? <button type="button" className="btn small" onClick={() => onRetry(j)}>Retry</button> : null}
             {j.run_url ? <a className="btn small ghost" href={j.run_url} target="_blank" rel="noopener">Log</a> : null}
           </div>
@@ -627,7 +819,7 @@ function Editor({ ctx }) {
   const [scenes, setScenes] = useState([]);
   const [tracks, setTracks] = useState([]);
   const [jobs, setJobs] = useState([]);
-  const [tab, setTab] = useState("scenes");
+  const [tab, setTab] = useState(ctx.initialTab || "scenes");
   const [busy, setBusy] = useState("");
   const [searching, setSearching] = useState(null);
   const [check, setCheck] = useState(null);
@@ -657,6 +849,17 @@ function Editor({ ctx }) {
   // poll while the voice or a render is running
   const preparing = project?.status === "preparing";
   const rendering = jobs.some((j) => ["queued", "dispatched", "running"].includes(j.status));
+  const [networkName, setNetworkName] = useState("");
+  useEffect(() => {
+    if (!project?.channel_id) { setNetworkName(""); return; }
+    sb.from("channels").select("title,network_name").eq("id", project.channel_id).maybeSingle().then(({ data }) => setNetworkName(data?.network_name || data?.title || ""));
+  }, [sb, project?.channel_id]);
+  // a render that just finished leads to the last step
+  const wasRendering = useRef(false);
+  useEffect(() => {
+    if (wasRendering.current && !rendering && jobs.some((j) => j.status === "done")) { setTab("publish"); toast("Your video is ready. Choose where it goes."); }
+    wasRendering.current = rendering;
+  }, [rendering, jobs, toast]);
   const [creatingThumb, setCreatingThumb] = useState(null);  // when it started
   useEffect(() => {
     if (!preparing && !rendering && !creatingThumb) return undefined;
@@ -813,11 +1016,20 @@ function Editor({ ctx }) {
   const blocked = issues.some((i) => i.level === "block");
   const back = project.idea_id ? `#/studio/${project.idea_id}` : "#/studio";
 
+  const finished = jobs.some((j) => j.status === "done");
+  const step = tab === "publish" ? 4 : check ? 3 : 2;
   return (
     <div className="ed">
+      <ol className="flow" aria-label="Steps">
+        <li><a href={back}>1. Script</a></li>
+        <li aria-current={step === 2 ? "step" : undefined}><button type="button" onClick={() => setTab("scenes")}>2. Scenes &amp; style</button></li>
+        <li aria-current={step === 3 ? "step" : undefined} className={finished ? "done" : ""}><button type="button" onClick={() => setCheck(issues)} disabled={!!busy || preparing}>3. Render</button></li>
+        <li aria-current={step === 4 ? "step" : undefined}><button type="button" onClick={() => setTab("publish")}>4. Publish</button></li>
+      </ol>
       <header className="head ed-head">
         <div className="head-text">
           <a href={back} className="small">← Script &amp; settings</a>
+          {networkName ? <span className="pill short ed-network">{networkName}</span> : null}
           <input className="ed-title" dir="auto" value={project.title} onChange={(e) => saveProject({ title: e.target.value })} aria-label="Video title" />
           <div className="row small muted" style={{ gap: 8 }}>
             <span>{scenes.length} scenes · {fmtS(total)}</span>
@@ -841,6 +1053,7 @@ function Editor({ ctx }) {
           {check.length ? check.map((i, k) => <div key={k} className="row"><span className={`pill ${i.level === "block" ? "crit" : "warn"}`}>{i.level === "block" ? "Fix" : "Note"}</span><span>{i.text}</span></div>)
             : <div className="row"><span className="pill ok">Ready</span><span>Everything looks good.</span></div>}
           <div className="row">
+            <button type="button" className="btn ghost" onClick={() => { setCheck(null); setTab("publish"); }}>Publishing choices</button>
             <button type="button" className="btn primary" disabled={blocked || !!busy} onClick={startRender}>{blocked ? "Fix the items above first" : "Render now"}</button>
             <button type="button" className="btn ghost" onClick={() => setCheck(null)}>Cancel</button>
           </div>
@@ -883,7 +1096,7 @@ function Editor({ ctx }) {
 
         <section className="ed-side">
           <div className="tabs" role="tablist">
-            {[["scenes", `Scenes (${scenes.length})`], ["style", "Style"], ["music", "Music"], ["thumbnail", "Thumbnail"]].map(([k, t]) => (
+            {[["scenes", `Scenes (${scenes.length})`], ["style", "Style"], ["music", "Music"], ["thumbnail", "Thumbnail"], ["publish", "Publish"]].map(([k, t]) => (
               <button key={k} type="button" role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{t}</button>
             ))}
           </div>
@@ -902,13 +1115,14 @@ function Editor({ ctx }) {
             </div>
           ) : null}
           {tab === "style" ? <StylePanel sb={sb} project={project} ctx={ctx} toast={toast} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
+          {tab === "publish" ? <PublishPanel sb={sb} project={project} jobs={jobs} scenes={scenes} stale={stale} toast={toast} onProject={saveProject} onRender={() => setCheck(issues)} /> : null}
           {tab === "thumbnail" ? <ThumbnailPanel sb={sb} project={project} scenes={scenes} signed={signed} sign={sign} toast={toast} creating={!!creatingThumb} onCreate={createThumbnail} onThumbnail={(thumbnail) => saveProject({ settings: { ...project.settings, thumbnail } })} /> : null}
           {tab === "music" ? <MusicPanel sb={sb} project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
         </section>
       </div>
 
       <Credits sb={sb} project={project} scenes={scenes} toast={toast} />
-      <Renders sb={sb} jobs={jobs} onRetry={retry} />
+      <Renders onPublish={() => setTab("publish")} sb={sb} jobs={jobs} onRetry={retry} />
     </div>
   );
 }

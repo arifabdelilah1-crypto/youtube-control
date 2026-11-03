@@ -86,7 +86,7 @@ async function setThumbnail(row, job, videoId, token) {
 async function toYouTube(row, sched, file, job) {
   const { access_token } = await fn("publish", { action: "token", channel_id: row.channel_id });
   const future = row.slot_at && Date.parse(row.slot_at) > Date.now() + 5 * 60e3;
-  const privacy = sched?.privacy || "public";
+  const privacy = row.options?.privacy || sched?.privacy || "public";
   const meta = {
     snippet: {
       title: row.title.replace(/[<>]/g, "").slice(0, 100), description: (row.description || "").replace(/[<>]/g, ""),
@@ -138,7 +138,7 @@ async function toBlotato(row, sched, job) {
   if (!BLOTATO) throw new Error("Add BLOTATO_API_KEY to the GitHub repo secrets.");
   const saved = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === row.platform) || {};
   // YouTube's visibility and labels are set with the channel's schedule in Publish
-  const target = row.platform === "youtube" ? { ...saved, privacy: sched.privacy, notify: sched.notify_subscribers, synthetic: sched.synthetic_media } : saved;
+  const target = { ...(row.platform === "youtube" ? { ...saved, privacy: sched.privacy, notify: sched.notify_subscribers, synthetic: sched.synthetic_media } : saved), ...(row.options || {}) };
   if (row.platform === "facebook" && !target.page_id) throw new Error("Pick the Facebook Page for this network.");
   const future = row.slot_at && Date.parse(row.slot_at) > Date.now() + 5 * 60e3;
   const mediaUrl = await uploadToBlotato(BLOTATO, await videoFile(job), "video.mp4", "video/mp4");
