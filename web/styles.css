@@ -278,6 +278,13 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .login-card label { font-size: 12.5px; font-weight: 600; color: var(--graphite); }
 .login-card input { min-height: 44px; border: 1px solid var(--line-strong); border-radius: var(--r); padding: 0 12px; font: 400 15px/1 var(--display); }
 .login-card .btn { min-height: 44px; }
+.ed-music-search { display: flex; flex-direction: column; gap: 10px; }
+.ed-music-moods { display: flex; flex-wrap: wrap; gap: 6px; }
+.ed-music-q { flex: 1 1 180px; min-width: 0; }
+.ed-music-track { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: var(--r); }
+.ed-music-track.picked { border-color: var(--ink); }
+.ed-music-info { flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.ed-music-track audio { flex: 1 1 160px; min-width: 0; height: 36px; }
 .login-google { display: flex; flex-direction: column; gap: 12px; width: 100%; }
 .login-google .btn { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; }
 .login-or { text-align: center; }

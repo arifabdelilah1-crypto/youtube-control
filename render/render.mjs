@@ -8,7 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { ensureBrowser, renderMedia, selectComposition } from "@remotion/renderer";
-import { buildProps } from "../video/layout.js";
+import { buildProps, foundMusic } from "../video/layout.js";
 import { mediaReady, uploadToVds } from "./media.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -104,9 +104,10 @@ async function main() {
 
     // Private files -> signed URLs
     const music = project.settings?.music || {};
+    const found = foundMusic(music);
     let track = null;
-    if (music.track_id) [track] = await rest("GET", "music_tracks", `?id=eq.${music.track_id}&select=*`);
-    else if (music.mood && music.mood !== "none") {
+    if (!found && music.track_id) [track] = await rest("GET", "music_tracks", `?id=eq.${music.track_id}&select=*`);
+    else if (!found && music.mood && music.mood !== "none") {
       const tracks = await rest("GET", "music_tracks", `?mood=eq.${encodeURIComponent(music.mood)}&select=*`);
       track = tracks.length ? tracks[Math.floor(Math.random() * tracks.length)] : null;
     }
@@ -115,11 +116,11 @@ async function main() {
     const urls = {
       voice: Object.fromEntries(scenes.map((s) => [s.id, signed[s.voice_path]])),
       media: Object.fromEntries(mediaPaths.map((p) => [p, signed[p]])),
-      music: track ? signed[track.path] : null,
+      music: found ? found.url : track ? signed[track.path] : null,
       sfx: { whoosh: "static:sfx/whoosh.mp3", hit: "static:sfx/hit.mp3" },
     };
     const inputProps = buildProps(project, scenes, urls);
-    log(`Project "${project.title}": ${scenes.length} scenes, ${(inputProps.totalFrames / inputProps.fps).toFixed(1)} s, ${inputProps.width}x${inputProps.height}${track ? `, music "${track.title}"` : ""}`);
+    log(`Project "${project.title}": ${scenes.length} scenes, ${(inputProps.totalFrames / inputProps.fps).toFixed(1)} s, ${inputProps.width}x${inputProps.height}${found || track ? `, music "${(found || track).title}"` : ""}`);
 
     await ensureBrowser();
     const serveUrl = await bundle({ entryPoint: path.join(ROOT, "video/root.jsx"), publicDir: path.join(ROOT, "web") });

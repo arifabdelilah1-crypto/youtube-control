@@ -5,12 +5,13 @@
 // POST {action:"voice", project_id, scene_ids?}   -> regenerate voice for some/all scenes
 // POST {action:"search", q, kind?: "video"|"image"|"both", aspect?, page?} -> footage candidates (kind "video" or "image" wins over a prefix in q; with "both" or no kind, "image: …" in q decides)
 //      kind "youtube": Creative Commons YouTube videos (search only, 101 quota units; only on a button press)
+// POST {action:"music_search", mood? | q?, page?}  -> background music with a licence for monetized videos. Returns {results}
 // POST {action:"render", project_id}               -> final render job. Returns {job_id}
 // POST {action:"video_link", job_id, download?}    -> a link (1 hour) to a final video on the VDS (vds/media.php)
 // Secrets: GITHUB_TOKEN, GITHUB_REPO, PIXABAY_API_KEY, PEXELS_API_KEY, UNSPLASH_ACCESS_KEY, YOUTUBE_API_KEY, MEDIA_URL, MEDIA_SECRET
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { type Footage, parseScript, parseTerm, searchTerm } from "./script.ts";
-import { type Candidate, searchStock, trackUnsplashDownloads, youtubeCC } from "./stock.ts";
+import { type Candidate, MUSIC_MOODS, searchMusic, searchStock, trackUnsplashDownloads, youtubeCC } from "./stock.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -111,6 +112,12 @@ Deno.serve(async (req) => {
       if (!MEDIA_URL || !MEDIA_SECRET) return json({ error: "The video store isn't set up: add MEDIA_URL and MEDIA_SECRET in Supabase Edge Function secrets." }, 503);
       const name = body.download ? String(job.params?.title || "video").replace(/[^\w-]+/g, "_").slice(0, 60) : "";
       return json({ url: await mediaLink(MEDIA_URL, MEDIA_SECRET, job.output_path.slice(4), 3600, name) });
+    }
+
+    if (body.action === "music_search") {
+      const terms = Object.hasOwn(MUSIC_MOODS, String(body.mood)) ? MUSIC_MOODS[body.mood] : [String(body.q || "").trim()].filter(Boolean);
+      if (!terms.length) return json({ error: "Pick a mood or type a word." }, 400);
+      return json({ results: await searchMusic(terms, Math.min(Math.max(Number(body.page) || 1, 1), 10)) });
     }
 
     if (body.action === "search" && body.kind === "youtube") {

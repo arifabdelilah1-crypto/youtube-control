@@ -56,10 +56,22 @@ export function creditOf(c) {
   return c.credit?.page ? c.credit : null;
 }
 
-/** Credit lines for footage that gets one. Empty string when none. */
-export function creditsText(scenes) {
+/** The music found by search, if it's on and really from Jamendo (settings can be edited from the browser). */
+export function foundMusic(music) {
+  const t = music?.found;
+  if (!t || music.mood === "none") return null;
+  try {
+    const u = new URL(t.url);
+    return u.protocol === "https:" && u.hostname.endsWith(".jamendo.com") ? t : null;
+  } catch { return null; }
+}
+
+/** Credit lines for footage and music that get one. Empty string when none. */
+export function creditsText(scenes, music) {
   const seen = new Set();
   const lines = [];
+  const track = foundMusic(music);
+  if (track) lines.push(`- Music: "${track.title}" by ${track.author}, ${track.license}, via Jamendo: ${track.page}`);
   for (const s of [...scenes].sort((a, b) => a.idx - b.idx)) {
     const c = creditOf(s.clip);
     if (!c || seen.has(c.page)) continue;
@@ -168,6 +180,7 @@ export function preRenderCheck(project, scenes) {
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
   const credited = ordered.filter((s) => creditOf(s.clip)).length;
   if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage that gets a credit. The credit lines below go in the video description.` });
+  if (foundMusic(project.settings?.music)) issues.push({ level: "warn", text: "The music gets a credit too. On a monetized channel, YouTube can still claim a track if its artist registered it." });
   const noFile = ordered.filter((s) => s.clip?.source === "youtube").length;
   if (noFile) issues.push({ level: "warn", text: `${noFile} scene(s) have a YouTube clip picked but no file uploaded. They show a text card until you upload the clip.` });
   const total = ordered.reduce((t, s) => t + sceneSeconds(s) + SCENE_GAP, 0) + TAIL;

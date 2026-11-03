@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
-import { DEFAULT_SETTINGS, buildProps, creditsText, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
+import { DEFAULT_SETTINGS, buildProps, creditsText, foundMusic, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
   ["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
@@ -245,8 +245,66 @@ function StylePanel({ project, ctx, onProject, onSettings }) {
   );
 }
 
-function MusicPanel({ project, tracks, signed, sign, onSettings }) {
+const MUSIC_BUTTONS = [["horror", "Horror"], ["dark", "Dark psycho"], ["love", "Love"], ["funny", "Funny"], ["epic", "Epic"], ["sad", "Sad"], ["happy", "Happy"], ["calm", "Calm"]];
+const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+
+/** Only one track plays at a time. */
+const playOnlyThis = (e) => {
+  for (const a of e.currentTarget.closest(".ed-panel")?.querySelectorAll("audio") || []) if (a !== e.target) a.pause();
+};
+
+function MusicSearch({ sb, found, onPick }) {
+  const [text, setText] = useState("");
+  const [query, setQuery] = useState(null);  // {mood} or {q}
+  const [results, setResults] = useState([]);
+  const [page, setPage] = useState(1);
+  const [state, setState] = useState("idle");  // idle | busy | done
+  const [more, setMore] = useState(false);
+  const [error, setError] = useState("");
+  const run = async (next, nextPage = 1) => {
+    setQuery(next); setPage(nextPage); setState("busy"); setError("");
+    if (nextPage === 1) setResults([]);
+    try {
+      const data = await invoke(sb, { action: "music_search", ...next, page: nextPage });
+      setResults((old) => {
+        const seen = new Set(nextPage === 1 ? [] : old.map((t) => t.id));
+        return [...(nextPage === 1 ? [] : old), ...(data.results || []).filter((t) => !seen.has(t.id))];
+      });
+      setMore((data.results || []).length > 0);
+    } catch (e) { setError(e.message); setMore(false); } finally { setState("done"); }
+  };
+  return (
+    <div className="ed-music-search">
+      <div className="ed-music-moods">
+        {MUSIC_BUTTONS.map(([k, label]) => (
+          <button key={k} type="button" className={`btn small${query?.mood === k ? " primary" : ""}`} aria-pressed={query?.mood === k} onClick={() => run({ mood: k })}>{label}</button>
+        ))}
+      </div>
+      <form className="row" onSubmit={(e) => { e.preventDefault(); if (text.trim()) run({ q: text.trim() }); }}>
+        <input className="field ed-music-q" type="search" aria-label="Search music" placeholder="Or type a word in English: ghost, tension, wedding…" value={text} onChange={(e) => setText(e.target.value)} />
+        <button type="submit" className="btn small">Search</button>
+      </form>
+      {error ? <p className="muted small" role="alert">{error}</p> : null}
+      {state === "busy" && !results.length ? <p className="muted small" role="status">Searching…</p> : null}
+      {state === "done" && !results.length && !error ? <p className="muted small" role="status">No music found. Try another word.</p> : null}
+      {results.map((t) => (
+        <div key={t.id} className={`ed-music-track${found?.id === t.id ? " picked" : ""}`}>
+          <div className="ed-music-info">
+            <strong>{t.title}</strong>
+            <span className="muted small">{t.author} · {mmss(t.duration)} · {t.license}</span>
+          </div>
+          <audio controls preload="none" src={t.url} onPlay={playOnlyThis} />
+          <button type="button" className={`btn small${found?.id === t.id ? "" : " primary"}`} disabled={found?.id === t.id} onClick={() => onPick(t)}>{found?.id === t.id ? "In use" : "Use"}</button>
+        </div>
+      ))}
+      {results.length && more ? <button type="button" className="btn small" disabled={state === "busy"} onClick={() => run(query, page + 1)}>{state === "busy" ? "Loading…" : "More music"}</button> : null}
+    </div>
+  );
+}
+
+function MusicPanel({ sb, project, tracks, signed, sign, onSettings }) {
   const s = mergeSettings(project.settings);
+  const found = foundMusic(s.music);
   const moods = [...new Set(tracks.map((t) => t.mood))];
   const inMood = tracks.filter((t) => t.mood === s.music.mood);
   const current = tracks.find((t) => t.id === s.music.track_id);
@@ -254,25 +312,50 @@ function MusicPanel({ project, tracks, signed, sign, onSettings }) {
   const pick = (mood) => {
     const pool = tracks.filter((t) => t.mood === mood);
     const t = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
-    set({ mood, track_id: t?.id || null });
+    set({ mood, track_id: t?.id || null, found: null });
   };
+  const volumeAndStart = (
+    <>
+      <Field label={`Volume · ${Math.round(s.music.volume * 100)}%`} hint="Music is lowered automatically while the voice speaks.">
+        <input type="range" min="0.05" max="0.6" step="0.01" value={s.music.volume} onChange={(e) => set({ volume: Number(e.target.value) })} />
+      </Field>
+      <Field label="Start the track at (seconds)" hint="Skip a slow intro, start at the drop.">
+        <input className="field ed-trim" type="number" min="0" step="1" value={s.music.start} onChange={(e) => set({ start: Math.max(0, Number(e.target.value) || 0) })} />
+      </Field>
+    </>
+  );
   useEffect(() => { if (current) sign([current.path]); }, [current, sign]);
   return (
     <div className="ed-panel">
       <h3>Background music</h3>
-      {!tracks.length ? (
-        <p className="muted small">No music yet. Add tracks by mood in <a href="#/settings">Settings → Music library</a> (YouTube Audio Library tracks are the safest for copyright).</p>
+      {found ? (
+        <div className="ed-music-track picked">
+          <div className="ed-music-info">
+            <strong>{found.title}</strong>
+            <span className="muted small">{found.author} · {found.license} · credited in the description</span>
+          </div>
+          <audio controls preload="none" src={found.url} onPlay={playOnlyThis} />
+          <button type="button" className="btn small ghost" onClick={() => set({ mood: "none", track_id: null, found: null })}>Remove</button>
+        </div>
       ) : null}
+      {found ? volumeAndStart : null}
+      <h3>Find music</h3>
+      <MusicSearch sb={sb} found={found} onPick={(t) => set({ mood: "found", track_id: null, found: t })} />
+      <h3>Your own tracks</h3>
+      {!tracks.length ? (
+        <p className="muted small">Add your own in <a href="#/settings">Settings → Music library</a>. YouTube Audio Library tracks are the safest for copyright.</p>
+      ) : (
       <Field label="Mood">
-        <select className="field" value={s.music.mood} onChange={(e) => (e.target.value === "none" ? set({ mood: "none", track_id: null }) : pick(e.target.value))}>
-          <option value="none">No music</option>
+        <select className="field" value={found ? "none" : s.music.mood} onChange={(e) => (e.target.value === "none" ? set({ mood: "none", track_id: null, found: null }) : pick(e.target.value))}>
+          <option value="none">{found ? "Using the music above" : "No music"}</option>
           {moods.map((m) => <option key={m} value={m}>{moodName(m)} ({tracks.filter((t) => t.mood === m).length})</option>)}
         </select>
       </Field>
-      {s.music.mood !== "none" && inMood.length ? (
+      )}
+      {!found && s.music.mood !== "none" && inMood.length ? (
         <>
           <Field label="Track">
-            <select className="field" value={s.music.track_id || ""} onChange={(e) => set({ track_id: e.target.value || null })}>
+            <select className="field" value={s.music.track_id || ""} onChange={(e) => set({ track_id: e.target.value || null, found: null })}>
               {inMood.map((t) => <option key={t.id} value={t.id}>{t.title}{t.duration ? ` · ${Math.round(t.duration)} s` : ""}</option>)}
             </select>
           </Field>
@@ -280,12 +363,7 @@ function MusicPanel({ project, tracks, signed, sign, onSettings }) {
             <button type="button" className="btn small" onClick={() => pick(s.music.mood)}>Shuffle track</button>
             {current && signed.get(current.path) ? <audio controls preload="none" src={signed.get(current.path)} style={{ maxWidth: "100%" }} /> : null}
           </div>
-          <Field label={`Volume · ${Math.round(s.music.volume * 100)}%`} hint="Music is lowered automatically while the voice speaks.">
-            <input type="range" min="0.05" max="0.6" step="0.01" value={s.music.volume} onChange={(e) => set({ volume: Number(e.target.value) })} />
-          </Field>
-          <Field label="Start the track at (seconds)" hint="Skip a slow intro, start at the drop.">
-            <input className="field ed-trim" type="number" min="0" step="1" value={s.music.start} onChange={(e) => set({ start: Math.max(0, Number(e.target.value) || 0) })} />
-          </Field>
+          {volumeAndStart}
         </>
       ) : null}
     </div>
@@ -302,7 +380,7 @@ async function saveCredits(sb, ideaId, credits) {
 }
 
 function Credits({ sb, project, scenes, toast }) {
-  const text = creditsText(scenes);
+  const text = creditsText(scenes, project.settings?.music);
   if (!text) return null;
   const copy = async () => {
     try { await navigator.clipboard.writeText(text); toast("Credits copied"); } catch { toast("Copy failed: select the text and copy it"); }
@@ -310,9 +388,9 @@ function Credits({ sb, project, scenes, toast }) {
   const add = async () => { const err = await saveCredits(sb, project.idea_id, text); toast(err ? `Not saved: ${err}` : "Credits are in the description"); };
   return (
     <section className="card">
-      <h2>Footage credits</h2>
+      <h2>Credits</h2>
       <p className="muted small" style={{ margin: 0 }}>
-        These photos and videos get a credit line in the video description.
+        This footage and music get a credit line in the video description.
         {project.idea_id ? " They're added to the description automatically when you render." : " Paste them into the description when you upload."}
       </p>
       <pre className="note">{text}</pre>
@@ -407,8 +485,9 @@ function Editor({ ctx }) {
     const voice = Object.fromEntries(scenes.map((s) => [s.id, s.voice_path ? signed.get(s.voice_path) : null]));
     const media = Object.fromEntries(scenes.filter((s) => s.clip?.path).map((s) => [s.clip.path, signed.get(s.clip.path)]));
     const track = tracks.find((t) => t.id === project.settings?.music?.track_id);
+    const found = foundMusic(project.settings?.music);
     return buildProps(project, scenes, {
-      voice, media, music: track && project.settings?.music?.mood !== "none" ? signed.get(track.path) || null : null,
+      voice, media, music: found ? found.url : track && project.settings?.music?.mood !== "none" ? signed.get(track.path) || null : null,
       sfx: { whoosh: base + "sfx/whoosh.mp3", hit: base + "sfx/hit.mp3" }, assetBase: base,
     });
   }, [project, scenes, tracks, signed]);
@@ -509,7 +588,7 @@ function Editor({ ctx }) {
     setBusy("Starting render…");
     try {
       await invoke(sb, { action: "render", project_id: project.id });
-      const credits = creditsText(scenes);
+      const credits = creditsText(scenes, project.settings?.music);
       const err = credits && project.idea_id ? await saveCredits(sb, project.idea_id, credits) : null;
       toast(err ? `Render started, but the photo credits weren't saved to the description: ${err}` : "Final render started: usually 3–6 minutes");
       setCheck(null); await load();
@@ -602,7 +681,7 @@ function Editor({ ctx }) {
             </div>
           ) : null}
           {tab === "style" ? <StylePanel project={project} ctx={ctx} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
-          {tab === "music" ? <MusicPanel project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
+          {tab === "music" ? <MusicPanel sb={sb} project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
         </section>
       </div>
 

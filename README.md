@@ -81,7 +81,7 @@ the project cap is 9,500 of Google's 10,000 daily units.
 ## Studio (video editor)
 
 Flow: **Studio → script page** → **Create scenes** → **Editor** (live preview, clip or photo per scene, scene titles,
-name/stat cards, captions, hook, music, sound effects) → **Render final video**.
+name/stat cards, captions, hook, music found by mood or word through Openverse (CC BY and CC0 tracks from Jamendo, credited in the description) or your own tracks, sound effects) → **Render final video**.
 
 Script formats (mixable):
 

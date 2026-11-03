@@ -216,6 +216,52 @@ export async function youtubeCC(apiKey: string, q: string): Promise<Candidate[]>
   }));
 }
 
+export type MusicTrack = { id: string; source: "jamendo"; title: string; author: string; url: string; duration: number; license: string; license_url: string; page: string };
+
+/** Each mood button searches a few words: a single one misses too much ("psychological" alone finds 1 track). */
+export const MUSIC_MOODS: Record<string, string[]> = {
+  horror: ["horror", "scary", "creepy"],
+  dark: ["dark", "suspense", "scary"],
+  love: ["love", "romantic"],
+  funny: ["funny", "comedy"],
+  epic: ["epic", "cinematic"],
+  sad: ["sad", "melancholy"],
+  happy: ["happy", "upbeat"],
+  calm: ["calm", "ambient"],
+};
+
+const LICENSE_NAMES: Record<string, string> = { by: "CC BY", cc0: "CC0" };
+
+/**
+ * Tracks from Openverse's Jamendo index. Only CC BY and CC0: BY-ND forbids changing the music and BY-SA could put the
+ * whole video under its terms. No key needed; a shared hourly limit, so "busy" is told apart from "no results".
+ */
+export async function openverseMusic(q: string, page = 1): Promise<MusicTrack[]> {
+  if (!q.trim()) return [];
+  const params = new URLSearchParams({ q: q.slice(0, 100), license: "by,cc0", category: "music", source: "jamendo", page: String(page), page_size: "20" });
+  const r = await fetch(`https://api.openverse.org/v1/audio/?${params}`, { headers: { "User-Agent": UA } });
+  if (r.status === 429) throw new Error("The music search is busy. Try again in a minute.");
+  if (!r.ok) return [];  // past the last page, too
+  // deno-lint-ignore no-explicit-any
+  return ((await r.json()).results || []).map((t: any): MusicTrack | null => {
+    const seconds = Math.round((t.duration || 0) / 1000);
+    if (!/^https:\/\/[\w.-]+\.jamendo\.com\//.test(t.url || "") || seconds < 30 || !LICENSE_NAMES[t.license]) return null;
+    return { id: String(t.id), source: "jamendo", title: t.title || "Untitled", author: t.creator || "Unknown artist", url: t.url, duration: seconds,
+      license: `${LICENSE_NAMES[t.license]} ${t.license_version || ""}`.trim(), license_url: t.license_url || "", page: t.foreign_landing_url || "" };
+  }).filter((t: MusicTrack | null): t is MusicTrack => !!t);
+}
+
+/** A mood's words in turn, each track once. */
+export async function searchMusic(terms: string[], page = 1): Promise<MusicTrack[]> {
+  const lists = await Promise.all(terms.map((t) => openverseMusic(t, page)));
+  const seen = new Set<string>();
+  const out: MusicTrack[] = [];
+  for (let i = 0; i < Math.max(0, ...lists.map((l) => l.length)); i++) {
+    for (const l of lists) if (l[i] && !seen.has(l[i].id)) { seen.add(l[i].id); out.push(l[i]); }
+  }
+  return out;
+}
+
 export type StockKeys = { pixabay: string; pexels: string; unsplash: string };
 
 /**
