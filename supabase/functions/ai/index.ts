@@ -143,10 +143,14 @@ Deno.serve(async (req) => {
     // ---------- short lines for the thumbnail ----------
     if (body.action === "thumbnail_text") {
       const language = clean(body.language, 8) || "en";
-      const out = await deepseek(db, ideaId, "thumbnail",
-        `You write the text on YouTube thumbnails. Answer as JSON: {"options": ["...", "...", "..."]}. Three different options of 2 to 5 words each, in the language with code "${language}". Make people curious without lying about the video. No hashtags, no emoji, no quotes.`,
-        `Title: ${clean(body.title || idea.video_title || idea.title, 200)}\n\nScript:\n${String(idea.script || "").slice(0, 4000)}`, user?.id ?? null);
-      return json({ options: (Array.isArray(out.options) ? out.options : []).map((o: unknown) => clean(o, 60)).filter(Boolean).slice(0, 3) });
+      try {
+        const out = await deepseek(db, ideaId, "thumbnail",
+          `You write the text on YouTube thumbnails. Answer as JSON: {"options": ["...", "...", "..."]}. Three different options of 2 to 5 words each, in the language with code "${language}". Make people curious without lying about the video. No hashtags, no emoji, no quotes.`,
+          `Title: ${clean(body.title || idea.video_title || idea.title, 200)}\n\nScript:\n${String(idea.script || "").slice(0, 4000)}`, user?.id ?? null);
+        return json({ options: (Array.isArray(out.options) ? out.options : []).map((o: unknown) => clean(o, 60)).filter(Boolean).slice(0, 3) });
+      } catch (e) {
+        return json({ error: String((e as Error).message || e) });  // a failed suggestion isn't a failed script: the idea's AI status stays as it is
+      }
     }
 
     // ---------- capture ----------
