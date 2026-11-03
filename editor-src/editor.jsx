@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
-import { DEFAULT_SETTINGS, buildProps, creditsText, foundMusic, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
+import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, buildProps, creditsText, foundMusic, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
   ["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
@@ -302,6 +302,16 @@ function MusicSearch({ sb, found, onPick }) {
   );
 }
 
+/** How loud the music is. Under the voice it plays at MUSIC_UNDER_VOICE of this level (video/Main.jsx). */
+function MusicLevel({ volume, onChange }) {
+  const level = Math.round(volume * 100);
+  return (
+    <Field label={`Music level · ${level}%`} hint={`Under the voice: ${Math.round(level * MUSIC_UNDER_VOICE)}%. Press play on the preview to hear it.`}>
+      <input type="range" min="0" max="1" step="0.01" value={volume} aria-label="Music level" onChange={(e) => onChange(Number(e.target.value))} />
+    </Field>
+  );
+}
+
 function MusicPanel({ sb, project, tracks, signed, sign, onSettings }) {
   const s = mergeSettings(project.settings);
   const found = foundMusic(s.music);
@@ -314,20 +324,16 @@ function MusicPanel({ sb, project, tracks, signed, sign, onSettings }) {
     const t = pool.length ? pool[Math.floor(Math.random() * pool.length)] : null;
     set({ mood, track_id: t?.id || null, found: null });
   };
-  const volumeAndStart = (
-    <>
-      <Field label={`Volume · ${Math.round(s.music.volume * 100)}%`} hint="Music is lowered automatically while the voice speaks.">
-        <input type="range" min="0.05" max="0.6" step="0.01" value={s.music.volume} onChange={(e) => set({ volume: Number(e.target.value) })} />
-      </Field>
-      <Field label="Start the track at (seconds)" hint="Skip a slow intro, start at the drop.">
-        <input className="field ed-trim" type="number" min="0" step="1" value={s.music.start} onChange={(e) => set({ start: Math.max(0, Number(e.target.value) || 0) })} />
-      </Field>
-    </>
+  const startAt = (
+    <Field label="Start the track at (seconds)" hint="Skip a slow intro, start at the drop.">
+      <input className="field ed-trim" type="number" min="0" step="1" value={s.music.start} onChange={(e) => set({ start: Math.max(0, Number(e.target.value) || 0) })} />
+    </Field>
   );
   useEffect(() => { if (current) sign([current.path]); }, [current, sign]);
   return (
     <div className="ed-panel">
       <h3>Background music</h3>
+      <MusicLevel volume={s.music.volume} onChange={(volume) => set({ volume })} />
       {found ? (
         <div className="ed-music-track picked">
           <div className="ed-music-info">
@@ -338,7 +344,7 @@ function MusicPanel({ sb, project, tracks, signed, sign, onSettings }) {
           <button type="button" className="btn small ghost" onClick={() => set({ mood: "none", track_id: null, found: null })}>Remove</button>
         </div>
       ) : null}
-      {found ? volumeAndStart : null}
+      {found ? startAt : null}
       <h3>Find music</h3>
       <MusicSearch sb={sb} found={found} onPick={(t) => set({ mood: "found", track_id: null, found: t })} />
       <h3>Your own tracks</h3>
@@ -363,7 +369,7 @@ function MusicPanel({ sb, project, tracks, signed, sign, onSettings }) {
             <button type="button" className="btn small" onClick={() => pick(s.music.mood)}>Shuffle track</button>
             {current && signed.get(current.path) ? <audio controls preload="none" src={signed.get(current.path)} style={{ maxWidth: "100%" }} /> : null}
           </div>
-          {volumeAndStart}
+          {startAt}
         </>
       ) : null}
     </div>
@@ -657,6 +663,9 @@ function Editor({ ctx }) {
               style={{ width: "100%", height: "100%" }}
             />
           </div>
+          {foundMusic(project.settings?.music) || tracks.some((t) => t.id === project.settings?.music?.track_id) ? (
+            <MusicLevel volume={mergeSettings(project.settings).music.volume} onChange={(volume) => saveProject({ settings: { ...project.settings, music: { ...mergeSettings(project.settings).music, volume } } })} />
+          ) : null}
           <p className="muted small">Preview uses lighter clips; the final render uses full quality. {stale ? "Lines without an up-to-date voice play silent with estimated timing." : ""}</p>
         </section>
 

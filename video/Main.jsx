@@ -1,6 +1,7 @@
 // The video itself. Same component in the browser preview (Remotion Player) and the final render.
 import React from "react";
 import { AbsoluteFill, Easing, Html5Audio, Img, OffthreadVideo, Sequence, continueRender, delayRender, interpolate, spring, staticFile, useCurrentFrame, useVideoConfig } from "remotion";
+import { MUSIC_UNDER_VOICE } from "./layout.js";
 
 // "static:sfx/x.mp3" = file shipped with the renderer bundle; anything else is a normal URL.
 const src = (u) => (u && u.startsWith("static:") ? staticFile(u.slice(7)) : u);
@@ -217,7 +218,7 @@ export function Main(props) {
   const voiceEnd = scenes.length ? scenes[scenes.length - 1].from + scenes[scenes.length - 1].dur - Math.round(0.7 * fps) : 0;
   const musicVolume = (f) => {
     const base = Number(music.volume ?? 0.22);
-    const duck = f < voiceEnd ? 0.55 : 1;
+    const duck = f < voiceEnd ? MUSIC_UNDER_VOICE : 1;
     const fadeIn = interpolate(f, [0, 8], [0, 1], { extrapolateRight: "clamp" });
     const fadeOut = interpolate(f, [totalFrames - 24, totalFrames - 1], [1, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
     return base * duck * fadeIn * fadeOut;

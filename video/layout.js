@@ -7,6 +7,8 @@ export const SCENE_GAP = 0.12;   // seconds of breath between two voice lines
 export const TAIL = 0.7;         // seconds after the last line
 export const WORDS_PER_SECOND = 2.6;
 
+export const MUSIC_UNDER_VOICE = 0.55;
+
 export const DEFAULT_SETTINGS = {
   captions: { enabled: true, position: "bottom", color: "#FFFFFF", highlight: "#FFE600", size: 84, uppercase: true, words: 3 },
   hook: { enabled: true, text: "" },
