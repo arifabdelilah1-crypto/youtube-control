@@ -2,7 +2,7 @@
 // POST {action:"queue",  render_job_id, when: "next" | "now" | ISO date}  (dashboard user) -> queue + start the upload job
 // POST {action:"auto",   render_job_id}                                   (render job, x-cron-secret) -> queue if the channel's auto-publish is on
 // POST {action:"cancel", queue_id}                                       (dashboard user) -> cancel a post that isn't uploaded yet
-// POST {action:"blotato_accounts"}                                       (dashboard user) -> connected TikTok, Instagram and YouTube accounts
+// POST {action:"blotato_accounts"}                                       (dashboard user) -> connected accounts, and each Facebook account's Pages
 // POST {action:"blotato_sync"}                                           (dashboard user) -> asks Blotato how its pending posts ended
 // POST {action:"token",  channel_id}                                     (publish job, x-cron-secret) -> short-lived YouTube access token
 // GitHub jobs read the cron secret from the database with their service key, then send it as x-cron-secret.
@@ -19,7 +19,7 @@ const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const BLOTATO = Deno.env.get("BLOTATO_API_KEY") ?? "";
 const BLOTATO_API = "https://backend.blotato.com/v2";
-const PLATFORMS = new Set(["youtube", "tiktok", "instagram"]);
+const PLATFORMS = new Set(["youtube", "tiktok", "instagram", "twitter", "facebook"]);
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
@@ -60,23 +60,23 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   if (job.status !== "done") return { error: "This render isn't finished yet.", status: 400 };
   const { data: project } = job.project_id ? await db.from("video_projects").select("*").eq("id", job.project_id).single() : { data: null };
   const channelId = job.channel_id || project?.channel_id;
-  if (!channelId) return { error: "This video has no channel. Set the channel on its Studio page first.", status: 400 };
+  if (!channelId) return { error: "This video has no network. Set the network on its Studio page first.", status: 400 };
   const { data: sched } = await db.from("publish_schedules").select("*").eq("channel_id", channelId).maybeSingle();
   const schedule = sched || DEFAULT_SCHEDULE;
   if (onlyIfAuto && !schedule.enabled) return { skipped: "auto-publish is off for this channel" };
   const targets = targetsOf(schedule);
-  if (!targets.length) return { error: "This channel posts nowhere yet. Pick its accounts in Publish.", status: 400 };
-  if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account for this channel in Publish.", status: 400 };
+  if (!targets.length) return { error: "This network posts nowhere yet. Pick its accounts on its Networks page.", status: 400 };
+  if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account on this network's page.", status: 400 };
   if (targets.some((x) => x.method === "youtube")) {
     const { count } = await db.from("channel_tokens").select("channel_id", { count: "exact", head: true }).eq("channel_id", channelId);
-    if (!count) return { error: "This channel isn't connected with Google. Connect it in Channels first.", status: 400 };
+    if (!count) return { error: "This network's YouTube channel isn't connected. Connect it on its Networks page first.", status: 400 };
   }
   const { data: existing } = await db.from("publish_queue").select("*").eq("render_job_id", jobId);
   const isActive = (r: any) => ["queued", "uploading", "scheduled", "published"].includes(r.status);
   const done = (existing || []).filter(isActive);
   // a retry touches its own platform only: a post cancelled on another one stays cancelled
   const todo = targets.filter((x) => !done.some((r: any) => r.platform === x.platform) && (!onlyPlatform || x.platform === onlyPlatform));
-  if (!todo.length) return done.length ? { row: done[0], rows: done, already: true } : { error: "This channel doesn't post there any more. Check Publish.", status: 400 };
+  if (!todo.length) return done.length ? { row: done[0], rows: done, already: true } : { error: "This network doesn't post there any more. Check its Networks page.", status: 400 };
 
   let slot: string | null = null;
   if (when === "now") slot = null;
@@ -170,7 +170,16 @@ Deno.serve(async (req) => {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) return json({ error: `Blotato ${r.status}: ${JSON.stringify(data).slice(0, 200)}`, accounts: [] }, 502);
       const list = Array.isArray(data) ? data : data.items || data.accounts || [];
-      return json({ accounts: list.filter((x: any) => PLATFORMS.has(x.platform)).map((x: any) => ({ id: String(x.id), platform: x.platform, name: x.username || x.fullname || String(x.id) })) });
+      const accounts: any[] = [];
+      for (const x of list.filter((a: any) => PLATFORMS.has(a.platform))) {
+        const name = x.username || x.fullname || String(x.id);
+        if (x.platform !== "facebook") { accounts.push({ id: String(x.id), platform: x.platform, name }); continue; }
+        // Blotato posts to a Page, never to a personal profile
+        const pages = await fetch(`${BLOTATO_API}/users/me/accounts/${encodeURIComponent(x.id)}/subaccounts`, { headers: { "blotato-api-key": BLOTATO } });
+        const items = pages.ok ? ((await pages.json().catch(() => ({}))).items || []) : [];
+        for (const page of items) accounts.push({ id: String(x.id), page_id: String(page.id), platform: "facebook", name: page.name || name });
+      }
+      return json({ accounts });
     }
     if (body.action === "blotato_sync") return json(await blotatoSync());
     if (body.action === "cancel") {

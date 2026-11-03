@@ -136,15 +136,16 @@ async function thumbnailFile(job) {
 
 async function toBlotato(row, sched, job) {
   if (!BLOTATO) throw new Error("Add BLOTATO_API_KEY to the GitHub repo secrets.");
-  const target = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === row.platform)
-    || { privacy: sched.privacy, notify: sched.notify_subscribers, synthetic: sched.synthetic_media };
-  if (row.platform === "youtube" && !target.synthetic) target.synthetic = !!sched.synthetic_media;
+  const saved = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === row.platform) || {};
+  // YouTube's visibility and labels are set with the channel's schedule in Publish
+  const target = row.platform === "youtube" ? { ...saved, privacy: sched.privacy, notify: sched.notify_subscribers, synthetic: sched.synthetic_media } : saved;
+  if (row.platform === "facebook" && !target.page_id) throw new Error("Pick the Facebook Page for this network.");
   const future = row.slot_at && Date.parse(row.slot_at) > Date.now() + 5 * 60e3;
   const mediaUrl = await uploadToBlotato(BLOTATO, await videoFile(job), "video.mp4", "video/mp4");
   // TikTok takes its cover from the video's first frame; the others take the image. A failed cover never stops the post.
   let coverUrl = null;
   let warning = null;
-  if (row.platform !== "tiktok") {
+  if (row.platform === "instagram" || row.platform === "youtube") {
     try {
       const cover = await thumbnailFile(job);
       if (cover) coverUrl = await uploadToBlotato(BLOTATO, cover, "cover.jpg", "image/jpeg");

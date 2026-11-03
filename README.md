@@ -145,7 +145,8 @@ Secrets:
 Music: Settings → Music library (upload MP3s by mood; YouTube Audio Library tracks are the safest).
 Sound effects in `web/sfx/` are synthesized (no license needed). Fonts in `web/fonts/` are SIL Open Font License.
 
-Publish sets where each channel posts: YouTube directly or through Blotato, TikTok and Instagram Reels through Blotato
+A network is one brand with all its accounts (a row in `channels`; YouTube is optional). Its page sets where it posts:
+YouTube directly or through Blotato; TikTok, Instagram Reels, X and Facebook Page Reels through Blotato
 (`render/blotato.mjs`). One render gets one queue row per platform. Calendar shows them all by day and asks Blotato how
 its posts ended. `BLOTATO_API_KEY` is needed in the GitHub repo secrets and the Supabase Edge Function secrets.
 

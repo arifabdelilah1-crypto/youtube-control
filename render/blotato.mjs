@@ -1,19 +1,39 @@
-// Sending a finished video to Blotato (https://help.blotato.com): TikTok, Instagram Reels and YouTube.
+// Sending a finished video to Blotato (https://help.blotato.com): TikTok, Instagram Reels, X, Facebook Reels and YouTube.
 import fs from "node:fs";
 
 const API = "https://backend.blotato.com/v2";
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** X has no room for credits in the post itself, and CC BY music and photos need them: they go in a reply. */
+function xCredits(description = "") {
+  const at = String(description || "").search(/(^|\n)Credits:\n/);
+  if (at < 0) return {};
+  const posts = [];
+  let current = "";
+  for (const line of description.slice(at).trim().split("\n")) {
+    if (current && (current + "\n" + line).length > 280) { posts.push(current); current = ""; }
+    current = (current ? current + "\n" : "") + line.slice(0, 280);
+  }
+  if (current) posts.push(current);
+  return { additionalPosts: posts.map((text) => ({ text, mediaUrls: [] })) };
+}
+
 /** The request for one platform. target: the channel's settings for it (publish_schedules.targets). */
 export function blotatoPost({ row, target = {}, mediaUrl, coverUrl, scheduledTime }) {
-  const text = String(row.description || row.title || "");
-  const shared = { accountId: row.blotato_account_id, content: { platform: row.platform, text: text.slice(0, 2200), mediaUrls: [mediaUrl] } };
+  const isX = row.platform === "twitter";
+  // X takes 280 characters: the title, not the description
+  const text = isX ? String(row.title || "").slice(0, 280) : String(row.description || row.title || "").slice(0, 2200);
+  const shared = { accountId: row.blotato_account_id, content: { platform: row.platform, text, mediaUrls: [mediaUrl], ...(isX ? xCredits(row.description) : {}) } };
   let platformTarget;
   if (row.platform === "tiktok") {
     platformTarget = {
       targetType: "tiktok", privacyLevel: target.privacy || "PUBLIC_TO_EVERYONE", disabledComments: false, disabledDuet: false, disabledStitch: false,
       isBrandedContent: false, isYourBrand: false, isAiGenerated: target.ai !== false,
     };
+  } else if (isX) {
+    platformTarget = { targetType: "twitter" };
+  } else if (row.platform === "facebook") {
+    platformTarget = { targetType: "facebook", pageId: target.page_id, mediaType: "reel" };
   } else if (row.platform === "instagram") {
     platformTarget = { targetType: "instagram", mediaType: "reel", shareToFeed: true, ...(coverUrl ? { coverImageUrl: coverUrl } : {}) };
   } else {

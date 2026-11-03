@@ -1,5 +1,5 @@
 // Connect a YouTube channel with Google.
-//   POST {action:"start", return_to}  (dashboard user's JWT) -> {url} to Google's consent screen
+//   POST {action:"start", return_to, channel_id?}  (dashboard user's JWT) -> {url} to Google's consent screen; channel_id: the network it joins
 //   GET  ?code&state                  (Google redirect)       -> stores refresh token in Vault, back to dashboard
 // Brand Account channels: Google asks which channel to authorize; repeat once per channel.
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -39,7 +39,7 @@ async function readState(state: string) {
   if (!body || !sig || (await hmac(body)) !== sig) throw new Error("bad state");
   const p = JSON.parse(fromB64url(body));
   if (Date.now() > p.exp) throw new Error("state expired");
-  return p as { u: string; r: string; exp: number };
+  return p as { u: string; r: string; exp: number; n?: string };
 }
 const back = (returnTo: string, ok: boolean, msg = "") =>
   Response.redirect(`${returnTo}#/settings?${ok ? "connected=1" : "error=" + encodeURIComponent(msg)}`, 302);
@@ -54,9 +54,9 @@ Deno.serve(async (req) => {
     const { data: allowed } = await user.rpc("am_i_allowed");
     const { data: { user: u } } = await user.auth.getUser();
     if (!allowed || !u) return json({ error: "not allowed" }, 403);
-    const { return_to } = await req.json();
+    const { return_to, channel_id } = await req.json();
     if (!/^https:\/\/[^\s]+$/.test(return_to || "")) return json({ error: "return_to must be an https URL" }, 400);
-    const state = await signState({ u: u.id, r: return_to, exp: Date.now() + 10 * 60 * 1000 });
+    const state = await signState({ u: u.id, r: return_to, n: /^[0-9a-f-]{36}$/.test(channel_id || "") ? channel_id : undefined, exp: Date.now() + 10 * 60 * 1000 });
     const p = new URLSearchParams({
       client_id: CLIENT_ID, redirect_uri: REDIRECT, response_type: "code", scope: SCOPES.join(" "),
       access_type: "offline", prompt: "consent select_account", include_granted_scopes: "true", state,
@@ -85,10 +85,18 @@ Deno.serve(async (req) => {
     const db = createClient(URL_, SERVICE);
     for (const c of items) {
       const thumbs = c.snippet?.thumbnails || {};
-      const { data: row, error } = await db.from("channels").upsert({
+      const fields = {
         youtube_channel_id: c.id, title: c.snippet?.title, handle: c.snippet?.customUrl ?? null,
         thumbnail_url: (thumbs.medium || thumbs.default)?.url ?? null,
-      }, { onConflict: "youtube_channel_id" }).select().single();
+      };
+      // from a network's page: this YouTube channel joins that network instead of making a new one
+      if (st.n) {
+        const { data: other } = await db.from("channels").select("id,network_name,title").eq("youtube_channel_id", c.id).neq("id", st.n).maybeSingle();
+        if (other) throw new Error(`this YouTube channel is already in the network "${other.network_name || other.title}"`);
+      }
+      const { data: row, error } = st.n
+        ? await db.from("channels").update(fields).eq("id", st.n).select().single()
+        : await db.from("channels").upsert(fields, { onConflict: "youtube_channel_id" }).select().single();
       if (error) throw error;
       const { error: e2 } = await db.rpc("store_channel_refresh_token", { p_channel_id: row.id, p_token: tok.refresh_token, p_scopes: (tok.scope || "").split(" ") });
       if (e2) throw e2;

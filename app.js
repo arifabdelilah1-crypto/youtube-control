@@ -194,21 +194,27 @@ function scopeOf(route) {
 const scopeKey = (scope) => (scope.global ? "global" : scope.niche.id);
 
 async function loadShared() {
-  [state.channels, state.niches] = await Promise.all([
+  const [channels, niches] = await Promise.all([
     q(sb.from("channels").select("*").order("created_at")),
     q(sb.from("niches").select("*").order("created_at")),
   ]);
+  // a network's own name wins over its YouTube channel's title, everywhere in the app
+  state.channels = channels.map((c) => ({ ...c, youtube_title: c.title, title: c.network_name || c.title }));
+  state.niches = niches;
   if (!state.channels.some((c) => c.id === state.channel)) state.channel = "all";
   renderBus();
 }
 
-// The channel bus in the top bar: the channel you're working on lights up. Research, Ideas and Studio follow it.
+/** Overview rows, under each network's own name. */
+const networkOverview = async (days) => (await q(sb.rpc("channel_overview", { p_days: days }))).map((r) => ({ ...r, title: channelById(r.channel_id)?.title || r.title }));
+
+// The network bus in the top bar: the network you're working on lights up. Research, Ideas, Studio, Publish and Calendar follow it.
 function renderBus() {
   const item = (id, label, art) => h("button", { type: "button", class: "bus-item", "aria-pressed": String(state.channel === id), title: label, onclick: () => setChannel(id) },
     art, h("span", { class: "bus-name", text: label }));
   const bus = document.getElementById("bus");
   bus.replaceChildren(h("span", { class: "bus-label", text: "Working on" }),
-    item("all", "All channels", h("span", { class: "bus-all" }, icon("i-all"))),
+    item("all", "All networks", h("span", { class: "bus-all" }, icon("i-all"))),
     ...state.channels.map((c) => item(c.id, c.title, c.thumbnail_url ? h("img", { src: c.thumbnail_url, alt: "" }) : h("span", { class: "bus-all", text: c.title.slice(0, 1) }))));
   bus.querySelector('[aria-pressed="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
 }
@@ -270,7 +276,7 @@ async function makeIdea({ title, niche_id, score, sources, channel_id }) {
 VIEWS.home = async () => {
   const days = state.period;
   const [rows, daily, alerts, ideas, snaps, vids] = await Promise.all([
-    q(sb.rpc("channel_overview", { p_days: days })),
+    networkOverview(days),
     q(sb.rpc("portfolio_daily", { p_days: days })),
     q(sb.from("alerts").select("*").is("resolved_at", null).order("created_at", { ascending: false }).limit(6)),
     q(sb.from("ideas").select("*").in("stage", ["new", "shortlisted"]).order("score", { ascending: false, nullsFirst: false }).limit(5)),
@@ -282,7 +288,7 @@ VIEWS.home = async () => {
   const connected = rows.some((r) => r.connected);
   const kpi = (label, value, d, series) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
     h("div", { class: "foot" }, d, series ? spark(series) : null));
-  const na = h("span", { class: "flat", text: "connect a channel" });
+  const na = h("span", { class: "flat", text: "connect YouTube" });
 
   return [
     pageHead("Home", `${rows.length} channels · last ${days} days`,
@@ -293,9 +299,9 @@ VIEWS.home = async () => {
       kpi("Net subscribers", (sum("subs_net") >= 0 ? "+" : "") + fmt(sum("subs_net")), connected ? delta(sum("subs_net"), sum("subs_net_prev")) : na),
       kpi("Videos published", fmt(sum("uploads")), h("span", { class: "flat", text: `last ${days} days` }))),
     h("p", { class: "muted small note-lag", text: "Views, watch hours and subscribers above come from YouTube Analytics, about 2 days behind. Each channel below shows its live counts from the last refresh." }),
-    h("div", { class: "card-head" }, h("h2", { text: "Channels" }), h("a", { href: "#/channels", class: "small", text: "Manage channels" })),
-    rows.length ? h("section", { class: "monitors", "aria-label": "Channels" }, rows.map((r) => monitor(r, live[r.channel_id], days)))
-      : empty("No channels yet.", h("a", { class: "btn primary", href: "#/channels", text: "Connect a channel" })),
+    h("div", { class: "card-head" }, h("h2", { text: "Networks" }), h("a", { href: "#/channels", class: "small", text: "Manage channels" })),
+    rows.length ? h("section", { class: "monitors", "aria-label": "Networks" }, rows.map((r) => monitor(r, live[r.channel_id], days)))
+      : empty("No networks yet.", h("a", { class: "btn primary", href: "#/channels", text: "Create a network" })),
     h("div", { class: "cols" },
       h("section", { class: "card grow3" }, h("div", { class: "card-head" }, h("h2", { text: "Next ideas" }), h("a", { href: "#/ideas", class: "small", text: "All ideas" })),
         ideas.length ? ideas.map((i) => h("a", { class: "listrow link", href: `#/studio/${i.id}` }, scorePill(i.score),
@@ -620,7 +626,7 @@ VIEWS.ideas = async () => {
           ci <= 2 && !i.script ? h("button", { class: "btn small primary", type: "button", text: "✨ Generate script", onclick: async (e) => {
             const btn = e.currentTarget;
             const channel_id = i.channel_id || (state.channel !== "all" ? state.channel : null);
-            if (!channel_id) return toast("Pick a channel in the top bar first (the script is written for that channel).");
+            if (!channel_id) return toast("Pick a network in the top bar first (the script is written for that channel).");
             btn.disabled = true;
             try { await generateScript(i, { channel_id }, (t) => { btn.textContent = t; }); toast("Script ready: open it in Studio"); go(`#/studio/${i.id}`); }
             catch (err) { toast(err.message); render(); }
@@ -715,7 +721,7 @@ async function studioEditor(ideaId) {
   const f = {};
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
   f.title = h("input", { id: "s-title", class: "field", dir: "auto", value: project?.title || idea.video_title || idea.title });
-  f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No channel" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === idea.channel_id, text: c.title })));
+  f.channel = h("select", { id: "s-channel", class: "field" }, h("option", { value: "", text: "No network" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === idea.channel_id, text: c.title })));
   f.script = h("textarea", { id: "s-script", class: "field script", rows: "14", dir: "auto", value: idea.script || "",
     placeholder: "One line = one scene. First line = the hook.\nAdd footage words in brackets at the end of a line:\n\nWhat if Lamine Yamal signed for Real Madrid? [football stadium night, crowd cheering]\nThe Bernabéu explodes. [stadium fireworks]\n\nOr one block per scene (every line but VO is optional):\n\nTITLE: YAMAL TO MADRID?\nVO: What if Lamine Yamal signed for Real Madrid?\nFOOTAGE: image: Lamine Yamal | video: football stadium night\nCARD: Lamine Yamal | 19 goals | #A50044 #004D98" });
   const counter = h("div", { class: "muted small" });
@@ -790,11 +796,11 @@ async function studioEditor(ideaId) {
     } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = project ? "Rebuild scenes from script" : "Create scenes →"; }
   };
   const buildBtn = h("button", { class: `btn ${project ? "" : "primary"}`, type: "button", text: project ? "Rebuild scenes from script" : "Create scenes →", onclick: (e) => build(e.currentTarget) });
-  const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this channel’s default voice & format", onclick: async () => {
-    if (!f.channel.value) return toast("Pick a channel first");
+  const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this network’s default voice & format", onclick: async () => {
+    if (!f.channel.value) return toast("Pick a network first");
     const cur = channelById(f.channel.value)?.video_style || {};
     await q(sb.from("channels").update({ video_style: { ...cur, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value, editor: { ...(cur.editor || {}), voice_fx: pickedFx() } } }).eq("id", f.channel.value));
-    await loadShared(); toast("Saved as channel default");
+    await loadShared(); toast("Saved as this network's default");
   } });
 
   const aiPanel = studioAiPanel(idea, f, buildBtn, save);
@@ -811,7 +817,7 @@ async function studioEditor(ideaId) {
         h("p", { class: "muted small", style: "margin:0", text: "FOOTAGE: “image: …” searches real photos (Wikimedia Commons, Pexels, Unsplash, Pixabay), “video: …” searches clips. CARD: name | stat | two colours, shown as an animated card." }),
         field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
       h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),
-        field("s-channel", "Channel", f.channel),
+        field("s-channel", "Network", f.channel),
         h("div", { class: "form-grid" }, field("s-lang", "Language", f.language), field("s-voice", "Voice", f.voice), field("s-voice-style", "Voice style", f.voiceStyle), field("s-rate", "Voice speed", f.rate), field("s-aspect", "Format", f.aspect)),
         h("div", { class: "row" }, listen),
         saveStyle,
@@ -840,7 +846,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
   const status = h("span", { class: "muted small", role: "status" });
   const busy = (on) => [genBtn, goBtn, improveBtn, restoreBtn].forEach((b) => { if (b) b.disabled = on; });
   const run = async ({ thenBuild = false, improve = false } = {}) => {
-    if (!f.channel.value) return toast("Pick the channel first (right column): the script is written for its audience.");
+    if (!f.channel.value) return toast("Pick the network first (right column): the script is written for its audience.");
     busy(true);
     try {
       // saved first, so Improve and Restore work from exactly what is on screen now
@@ -901,7 +907,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "12";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "13";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
@@ -927,12 +933,13 @@ async function publishCall(body) {
   return data;
 }
 
-const PLATFORM_NAMES = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram" };
-const PLATFORM_TAGS = { youtube: "YT", tiktok: "TT", instagram: "IG" };
+const PLATFORM_NAMES = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", twitter: "X", facebook: "Facebook" };
+const PLATFORM_TAGS = { youtube: "YT", tiktok: "TT", instagram: "IG", twitter: "X", facebook: "FB" };
+/** Where a network posts. A schedule from before networks existed posts to YouTube with its one method. */
+const targetsOfSchedule = (sc) => (Array.isArray(sc?.targets) ? sc.targets : sc?.channel_id ? [{ platform: "youtube", method: sc.method, account_id: sc.blotato_account_id }] : []);
 
 VIEWS.automation = async () => {
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
-  const blotato = await publishCall({ action: "blotato_accounts" }).catch((e) => ({ accounts: [], error: e.message }));
   const [scheds, queue, jobs, tokens] = await Promise.all([
     q(sb.from("publish_schedules").select("*")),
     q(sb.from("publish_queue").select("*").neq("status", "cancelled").order("slot_at", { ascending: true, nullsFirst: true }).limit(200)),
@@ -967,26 +974,7 @@ VIEWS.automation = async () => {
     const sc = schedOf(c.id);
     const days = new Set(sc.days);
     const en = h("input", { type: "checkbox", checked: sc.enabled, id: `en-${c.id}` });
-    // where this channel posts; a schedule from before targets existed posts to YouTube only
-    const saved = Array.isArray(sc.targets) ? sc.targets : [{ platform: "youtube", method: sc.method, account_id: sc.blotato_account_id }];
-    const savedOf = (platform) => saved.find((x) => x.platform === platform);
-    const accountMenu = (platform, id, off) => {
-      const current = savedOf(platform)?.account_id;
-      const list = blotato.accounts.filter((a) => a.platform === platform);
-      return h("select", { class: "field", id }, off ? h("option", { value: "", text: off }) : null,
-        list.map((a) => h("option", { value: a.id, selected: a.id === String(current), text: a.name })),
-        current && !list.some((a) => a.id === String(current)) ? h("option", { value: current, selected: true, text: `Account ${current} (not found in Blotato)` }) : null);
-    };
-    const yt = savedOf("youtube");
-    const method = h("select", { class: "field", id: `m-${c.id}` }, [["youtube", "Direct"], ["blotato", "Through Blotato"], ["off", "Don't post"]].map(([v, t]) => h("option", { value: v, selected: (yt ? yt.method || "youtube" : "off") === v, text: t })));
-    const blot = accountMenu("youtube", `b-${c.id}`, "Choose an account");
-    const blotWrap = h("div", { class: "field-wrap" }, h("label", { for: `b-${c.id}`, text: "YouTube account in Blotato" }), blot);
-    const showBlot = () => { blotWrap.hidden = method.value !== "blotato"; };
-    method.addEventListener("change", showBlot); showBlot();
-    const tiktok = accountMenu("tiktok", `tt-${c.id}`, "Don't post");
-    const insta = accountMenu("instagram", `ig-${c.id}`, "Don't post");
-    const ttPrivacy = h("select", { class: "field", id: `ttp-${c.id}` }, [["PUBLIC_TO_EVERYONE", "Public"], ["SELF_ONLY", "Only me"], ["MUTUAL_FOLLOW_FRIENDS", "Friends"], ["FOLLOWER_OF_CREATOR", "Followers"]].map(([v, t]) => h("option", { value: v, selected: (savedOf("tiktok")?.privacy || "PUBLIC_TO_EVERYONE") === v, text: t })));
-    const ttAi = h("input", { type: "checkbox", checked: savedOf("tiktok")?.ai !== false });
+    const targets = targetsOfSchedule(sc.channel_id ? sc : { ...sc, channel_id: connected.has(c.id) ? c.id : null });
     const dayBtns = h("div", { class: "chips-tabs", role: "group", "aria-label": "Posting days" }, WEEKDAYS.map(([d, t]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(days.has(d)), text: t,
       onclick: (e) => { days.has(d) ? days.delete(d) : days.add(d); e.currentTarget.setAttribute("aria-pressed", String(days.has(d))); } })));
     const times = h("input", { class: "field", id: `t-${c.id}`, value: sc.times.join(", "), placeholder: "18:00, 21:00" });
@@ -1000,27 +988,19 @@ VIEWS.automation = async () => {
       const tlist = times.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
       if (tlist.some((x) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(x))) return toast("Times look like 18:00, 21:30");
       if (!days.size || !tlist.length) return toast("Pick at least one day and one time");
-      if (method.value === "blotato" && !blot.value) return toast("Choose the YouTube account in Blotato");
-      const targets = [
-        ...(method.value === "off" ? [] : [{ platform: "youtube", method: method.value, account_id: method.value === "blotato" ? blot.value : null, privacy: privacy.value, notify: notify.checked, synthetic: synth.checked }]),
-        ...(tiktok.value ? [{ platform: "tiktok", method: "blotato", account_id: tiktok.value, privacy: ttPrivacy.value, ai: ttAi.checked }] : []),
-        ...(insta.value ? [{ platform: "instagram", method: "blotato", account_id: insta.value }] : []),
-      ];
-      if (en.checked && !targets.length) return toast("Pick at least one place to post");
-      await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked, targets, method: method.value === "blotato" ? "blotato" : "youtube", blotato_account_id: method.value === "blotato" ? blot.value : null,
+      if (en.checked && !targets.length) return toast("Pick this network's accounts on its page first");
+      await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked,
         days: [...days], times: tlist.map((x) => x.padStart(5, "0")), timezone: tz.value, privacy: privacy.value, category_id: cat.value,
         notify_subscribers: notify.checked, synthetic_media: synth.checked }, { onConflict: "channel_id" }));
       toast("Schedule saved"); render();
     } });
     return h("article", { class: "card pub-sched" },
       h("div", { class: "card-head" }, h("h3", { text: c.title }),
-        connected.has(c.id) ? null : h("span", { class: "pill warn", title: "YouTube direct publishing needs the channel connected in Channels", text: "Not connected" })),
+        targets.some((x) => x.platform === "youtube" && x.method !== "blotato") && !connected.has(c.id) ? h("span", { class: "pill warn", title: "YouTube direct publishing needs the channel connected on the network's page", text: "YouTube not connected" }) : null),
       h("label", { class: "pub-check", style: "font-weight:600" }, en, "Auto-publish finished renders"),
-      h("span", { class: "ed-label", text: "Where it posts" }),
-      blotato.error ? h("p", { class: "muted small", style: "margin:0", text: `TikTok and Instagram accounts couldn't load: ${blotato.error}` }) : null,
-      !blotato.error && !blotato.accounts.some((a) => a.platform !== "youtube") ? h("p", { class: "muted small", style: "margin:0" }, "No TikTok or Instagram account yet. Connect them in ", h("a", { href: "https://my.blotato.com/accounts", target: "_blank", rel: "noopener", text: "Blotato" }), ", then reload.") : null,
-      h("div", { class: "form-grid" }, fld(`m-${c.id}`, "YouTube", method), blotWrap, fld(`tt-${c.id}`, "TikTok", tiktok), fld(`ttp-${c.id}`, "TikTok visibility", ttPrivacy), fld(`ig-${c.id}`, "Instagram Reels", insta)),
-      h("label", { class: "pub-check small" }, ttAi, "Mark TikTok posts as AI-generated"),
+      h("div", { class: "row", style: "justify-content:space-between" },
+        h("div", { class: "net-chips", "aria-label": "Where it posts" }, targets.length ? targets.map((x) => h("span", { class: "pill short", text: PLATFORM_NAMES[x.platform] || x.platform })) : h("span", { class: "muted small", text: "Posts nowhere yet" })),
+        h("a", { class: "small", href: `#/channel/${c.id}`, text: "Change accounts" })),
       h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Posting days" }), dayBtns),
       h("div", { class: "form-grid" }, fld(`t-${c.id}`, "Times (local)", times), fld(`tz-${c.id}`, "Time zone", tz), fld(`p-${c.id}`, "YouTube visibility", privacy), fld(`c-${c.id}`, "Category", cat)),
       h("label", { class: "pub-check small" }, notify, "Notify subscribers"),
@@ -1043,7 +1023,7 @@ VIEWS.automation = async () => {
     h("div", { class: "card-head" }, h("h2", { text: "Rendered, not scheduled" }), h("span", { class: "muted small", text: "Last 14 days" })),
     ready.length ? ready.map((j) => h("div", { class: "listrow" },
       h("div", { style: "flex:1 1 240px;min-width:0" }, h("div", { style: "font-weight:500", text: j.params?.title || "Video" }),
-        h("div", { class: "muted small", text: [channelById(j.channel_id)?.title || "No channel", j.params?.aspect, j.duration_s ? Math.round(j.duration_s) + " s" : "", `rendered ${ago(j.finished_at || j.created_at)}`].filter(Boolean).join(" · ") })),
+        h("div", { class: "muted small", text: [channelById(j.channel_id)?.title || "No network", j.params?.aspect, j.duration_s ? Math.round(j.duration_s) + " s" : "", `rendered ${ago(j.finished_at || j.created_at)}`].filter(Boolean).join(" · ") })),
       h("div", { class: "row" },
         h("button", { class: "btn small primary", type: "button", text: "Next free slot", onclick: async (e) => { e.currentTarget.disabled = true;
           try { const r = await publishCall({ action: "queue", render_job_id: j.id, when: "next" }); toast(r.row?.slot_at ? `Queued for ${inTz(r.row.slot_at, schedOf(j.channel_id).timezone)}` : "Queued"); render(); } catch (err) { toast(err.message); render(); } } }),
@@ -1081,7 +1061,7 @@ VIEWS.automation = async () => {
   return [pageHead("Publishing", "Each channel posts on its own days and times. Render a video and it lands in the next free slot."),
     weekBox, readyBox, queueBox,
     h("h2", { style: "margin:8px 0 0", text: "Schedules" }),
-    channels.length ? h("div", { class: "grid-cards wide pub-grid" }, channels.map(schedCard)) : empty("No channels yet.")];
+    channels.length ? h("div", { class: "grid-cards wide pub-grid" }, channels.map(schedCard)) : empty("No networks yet.")];
 };
 
 // ==================================================================
@@ -1189,30 +1169,143 @@ VIEWS.calendar = async () => {
 };
 
 VIEWS.channels = async () => {
-  const [rows, snaps, vids] = await Promise.all([
-    q(sb.rpc("channel_overview", { p_days: 28 })),
+  const [rows, snaps, vids, scheds] = await Promise.all([
+    networkOverview(28),
     q(sb.from("channel_snapshots").select("channel_id,total_views,captured_at").order("captured_at", { ascending: false }).limit(300)),
     q(sb.from("v_own_video_latest").select("channel_id,views,likes,published_at")),
+    q(sb.from("publish_schedules").select("*")),
   ]);
   const live = liveCounts(snaps, vids);
+  const scheduleOf = (id) => scheds.find((x) => x.channel_id === id);
+  const name = h("input", { id: "net-name", class: "field", required: true, maxlength: 60, placeholder: "Dark Psychology" });
+  const niche = h("select", { id: "net-niche", class: "field" }, h("option", { value: "", text: "No niche" }), realNiches().map((n) => h("option", { value: n.id, text: n.name })));
+  const language = h("select", { id: "net-lang", class: "field" }, LANGS.map(([v, t]) => h("option", { value: v, text: t })));
+  const form = h("form", { class: "card net-new", hidden: true, onsubmit: async (e) => {
+    e.preventDefault();
+    const title = name.value.trim();
+    if (!title) return;
+    try {
+      const created = await q(sb.from("channels").insert({ title, network_name: title, niche_id: niche.value || null, language: language.value, video_style: { language: language.value } }).select().single());
+      await q(sb.from("publish_schedules").upsert({ channel_id: created.id, enabled: false, targets: [] }, { onConflict: "channel_id" }));
+      await loadShared();
+      state.channel = created.id; store.set("ytc.channel", created.id); renderBus();
+      toast("Network created. Now connect its accounts.");
+      go(`#/channel/${created.id}`);
+    } catch (err) { toast(err.message); }
+  } },
+    h("h2", { text: "New network" }),
+    h("div", { class: "form-grid" },
+      h("div", { class: "field-wrap" }, h("label", { for: "net-name", text: "Name" }), name),
+      h("div", { class: "field-wrap" }, h("label", { for: "net-niche", text: "Niche" }), niche),
+      h("div", { class: "field-wrap" }, h("label", { for: "net-lang", text: "Language" }), language)),
+    h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit", text: "Create network" }), h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: () => { form.hidden = true; } })));
+  const openForm = () => { form.hidden = false; name.focus(); };
   return [
-    pageHead("Channels", "Connect each channel once with Google. Brand-account channels are connected one at a time.",
+    pageHead("Networks", "One brand, all its accounts: YouTube, TikTok, Instagram, X and Facebook.",
       h("button", { class: "btn", type: "button", text: "Refresh stats", onclick: (e) => refreshChannel(null, e.currentTarget) }),
-      h("button", { class: "btn primary", type: "button", text: "+ Connect channel", onclick: startOAuth })),
-    rows.length ? h("section", { class: "grid-cards wide" }, rows.map((r) => h("a", { class: "ch-card", href: `#/channel/${r.channel_id}` },
-      h("div", { class: "row", style: "gap:12px;flex-wrap:nowrap" }, r.thumbnail_url ? h("img", { class: "avatar", src: r.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
-        h("div", { style: "min-width:0" }, h("div", { style: "font-weight:600", text: r.title }), h("div", { class: "muted small", text: `${r.niche_name || "No niche"} · ${(r.language || "—").toUpperCase()}` }))),
-      h("div", { class: "stats3" },
-        h("div", {}, h("span", { text: "Subscribers" }), h("span", { class: "mono", text: fmt(r.subscribers) })),
-        h("div", {}, h("span", { text: "Total views" }), h("span", { class: "mono", text: fmt(live[r.channel_id]?.views) })),
-        h("div", {}, h("span", { text: "Likes" }), h("span", { class: "mono", text: fmt(live[r.channel_id]?.likes) }))),
-      h("div", { class: "muted small", text: `Views 28 d ${r.connected ? fmt(r.views) : "—"} (~2 days behind) · Uploads 28 d ${fmt(r.uploads)}` }),
-      h("div", { class: "row", style: "justify-content:space-between" },
-        h("span", { class: `pill ${r.connected ? "ok" : "warn"}`, text: r.connected ? "Connected" : "Public stats only" }),
-        h("span", { class: "muted small", text: `Updated ${ago(channelById(r.channel_id)?.stats_synced_at)}` })))))
-      : empty("No channels yet.", h("button", { class: "btn primary", type: "button", text: "Connect a channel", onclick: startOAuth })),
+      h("button", { class: "btn primary", type: "button", text: "+ New network", onclick: openForm })),
+    form,
+    rows.length ? h("section", { class: "grid-cards wide" }, rows.map((r) => {
+      const c = channelById(r.channel_id);
+      const targets = targetsOfSchedule(scheduleOf(r.channel_id) || (c?.youtube_channel_id ? { channel_id: r.channel_id, method: "youtube" } : null));
+      return h("a", { class: "ch-card", href: `#/channel/${r.channel_id}` },
+        h("div", { class: "row", style: "gap:12px;flex-wrap:nowrap" }, r.thumbnail_url ? h("img", { class: "avatar", src: r.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
+          h("div", { style: "min-width:0" }, h("div", { style: "font-weight:600", text: r.title }), h("div", { class: "muted small", text: `${r.niche_name || "No niche"} · ${(r.language || "—").toUpperCase()}` }))),
+        h("div", { class: "net-chips", "aria-label": "Accounts" }, Object.entries(PLATFORM_NAMES).map(([k, label]) => {
+          const on = targets.some((x) => x.platform === k);
+          return h("span", { class: `pill ${on ? "ok" : "short"}`, text: on ? label : `${label} off` });
+        })),
+        c?.youtube_channel_id ? h("div", { class: "stats3" },
+          h("div", {}, h("span", { text: "Subscribers" }), h("span", { class: "mono", text: fmt(r.subscribers) })),
+          h("div", {}, h("span", { text: "Total views" }), h("span", { class: "mono", text: fmt(live[r.channel_id]?.views) })),
+          h("div", {}, h("span", { text: "Likes" }), h("span", { class: "mono", text: fmt(live[r.channel_id]?.likes) }))) : h("div", { class: "muted small", text: "No YouTube channel yet" }),
+        c?.youtube_channel_id ? h("div", { class: "muted small", text: `Updated ${ago(c.stats_synced_at)}` }) : null);
+    })) : empty("No networks yet.", h("button", { class: "btn primary", type: "button", text: "Create a network", onclick: openForm })),
   ];
 };
+
+/** The accounts of one network, and where its videos start from. */
+function networkPanels(chRow, sc, blotato) {
+  const id = chRow.id;
+  const hasYoutube = !!chRow.youtube_channel_id;
+  const saved = targetsOfSchedule(sc || (hasYoutube ? { channel_id: id, method: "youtube" } : null));
+  const savedOf = (platform) => saved.find((x) => x.platform === platform);
+  const accountsFor = (platform) => (blotato.accounts || []).filter((a) => a.platform === platform);
+  const keyOf = (a) => (a.page_id ? `${a.id}:${a.page_id}` : a.id);
+  const menu = (platform, off) => {
+    const t = savedOf(platform);
+    const current = t?.account_id ? (t.page_id ? `${t.account_id}:${t.page_id}` : String(t.account_id)) : "";
+    const list = accountsFor(platform);
+    return h("select", { class: "field", "aria-label": `${PLATFORM_NAMES[platform]} account` }, h("option", { value: "", text: off }),
+      list.map((a) => h("option", { value: keyOf(a), selected: keyOf(a) === current, text: a.name })),
+      current && !list.some((a) => keyOf(a) === current) ? h("option", { value: current, selected: true, text: `Account ${current} (not found in Blotato)` }) : null);
+  };
+  const status = (platform, select) => {
+    const label = () => {
+      if (!select.value) return ["short", "Off"];
+      if (blotato.error) return ["warn", "Can't check"];
+      return accountsFor(platform).some((a) => keyOf(a) === select.value) ? ["ok", "Connected"] : ["crit", "Not found"];
+    };
+    const pill = h("span", {});
+    const show = () => { const [cls, text] = label(); pill.className = `pill ${cls}`; pill.textContent = text; };
+    select.addEventListener("change", show); show();
+    return pill;
+  };
+  const yt = savedOf("youtube");
+  const ytMethod = h("select", { class: "field", "aria-label": "How YouTube posts" }, [["youtube", "Direct"], ["blotato", "Through Blotato"], ["off", "Don't post"]].map(([v, t]) => h("option", { value: v, selected: (yt ? yt.method || "youtube" : "off") === v, text: t })));
+  const ytBlotato = menu("youtube", "Choose an account");
+  const ytWrap = h("div", {}, ytBlotato);
+  const showYt = () => { ytWrap.hidden = ytMethod.value !== "blotato"; };
+  ytMethod.addEventListener("change", showYt); showYt();
+  const ytPill = h("span", { class: `pill ${chRow.connected ? "ok" : hasYoutube ? "warn" : "short"}`, text: chRow.connected ? "Connected" : hasYoutube ? "Public stats only" : "Not connected" });
+  const tiktok = menu("tiktok", "Don't post");
+  const ttPrivacy = h("select", { class: "field", "aria-label": "TikTok visibility" }, [["PUBLIC_TO_EVERYONE", "Public"], ["SELF_ONLY", "Only me"], ["MUTUAL_FOLLOW_FRIENDS", "Friends"], ["FOLLOWER_OF_CREATOR", "Followers"]].map(([v, t]) => h("option", { value: v, selected: (savedOf("tiktok")?.privacy || "PUBLIC_TO_EVERYONE") === v, text: t })));
+  const ttAi = h("input", { type: "checkbox", checked: savedOf("tiktok")?.ai !== false });
+  const instagram = menu("instagram", "Don't post");
+  const x = menu("twitter", "Don't post");
+  const facebook = menu("facebook", "Don't post");
+  const row = (platform, pill, ...controls) => h("div", { class: "net-row" }, h("strong", { text: PLATFORM_NAMES[platform] }), pill, h("div", { class: "net-controls" }, controls));
+  const name = h("input", { id: `net-name-${id}`, class: "field", maxlength: 60, value: chRow.title });
+  const save = h("button", { class: "btn primary", type: "button", text: "Save accounts", onclick: async () => {
+    if (ytMethod.value === "blotato" && !ytBlotato.value) return toast("Choose the YouTube account in Blotato");
+    const blotatoTarget = (platform, select, extra = {}) => { if (!select.value) return []; const [account_id, page_id] = select.value.split(":"); return [{ platform, method: "blotato", account_id, ...(page_id ? { page_id } : {}), ...extra }]; };
+    const targets = [
+      ...(ytMethod.value === "off" ? [] : [{ platform: "youtube", method: ytMethod.value, account_id: ytMethod.value === "blotato" ? ytBlotato.value : null }]),
+      ...blotatoTarget("tiktok", tiktok, { privacy: ttPrivacy.value, ai: ttAi.checked }), ...blotatoTarget("instagram", instagram), ...blotatoTarget("twitter", x), ...blotatoTarget("facebook", facebook),
+    ];
+    try {
+      await q(sb.from("publish_schedules").upsert({ channel_id: id, targets, method: ytMethod.value === "blotato" ? "blotato" : "youtube", blotato_account_id: ytMethod.value === "blotato" ? ytBlotato.value : null }, { onConflict: "channel_id" }));
+      const newName = name.value.trim();
+      if (newName && newName !== chRow.title) { await q(sb.from("channels").update({ network_name: newName }).eq("id", id)); await loadShared(); }
+      toast("Accounts saved"); render();
+    } catch (e) { toast(e.message); }
+  } });
+  const noAccounts = !blotato.error && !(blotato.accounts || []).some((a) => a.platform !== "youtube");
+  const accounts = h("section", { class: "card net-accounts" },
+    h("div", { class: "card-head" }, h("h2", { text: "Accounts" }), h("a", { class: "small", href: "https://my.blotato.com/accounts", target: "_blank", rel: "noopener", text: "Connect accounts in Blotato" })),
+    h("div", { class: "field-wrap" }, h("label", { for: `net-name-${id}`, text: "Network name" }), name),
+    blotato.error ? h("p", { class: "muted small", style: "margin:0", text: `Blotato's accounts couldn't load: ${blotato.error}` }) : null,
+    noAccounts ? h("p", { class: "muted small", style: "margin:0", text: "No TikTok, Instagram, X or Facebook account in Blotato yet. Connect them there, then reload this page." }) : null,
+    row("youtube", ytPill, ytMethod, ytWrap, chRow.connected ? null : h("button", { class: "btn small primary", type: "button", text: "Connect with Google", onclick: () => startOAuth(id) })),
+    row("tiktok", status("tiktok", tiktok), tiktok, ttPrivacy, h("label", { class: "pub-check small" }, ttAi, "Mark as AI-generated")),
+    row("instagram", status("instagram", instagram), instagram),
+    row("twitter", status("twitter", x), x, h("span", { class: "muted small", text: "Posts the title, 280 characters at most." })),
+    row("facebook", status("facebook", facebook), facebook, h("span", { class: "muted small", text: "Pages only, not personal profiles." })),
+    h("div", { class: "row" }, save));
+
+  const style = chRow.video_style || {};
+  const editor = style.editor || {};
+  const voiceName = Object.values(VOICES).flat().find(([v]) => v === style.voice)?.[1];
+  const line = (label, value) => h("div", { class: "net-default" }, h("span", { class: "muted small", text: label }), h("span", { text: value }));
+  const defaults = h("section", { class: "card" },
+    h("h2", { text: "New videos start with" }),
+    h("div", { class: "net-defaults" },
+      line("Voice", voiceName || "App default"), line("Voice style", PRESETS[editor.voice_fx?.style]?.label || (editor.voice_fx?.style === "custom" ? "Custom" : "Natural")),
+      line("Voice speed", style.voice_rate ? `${style.voice_rate}×` : "App default"), line("Format", style.aspect || "9:16"),
+      line("Music level", editor.music ? `${Math.round(editor.music.volume * 100)}%` : "App default"), line("Thumbnail style", editor.thumbnail?.style ? editor.thumbnail.style[0].toUpperCase() + editor.thumbnail.style.slice(1) : "Dark psycho")),
+    h("p", { class: "muted small", style: "margin:0", text: "To change these, set up a video the way you like, then press “Use these settings for this network” in the editor's Style tab." }));
+  return [accounts, defaults];
+}
 
 // Impressions come from YouTube's daily reports: say why they're missing instead of showing an empty number.
 function reachNotice(c) {
@@ -1231,19 +1324,24 @@ const ctrText = (c) => (c === null || c === undefined ? "—" : `${(Number(c) * 
 VIEWS.channel = async (route) => {
   const id = route.id;
   const tab = route.params.get("tab") || "overview";
-  const [overview, daily] = await Promise.all([q(sb.rpc("channel_overview", { p_days: 28 })), q(sb.rpc("portfolio_daily", { p_days: 28, p_channel: id }))]);
+  const [overview, daily] = await Promise.all([networkOverview(28), q(sb.rpc("portfolio_daily", { p_days: 28, p_channel: id }))]);
   const ch = overview.find((r) => r.channel_id === id);
-  if (!ch) return [empty("Channel not found.")];
+  if (!ch) return [empty("Network not found.")];
   const chRow = channelById(id);
+  const [scheds, blotato] = await Promise.all([
+    q(sb.from("publish_schedules").select("*").eq("channel_id", id)),
+    publishCall({ action: "blotato_accounts" }).catch((e) => ({ accounts: [], error: e.message })),
+  ]);
+  const panels = networkPanels(chRow, scheds[0], blotato);
   const header = h("header", { class: "head" },
     h("div", { class: "row", style: "gap:16px;flex-wrap:nowrap" }, ch.thumbnail_url ? h("img", { class: "avatar", src: ch.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
-      h("div", { class: "head-text" }, h("a", { href: "#/channels", class: "small", text: "← Channels" }), h("h1", { style: "font-size:26px", text: ch.title }),
-        h("div", { class: "muted small" }, `${ch.niche_name || "No niche"} · `, ch.connected ? h("span", { class: "up", text: "Connected" }) : h("span", { class: "flat", text: "Public stats only" })))),
+      h("div", { class: "head-text" }, h("a", { href: "#/channels", class: "small", text: "← Networks" }), h("h1", { style: "font-size:26px", text: ch.title }),
+        h("div", { class: "muted small" }, `${ch.niche_name || "No niche"} · `, chRow?.youtube_channel_id ? (ch.connected ? h("span", { class: "up", text: "YouTube connected" }) : h("span", { class: "flat", text: "Public stats only" })) : h("span", { class: "flat", text: "No YouTube channel yet" })))),
     h("div", { class: "row" },
-      h("span", { class: "muted small", title: chRow?.stats_synced_at ? when(chRow.stats_synced_at) : "", text: `Updated ${chRow?.stats_synced_at ? ago(chRow.stats_synced_at) : "—"}` }),
-      h("button", { class: "btn", type: "button", text: "Refresh now", onclick: (e) => refreshChannel(id, e.currentTarget) }),
-      h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this channel" }),
-      ch.connected ? null : h("button", { class: "btn primary", type: "button", text: "Connect with Google", onclick: startOAuth })));
+      chRow?.youtube_channel_id ? h("span", { class: "muted small", title: chRow?.stats_synced_at ? when(chRow.stats_synced_at) : "", text: `Updated ${chRow?.stats_synced_at ? ago(chRow.stats_synced_at) : "—"}` }) : null,
+      chRow?.youtube_channel_id ? h("button", { class: "btn", type: "button", text: "Refresh now", onclick: (e) => refreshChannel(id, e.currentTarget) }) : null,
+      h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this network" })));
+  if (!chRow?.youtube_channel_id) return [header, ...panels];
   const statLine = (v) => [`${fmtc(v.views)} views`, `${fmtc(v.likes)} likes`, v.impressions_28d !== null && v.impressions_28d !== undefined ? `${fmtc(v.impressions_28d)} impr.` : null].filter(Boolean).join(" · ");
   const tabs = h("div", { class: "tabs", role: "tablist" },
     [["overview", "Overview"], ["videos", "Videos"], ["search", "Search terms"], ["audience", "Audience"]].map(([v, t]) =>
@@ -1314,7 +1412,7 @@ VIEWS.channel = async (route) => {
     };
     body = h("div", { class: "cols" }, part("traffic_source", "Where views come from"), part("country", "Top countries"));
   }
-  return [header, tabs, body].flat();
+  return [header, ...panels, tabs, body].flat();
 };
 function yppRow(label, val, target, unit) {
   const p = pctOf(val, target);
@@ -1335,7 +1433,7 @@ function prettySource(k) {
 // Settings
 // ==================================================================
 VIEWS.settings = async (route) => {
-  if (route.params.get("connected")) toast("Channel connected. Stats are loading.");
+  if (route.params.get("connected")) toast("YouTube connected. Stats are loading.");
   if (route.params.get("error")) toast(`Google connection failed: ${route.params.get("error")}`);
   const [seeds, runs, quota, tracks] = await Promise.all([
     q(sb.from("seed_terms").select("*").order("created_at")),
@@ -1375,9 +1473,9 @@ VIEWS.settings = async (route) => {
         h("label", { for: "new-niche", class: "sr", text: "New niche" }), newNiche, h("button", { class: "btn", type: "submit", text: "Add niche" }))),
     realNiches().length ? h("div", { class: "grid-cards wide" }, realNiches().map(nicheCard)) : empty("No niches yet."));
 
-  const channelsBox = h("section", { class: "card" }, h("h2", { text: "Channel settings" }),
+  const channelsBox = h("section", { class: "card" }, h("h2", { text: "Network settings" }),
     state.channels.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:600px" },
-      h("thead", {}, h("tr", {}, ["Channel", "Niche", "Language", "Countries"].map((t) => h("th", { text: t })))),
+      h("thead", {}, h("tr", {}, ["Network", "Niche", "Language", "Countries"].map((t) => h("th", { text: t })))),
       h("tbody", {}, state.channels.map((c) => h("tr", {},
         h("td", { style: "font-weight:500", text: c.title }),
         h("td", {}, h("select", { class: "field", style: "min-height:36px", "aria-label": `Niche for ${c.title}`, onchange: async (e) => { await q(sb.from("channels").update({ niche_id: e.target.value || null }).eq("id", c.id)); await loadShared(); toast("Saved"); } },
@@ -1386,7 +1484,7 @@ VIEWS.settings = async (route) => {
           onchange: async (e) => { await q(sb.from("channels").update({ language: e.target.value.trim() || null }).eq("id", c.id)); toast("Saved"); } })),
         h("td", {}, h("input", { class: "field", style: "min-height:36px;width:160px", value: (c.markets || []).join(", "), "aria-label": `Countries for ${c.title}`,
           onchange: async (e) => { await q(sb.from("channels").update({ markets: e.target.value.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean) }).eq("id", c.id)); toast("Saved"); } })))))))
-      : empty("No channels yet."));
+      : empty("No networks yet."));
 
   const latest = {};
   for (const r of runs) if (!latest[r.job.split(":")[0]]) latest[r.job.split(":")[0]] = r;
@@ -1459,9 +1557,9 @@ async function refreshChannel(channelId, btn) {
     await loadShared(); render();
   } catch (e) { toast(`Refresh failed: ${e.message || e}`); if (btn) { btn.disabled = false; btn.textContent = channelId ? "Refresh now" : "Refresh stats"; } }
 }
-async function startOAuth() {
+async function startOAuth(networkId) {
   try {
-    const { data, error } = await sb.functions.invoke("google-oauth", { body: { action: "start", return_to: location.origin + location.pathname } });
+    const { data, error } = await sb.functions.invoke("google-oauth", { body: { action: "start", return_to: location.origin + location.pathname, channel_id: typeof networkId === "string" ? networkId : undefined } });
     if (error) throw error;
     location.href = data.url;
   } catch (e) { toast(`Google connection isn’t ready: ${e.message || e}`); }

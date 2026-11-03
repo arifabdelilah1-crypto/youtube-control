@@ -237,7 +237,29 @@ function VoiceStyle({ project, onProject, toast }) {
   );
 }
 
-function StylePanel({ project, ctx, onProject, onSettings, toast }) {
+/** New videos in the network start from what's on screen: not this video's words, photo or chosen track. */
+function NetworkDefaults({ sb, project, toast }) {
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    const s = mergeSettings(project.settings);
+    const { text, image, file, error: lastError, ...thumbnail } = project.settings?.thumbnail || {};
+    const { data, error } = await sb.from("channels").select("video_style").eq("id", project.channel_id).maybeSingle();
+    const next = error ? null : {
+      ...(data?.video_style || {}), language: project.language, voice: project.voice, voice_rate: Number(project.voice_rate), aspect: project.aspect,
+      editor: {
+        captions: s.captions, hook: { enabled: s.hook.enabled, text: "" }, titles: s.titles, progress: s.progress, sfx: s.sfx,
+        music: { mood: "none", track_id: null, volume: s.music.volume, start: 0 }, voice_fx: project.settings?.voice_fx || null, thumbnail,
+      },
+    };
+    const saved = next ? await sb.from("channels").update({ video_style: next }).eq("id", project.channel_id) : { error };
+    setSaving(false);
+    toast(saved.error ? `Not saved: ${saved.error.message}` : "New videos in this network will start with these settings");
+  };
+  return <button type="button" className="btn small" disabled={saving} onClick={save}>{saving ? "Saving…" : "Use these settings for this network"}</button>;
+}
+
+function StylePanel({ sb, project, ctx, onProject, onSettings, toast }) {
   const s = mergeSettings(project.settings);
   const voices = ctx.VOICES[project.language] || ctx.VOICES.en;
   const set = (group, patch) => onSettings({ ...project.settings, [group]: { ...s[group], ...patch } });
@@ -263,6 +285,7 @@ function StylePanel({ project, ctx, onProject, onSettings, toast }) {
         </Field>
       </div>
       <VoiceStyle project={project} onProject={onProject} toast={toast} />
+      {project.channel_id ? <NetworkDefaults sb={sb} project={project} toast={toast} /> : null}
 
       <h3>Captions</h3>
       <label className="row ed-check"><input type="checkbox" checked={s.captions.enabled} onChange={(e) => set("captions", { enabled: e.target.checked })} /> Show captions</label>
@@ -878,7 +901,7 @@ function Editor({ ctx }) {
               ))}
             </div>
           ) : null}
-          {tab === "style" ? <StylePanel project={project} ctx={ctx} toast={toast} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
+          {tab === "style" ? <StylePanel sb={sb} project={project} ctx={ctx} toast={toast} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
           {tab === "thumbnail" ? <ThumbnailPanel sb={sb} project={project} scenes={scenes} signed={signed} sign={sign} toast={toast} creating={!!creatingThumb} onCreate={createThumbnail} onThumbnail={(thumbnail) => saveProject({ settings: { ...project.settings, thumbnail } })} /> : null}
           {tab === "music" ? <MusicPanel sb={sb} project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
         </section>
