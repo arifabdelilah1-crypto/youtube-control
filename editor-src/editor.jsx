@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client";
 import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
+import { PRESETS, playSample, presetFx, sampleUrl, voiceFx } from "../web/voicefx.js";
 import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, buildProps, creditsText, foundMusic, mergeSettings, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
@@ -179,7 +180,63 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
 }
 
 // ------------------------------------------------------------------
-function StylePanel({ project, ctx, onProject, onSettings }) {
+const FX_SLIDERS = [
+  ["pitch", "Pitch", -6, 3, 1, (v) => (v > 0 ? `+${v}` : `${v}`)],
+  ["bass", "Bass", 0, 10, 1, (v) => `+${v} dB`],
+  ["bright", "Brightness", -8, 4, 1, (v) => `${v > 0 ? "+" : ""}${v} dB`],
+  ["echo", "Echo", 0, 100, 5, (v) => `${v}%`],
+];
+
+function ListenButton({ language, voice, style, toast }) {
+  const [on, setOn] = useState(false);
+  const click = async () => {
+    try { setOn(await playSample(sampleUrl(language, voice, style))); } catch { setOn(false); toast("This sample isn't available yet."); }
+  };
+  useEffect(() => { setOn(false); }, [language, voice, style]);
+  return <button type="button" className="btn small" aria-pressed={on} onClick={click}>{on ? "■ Stop" : "▶ Listen"}</button>;
+}
+
+/** Style buttons and fine tuning. Sliders apply when let go: each change means speaking every line again. */
+function VoiceStyle({ project, onProject, toast }) {
+  const fx = voiceFx(project.settings);
+  const [draft, setDraft] = useState(null);
+  const shown = draft || { ...fx, rate: Number(project.voice_rate) };
+  const save = (nextFx, rate) => onProject({ settings: { ...project.settings, voice_fx: nextFx }, ...(rate ? { voice_rate: rate } : {}) }, true);
+  const commit = () => {
+    if (!draft) return;
+    const { rate, ...next } = draft;
+    setDraft(null);
+    save({ ...next, style: "custom" }, rate);
+  };
+  const move = (patch) => setDraft({ ...shown, ...patch });
+  const slider = (key, label, min, max, step, text) => (
+    <Field key={key} label={`${label} · ${text(shown[key])}`}>
+      <input type="range" min={min} max={max} step={step} value={shown[key]} aria-label={label} onChange={(e) => move({ [key]: Number(e.target.value) })} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
+    </Field>
+  );
+  return (
+    <>
+      <span className="ed-label">Voice style</span>
+      <div className="ed-voice-styles" role="group" aria-label="Voice style">
+        {Object.entries(PRESETS).map(([k, p]) => (
+          <button key={k} type="button" className={`btn small${fx.style === k ? " primary" : ""}`} aria-pressed={fx.style === k} onClick={() => { setDraft(null); save(presetFx(k), p.rate); }}>{p.label}</button>
+        ))}
+        <ListenButton language={project.language} voice={project.voice} style={fx.style} toast={toast} />
+      </div>
+      <div className="form-grid">
+          {FX_SLIDERS.map(([key, label, min, max, step, text]) => slider(key, label, min, max, step, text))}
+          <Field label={`Speed · ${shown.rate.toFixed(2)}×`}>
+            <input type="range" min="0.7" max="1.3" step="0.01" value={shown.rate} aria-label="Speed" onChange={(e) => move({ rate: Number(e.target.value) })} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
+          </Field>
+      </div>
+      <p className="muted small" style={{ margin: 0 }}>
+        {fx.style === "custom" ? "Listen plays the natural voice. Your settings are heard after you press “Update voice”." : "Press “Update voice” to use this style in the video."}
+      </p>
+    </>
+  );
+}
+
+function StylePanel({ project, ctx, onProject, onSettings, toast }) {
   const s = mergeSettings(project.settings);
   const voices = ctx.VOICES[project.language] || ctx.VOICES.en;
   const set = (group, patch) => onSettings({ ...project.settings, [group]: { ...s[group], ...patch } });
@@ -198,17 +255,13 @@ function StylePanel({ project, ctx, onProject, onSettings }) {
             {voices.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
           </select>
         </Field>
-        <Field label="Speed">
-          <select className="field" value={String(project.voice_rate)} onChange={(e) => onProject({ voice_rate: Number(e.target.value) }, true)}>
-            {[[0.9, "Slower"], [1, "Normal"], [1.1, "Shorts pace"], [1.2, "Fast"]].map(([v, t]) => <option key={v} value={String(v)}>{t}</option>)}
-          </select>
-        </Field>
         <Field label="Format">
           <select className="field" value={project.aspect} onChange={(e) => onProject({ aspect: e.target.value })}>
             <option value="9:16">Short / Reel (9:16)</option><option value="16:9">Long video (16:9)</option><option value="1:1">Square (1:1)</option>
           </select>
         </Field>
       </div>
+      <VoiceStyle project={project} onProject={onProject} toast={toast} />
 
       <h3>Captions</h3>
       <label className="row ed-check"><input type="checkbox" checked={s.captions.enabled} onChange={(e) => set("captions", { enabled: e.target.checked })} /> Show captions</label>
@@ -689,7 +742,7 @@ function Editor({ ctx }) {
               ))}
             </div>
           ) : null}
-          {tab === "style" ? <StylePanel project={project} ctx={ctx} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
+          {tab === "style" ? <StylePanel project={project} ctx={ctx} toast={toast} onProject={saveProject} onSettings={(settings) => saveProject({ settings })} /> : null}
           {tab === "music" ? <MusicPanel sb={sb} project={project} tracks={tracks} signed={signed} sign={sign} onSettings={(settings) => saveProject({ settings })} /> : null}
         </section>
       </div>

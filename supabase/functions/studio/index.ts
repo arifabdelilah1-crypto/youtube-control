@@ -167,7 +167,8 @@ Deno.serve(async (req) => {
       }
 
       // keep voice + clip of lines that did not change (same voice settings)
-      const sameVoice = oldProject && oldProject.voice === voice && Number(oldProject.voice_rate) === rate;
+      const fxOf = (settings: any) => ["pitch", "bass", "bright", "echo"].map((k) => Number(settings?.voice_fx?.[k]) || 0).join();
+      const sameVoice = oldProject && oldProject.voice === voice && Number(oldProject.voice_rate) === rate && fxOf(oldProject.settings) === fxOf(fields.settings);
       const byText = new Map(old.map((s) => [s.text, s]));
       const defaults: string[] = (Array.isArray(body.default_terms) ? body.default_terms : []).map(String).filter(Boolean).slice(0, 8);
       // 5 scenes at a time so long scripts don't fire 100+ searches at once

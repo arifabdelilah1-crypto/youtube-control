@@ -1,6 +1,7 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 import { slotsBetween } from "./slots.js";
+import { PRESETS, playSample, presetFx, sampleUrl, voiceFx } from "./voicefx.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "pkce", detectSessionInUrl: true, persistSession: true } });
 
@@ -144,6 +145,12 @@ const SUPERTONIC_VOICES = [["M", "male"], ["F", "female"]].flatMap(([k, g]) => [
 for (const lang of ["en", "fr", "es", "de"]) VOICES[lang].push(...SUPERTONIC_VOICES);
 const MOODS = [["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
   ["emotional", "Emotional / piano"], ["lofi", "Lo-fi / chill"], ["oriental", "Oriental / Arabic"], ["latin", "Latin / Spanish guitar"], ["other", "Other"]];
+/** The speed menu, with the voice's own speed when a style set one that isn't listed. */
+const rateOptions = (current) => {
+  const list = [[0.9, "Slower"], [1, "Normal"], [1.1, "Shorts pace"], [1.2, "Fast"]];
+  const rate = Number(current);
+  return !rate || list.some(([v]) => v === rate) ? list : [...list, [rate, `${rate}×`]].sort((a, b) => a[0] - b[0]);
+};
 const DEFAULT_STYLE = { language: "en", voice: "en-US-AndrewNeural-Male", voice_rate: 1, aspect: "9:16", source: "pixabay", bgm: "random", bgm_volume: 0.2,
   clip_duration: 4, captions: { enabled: true, mode: "word_by_word", position: "bottom", color: "#FFFFFF", font_size: 70, stroke_color: "#000000", stroke_width: 2, animation: "pop_spring" } };
 
@@ -725,7 +732,24 @@ async function studioEditor(ideaId) {
   f.voice = h("select", { id: "s-voice", class: "field" });
   const fillVoices = () => { const list = VOICES[f.language.value] || VOICES.en; f.voice.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === style.voice, text: t }))); };
   f.language.addEventListener("change", fillVoices); fillVoices();
-  f.rate = h("select", { id: "s-rate", class: "field" }, [[0.9, "Slower"], [1, "Normal"], [1.1, "Shorts pace"], [1.2, "Fast"]].map(([v, t]) => h("option", { value: v, selected: Number(style.voice_rate) === v, text: t })));
+  f.rate = h("select", { id: "s-rate", class: "field" }, rateOptions(style.voice_rate).map(([v, t]) => h("option", { value: v, selected: Number(style.voice_rate) === v, text: t })));
+  const startFx = voiceFx(project ? project.settings : ch?.video_style?.editor);
+  const startStyle = studioPicks.get(ideaId)?.voice_style || startFx.style;
+  f.voiceStyle = h("select", { id: "s-voice-style", class: "field" },
+    Object.entries(PRESETS).map(([k, p]) => h("option", { value: k, selected: k === startStyle, text: p.label })),
+    startStyle === "custom" ? h("option", { value: "custom", selected: true, text: "Custom (set in the editor)" }) : null);
+  f.voiceStyle.addEventListener("change", () => {
+    const rate = PRESETS[f.voiceStyle.value]?.rate;
+    if (!rate) return;
+    if (![...f.rate.options].some((o) => Number(o.value) === rate)) f.rate.append(h("option", { value: rate, text: `${rate}×` }));
+    f.rate.value = String(rate);
+  });
+  const pickedFx = () => (f.voiceStyle.value === "custom" ? startFx : presetFx(f.voiceStyle.value));
+  const listen = h("button", { class: "btn small", type: "button", text: "▶ Listen", onclick: async () => {
+    try { listen.textContent = (await playSample(sampleUrl(f.language.value, f.voice.value, f.voiceStyle.value))) ? "■ Stop" : "▶ Listen"; }
+    catch { listen.textContent = "▶ Listen"; toast("This sample isn't available yet."); }
+  } });
+  for (const el of [f.language, f.voice, f.voiceStyle]) el.addEventListener("change", () => { listen.textContent = "▶ Listen"; });
   f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9)"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
   f.desc = h("textarea", { id: "s-desc", class: "field", rows: "3", dir: "auto", value: idea.video_description || "" });
   f.tags = h("input", { id: "s-tags", class: "field", value: (idea.video_tags || []).join(", ") });
@@ -757,7 +781,7 @@ async function studioEditor(ideaId) {
       const { data, error } = await sb.functions.invoke("studio", { body: {
         action: "build", project_id: project?.id || null, idea_id: ideaId, channel_id: f.channel.value || null,
         title: f.title.value.trim(), script: f.script.value, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value,
-        settings: withAi(project?.settings || chosen?.video_style?.editor || {}), default_terms: terms(),
+        settings: { ...withAi(project?.settings || chosen?.video_style?.editor || {}), voice_fx: pickedFx() }, default_terms: terms(),
       } });
       if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
       if (data.error) toast(data.error);
@@ -769,7 +793,7 @@ async function studioEditor(ideaId) {
   const saveStyle = h("button", { class: "btn small ghost", type: "button", text: "Use as this channel’s default voice & format", onclick: async () => {
     if (!f.channel.value) return toast("Pick a channel first");
     const cur = channelById(f.channel.value)?.video_style || {};
-    await q(sb.from("channels").update({ video_style: { ...cur, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value } }).eq("id", f.channel.value));
+    await q(sb.from("channels").update({ video_style: { ...cur, language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value, editor: { ...(cur.editor || {}), voice_fx: pickedFx() } } }).eq("id", f.channel.value));
     await loadShared(); toast("Saved as channel default");
   } });
 
@@ -788,7 +812,8 @@ async function studioEditor(ideaId) {
         field("s-terms", "Default footage searches (used for lines without [brackets])", f.terms, "English visual words work best: “crowd cheering”, “red sports car”.")),
       h("section", { class: "card grow2" }, h("h2", { text: "Voice & format" }),
         field("s-channel", "Channel", f.channel),
-        h("div", { class: "form-grid" }, field("s-lang", "Language", f.language), field("s-voice", "Voice", f.voice), field("s-rate", "Voice speed", f.rate), field("s-aspect", "Format", f.aspect)),
+        h("div", { class: "form-grid" }, field("s-lang", "Language", f.language), field("s-voice", "Voice", f.voice), field("s-voice-style", "Voice style", f.voiceStyle), field("s-rate", "Voice speed", f.rate), field("s-aspect", "Format", f.aspect)),
+        h("div", { class: "row" }, listen),
         saveStyle,
         h("p", { class: "muted small", style: "margin:0", text: "Captions, hook text, music and sound effects are set in the editor." }))),
     h("details", { class: "card" }, h("summary", { text: "Publishing details (description, tags)" }),
@@ -829,7 +854,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
       f.terms.value = (fresh.search_terms || []).join(", ");
       status.textContent = "";
       if (thenBuild) { busy(false); buildBtn.click(); return; }
-      studioPicks.set(idea.id, { language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value });
+      studioPicks.set(idea.id, { language: f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: f.aspect.value, voice_style: f.voiceStyle.value });
       toast(improve ? "Script improved: check it, then Create scenes" : "Script ready: check it, then Create scenes"); render();
     } catch (e) { status.textContent = ""; toast(e.message); busy(false); }
   };
@@ -842,7 +867,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
     if (!confirm("Go back to the script from before the last AI run? The current script will be replaced.")) return;
     const { script, video_title, video_description, video_tags, search_terms, ai: before } = ai.previous;
     busy(true);
-    try { await q(sb.from("ideas").update({ script, video_title, video_description, video_tags, search_terms, ai: before }).eq("id", idea.id)); studioPicks.set(idea.id, { language: before?.language || f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: before?.aspect || f.aspect.value }); toast("Previous script restored"); render(); }
+    try { await q(sb.from("ideas").update({ script, video_title, video_description, video_tags, search_terms, ai: before }).eq("id", idea.id)); studioPicks.set(idea.id, { language: before?.language || f.language.value, voice: f.voice.value, voice_rate: Number(f.rate.value), aspect: before?.aspect || f.aspect.value, voice_style: f.voiceStyle.value }); toast("Previous script restored"); render(); }
     catch (e) { toast(e.message); busy(false); }
   } }) : null;
 
@@ -876,7 +901,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "9";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "10";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });

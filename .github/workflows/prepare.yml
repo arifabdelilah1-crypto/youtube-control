@@ -29,6 +29,10 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           PROJECT_ID: ${{ github.event.inputs.project_id }}
         run: python collectors/prepare_job.py --engine "$PROJECT_ID" >> "$GITHUB_OUTPUT"
+      - name: Install ffmpeg (only for voice styles)
+        if: steps.engine.outputs.effects == 'true' && steps.engine.outputs.engine != 'supertonic'
+        continue-on-error: true  # the next step reports any failure on the project
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
       - name: Install Supertonic-3 (only for its voices)
         if: steps.engine.outputs.engine == 'supertonic'
         continue-on-error: true  # the next step reports any failure on the project

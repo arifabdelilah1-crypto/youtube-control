@@ -8,7 +8,8 @@ uploads the MP3 to the private 'renders' bucket and stores path, duration and wo
 
     python collectors/prepare_job.py --engine <project_id>
 
-prints engine=edge or engine=supertonic, so the workflow installs Supertonic-3 only when it's needed.
+prints engine=edge or engine=supertonic, and effects=true or false, so the workflow installs Supertonic-3 and ffmpeg
+only when they're needed.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import edge_tts
 
 from common import DB, HTTP, SUPABASE_KEY, SUPABASE_URL, log, require_env
 from supertonic_voice import is_supertonic, speak
+from voice_fx import apply_fx, clean_fx, has_fx
 
 BYTES_PER_SECOND = 48_000 / 8  # Edge TTS default output: 24 kHz, 48 kbit/s mono MP3 (constant bitrate)
 VOICE_RE = re.compile(r"^([a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural)(-(Male|Female))?$")
@@ -85,8 +87,9 @@ async def main() -> int:
     if sys.argv[1] == "--engine":
         if not re.fullmatch(r"[0-9a-f-]{36}", sys.argv[2]):
             sys.exit("invalid id")
-        project = DB().select("video_projects", {"select": "voice", "id": f"eq.{sys.argv[2]}"})[0]
+        project = DB().select("video_projects", {"select": "voice,settings", "id": f"eq.{sys.argv[2]}"})[0]
         print("engine=supertonic" if is_supertonic(project["voice"]) else "engine=edge")
+        print(f"effects={str(has_fx((project.get('settings') or {}).get('voice_fx'))).lower()}")
         return 0
     project_id = sys.argv[1]
     only = {s for s in (sys.argv[2] if len(sys.argv) > 2 else "").split(",") if s}
@@ -102,7 +105,8 @@ async def main() -> int:
     todo = [s for s in scenes if s["id"] in only] if only else scenes
     supertonic = is_supertonic(project["voice"])
     voice, rate = (project["voice"], project.get("voice_rate")) if supertonic else (tts_voice(project["voice"]), tts_rate(project.get("voice_rate")))
-    log(f"Project {project_id}: {len(todo)} of {len(scenes)} scenes, voice {voice} {rate}")
+    fx = (project.get("settings") or {}).get("voice_fx")
+    log(f"Project {project_id}: {len(todo)} of {len(scenes)} scenes, voice {voice} {rate}, effects {clean_fx(fx) if has_fx(fx) else 'none'}")
 
     sem = asyncio.Semaphore(1 if supertonic else 4)  # Supertonic-3 already uses every processor for one line
 
@@ -118,7 +122,10 @@ async def main() -> int:
                 duration = round(len(audio) / BYTES_PER_SECOND, 3)
                 if words:
                     duration = max(duration, words[-1]["e"])
-        key = hashlib.sha1(f"{text}|{voice}|{rate}".encode()).hexdigest()[:10]
+            if has_fx(fx):
+                audio, styled = await asyncio.to_thread(apply_fx, audio, fx)
+                duration = max(duration, styled)
+        key = hashlib.sha1(f"{text}|{voice}|{rate}|{clean_fx(fx)}".encode()).hexdigest()[:10]
         path = f"projects/{project_id}/voice/{scene['id']}-{key}.mp3"
         await asyncio.to_thread(upload, path, audio)
         db.update("project_scenes", {"id": f"eq.{scene['id']}"},
