@@ -1,7 +1,7 @@
 // The video's thumbnail. Same component in the editor preview (Remotion Player) and the final image (renderStill).
 import React from "react";
 import { AbsoluteFill, Img, OffthreadVideo } from "remotion";
-import { ARABIC, LATIN, useFonts } from "./Main.jsx";
+import { ARABIC, LATIN, useFonts } from "./fonts.js";
 import { THUMBNAIL_STYLES } from "./layout.js";
 
 const LOOKS = {
@@ -12,8 +12,11 @@ const LOOKS = {
   clean: { filter: "none", shade: "none", box: "#FFFFFF" },
 };
 
-/** @param {{image?: {type?: string, url?: string, trim?: number}, text?: string, style?: string, color?: string, accent?: string, size?: number, position?: string, assetBase?: string|null}} props */
-export function Thumbnail({ image, text = "", style = "dark", color, accent, size = 110, position = "bottom", assetBase = null }) {
+// Vertical apps cover the top and bottom of the picture (buttons, name, caption): the text stays out of those parts.
+const PADDING = { "9:16": "260px 90px 460px", "16:9": 56, "1:1": 72 };
+
+/** @param {{image?: {type?: string, url?: string, trim?: number}, text?: string, style?: string, color?: string, accent?: string, size?: number, position?: string, aspect?: string, assetBase?: string|null}} props */
+export function Thumbnail({ image, text = "", style = "dark", color, accent, size = 110, position = "bottom", aspect = "16:9", assetBase = null }) {
   useFonts(assetBase);
   const look = LOOKS[style] || LOOKS.dark;
   const base = THUMBNAIL_STYLES[style] || THUMBNAIL_STYLES.dark;
@@ -26,7 +29,7 @@ export function Thumbnail({ image, text = "", style = "dark", color, accent, siz
       {image?.url && image.type === "video" ? <OffthreadVideo src={image.url} muted startFrom={Math.round((image.trim || 0) * 30)} style={media} /> : null}
       {image?.url && image.type !== "video" ? <Img src={image.url} style={media} /> : null}
       {look.shade !== "none" ? <AbsoluteFill style={{ background: look.shade }} /> : null}
-      <AbsoluteFill style={{ padding: 56, justifyContent: justify, alignItems: "center" }}>
+      <AbsoluteFill style={{ padding: PADDING[aspect] || PADDING["16:9"], justifyContent: justify, alignItems: "center" }}>
         {words.length || last ? (
           <div dir="auto" style={{
             fontFamily: `"${LATIN}", "${ARABIC}", sans-serif`, fontWeight: 800, fontSize: size, lineHeight: 1.02, textAlign: "center", textTransform: "uppercase",

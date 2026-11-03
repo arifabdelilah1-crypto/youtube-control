@@ -2,6 +2,7 @@
 import React from "react";
 import { Composition, registerRoot } from "remotion";
 import { Main } from "./Main.jsx";
+import { thumbnailSize } from "./layout.js";
 import { Thumbnail } from "./Thumbnail.jsx";
 
 const fallback = {
@@ -12,7 +13,8 @@ const fallback = {
 function Root() {
   return (
     <>
-    <Composition id="Thumbnail" component={Thumbnail} defaultProps={{}} durationInFrames={1} fps={30} width={1280} height={720} />
+    <Composition id="Thumbnail" component={Thumbnail} defaultProps={{}} durationInFrames={1} fps={30} width={1080} height={1920}
+      calculateMetadata={({ props }) => { const [width, height] = thumbnailSize(props.aspect); return { width, height }; }} />
     <Composition
       id="Main"
       component={Main}

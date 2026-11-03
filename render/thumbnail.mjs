@@ -1,4 +1,4 @@
-// The video's thumbnail as a JPEG on the VDS (runs in the "Create thumbnail" workflow, and with the final render).
+// The video's thumbnail, in the video's own format, as a JPEG on the VDS (runs in the "Create thumbnail" workflow, and with the final render).
 //   node render/thumbnail.mjs <project_id>
 import fs from "node:fs";
 import path from "node:path";
@@ -38,9 +38,9 @@ async function saveResult(projectId, result) {
 export async function makeThumbnail(project, serveUrl) {
   if (!mediaReady()) throw new Error("The video store isn't set up: add MEDIA_URL and MEDIA_SECRET in GitHub secrets.");
   const t = project.settings?.thumbnail || {};
-  const key = thumbnailKey(t);
+  const key = thumbnailKey(t, project.aspect);
   const image = t.image?.path ? { ...t.image, url: await signed(t.image.path) } : t.image;
-  const inputProps = thumbnailProps({ ...t, image }, project.language);
+  const inputProps = thumbnailProps({ ...t, image }, project.aspect);
   const bundled = serveUrl || await bundle({ entryPoint: path.join(ROOT, "video/root.jsx"), publicDir: path.join(ROOT, "web") });
   const composition = await selectComposition({ serveUrl: bundled, id: "Thumbnail", inputProps });
   const out = path.join(ROOT, "thumbnail-output.jpg");

@@ -101,19 +101,26 @@ const THUMBNAIL_FIELDS = ["image", "text", "style", "color", "accent", "size", "
 /** Is there anything to make a thumbnail from? */
 export const hasThumbnail = (t) => !!(t && (String(t.text || "").trim() || t.image?.url || t.image?.path));
 
+const THUMBNAIL_SIZES = { "9:16": [1080, 1920], "16:9": [1280, 720], "1:1": [1080, 1080] };
+export const thumbnailSize = (aspect) => THUMBNAIL_SIZES[aspect] || THUMBNAIL_SIZES["16:9"];
+
 /** Changes whenever the picture would change: tells a saved thumbnail from an outdated one. 8 hex characters. */
-export function thumbnailKey(t = {}) {
+export function thumbnailKey(t = {}, aspect = "16:9") {
   const image = t.image ? { url: t.image.url, path: t.image.path, trim: t.image.trim } : null;
-  const text = JSON.stringify(THUMBNAIL_FIELDS.map((k) => (k === "image" ? image : t[k] ?? null)));
+  const text = JSON.stringify([aspect, ...THUMBNAIL_FIELDS.map((k) => (k === "image" ? image : t[k] ?? null))]);
   let h = 0x811c9dc5;
   for (let i = 0; i < text.length; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-export function thumbnailProps(t = {}, language = "en", assetBase = null) {
+export function thumbnailProps(t = {}, aspect = "16:9", assetBase = null) {
   const { image, text, style, color, accent, size, position } = t;
-  return { image: image || null, text: text || "", style: style || "dark", color: color || null, accent: accent || null, size: Number(size) || 110, position: position || "bottom", language, assetBase };
+  return { image: image || null, text: text || "", style: style || "dark", color: color || null, accent: accent || null, size: Number(size) || 110, position: position || (aspect === "9:16" ? "center" : "bottom"), aspect, assetBase };
 }
+
+/** TikTok uses a video's first frame as its cover, and phones pick a cover from the frames: the thumbnail goes first, too short to notice. */
+export const COVER_FRAMES = 3;
+export const coverOn = (t) => hasThumbnail(t) && t.first_frame !== false;
 
 /** Description with its "Credits:" block replaced (or added at the end, or removed when there are no credits). */
 export function withCredits(description = "", credits = "") {
@@ -197,6 +204,7 @@ export function buildProps(project, scenes, urls = {}) {
     progress: settings.progress,
     sfx: { ...settings.sfx, whoosh: urls.sfx?.whoosh || null, hit: urls.sfx?.hit || null },
     music: { ...settings.music, url: urls.music || null },
+    cover: coverOn(project.settings?.thumbnail) ? thumbnailProps({ ...project.settings.thumbnail, image: urls.coverImage ? { ...project.settings.thumbnail.image, url: urls.coverImage } : project.settings.thumbnail.image }, project.aspect, urls.assetBase || null) : null,
     assetBase: urls.assetBase || null,   // where fonts/ and sfx/ live; null = shipped with the renderer
   };
 }

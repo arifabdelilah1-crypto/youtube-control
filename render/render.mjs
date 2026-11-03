@@ -113,11 +113,13 @@ async function main() {
       track = tracks.length ? tracks[Math.floor(Math.random() * tracks.length)] : null;
     }
     const mediaPaths = scenes.map((s) => s.clip?.path).filter(Boolean);
-    const signed = await signMany([...scenes.map((s) => s.voice_path), ...mediaPaths, ...(track ? [track.path] : [])]);
+    const coverPath = project.settings?.thumbnail?.image?.path || null;
+    const signed = await signMany([...scenes.map((s) => s.voice_path), ...mediaPaths, ...(track ? [track.path] : []), ...(coverPath ? [coverPath] : [])]);
     const urls = {
       voice: Object.fromEntries(scenes.map((s) => [s.id, signed[s.voice_path]])),
       media: Object.fromEntries(mediaPaths.map((p) => [p, signed[p]])),
       music: found ? found.url : track ? signed[track.path] : null,
+      coverImage: coverPath ? signed[coverPath] : null,
       sfx: { whoosh: "static:sfx/whoosh.mp3", hit: "static:sfx/hit.mp3" },
     };
     const inputProps = buildProps(project, scenes, urls);
@@ -135,7 +137,7 @@ async function main() {
     });
     // so auto-publishing has an up-to-date thumbnail; the video never waits or fails for it
     const thumb = project.settings?.thumbnail;
-    if (hasThumbnail(thumb) && thumb.file?.key !== thumbnailKey(thumb)) {
+    if (hasThumbnail(thumb) && thumb.file?.key !== thumbnailKey(thumb, project.aspect)) {
       try { await makeThumbnail(project, serveUrl); } catch (e) { log(`Thumbnail skipped: ${e.message}`); }
     }
     const duration = inputProps.totalFrames / inputProps.fps;

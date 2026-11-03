@@ -6,7 +6,7 @@ import { Player } from "@remotion/player";
 import { Main } from "../video/Main.jsx";
 import { PRESETS, playSample, presetFx, sampleUrl, voiceFx } from "../web/voicefx.js";
 import { Thumbnail } from "../video/Thumbnail.jsx";
-import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, THUMBNAIL_STYLES, buildProps, creditsText, foundMusic, hasThumbnail, mergeSettings, thumbnailKey, thumbnailProps, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
+import { DEFAULT_SETTINGS, MUSIC_UNDER_VOICE, THUMBNAIL_STYLES, buildProps, creditsText, foundMusic, hasThumbnail, mergeSettings, thumbnailKey, thumbnailProps, thumbnailSize, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 
 export const MOODS = [
   ["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
@@ -372,7 +372,7 @@ function ThumbnailPanel({ sb, project, scenes, signed, sign, onThumbnail, onCrea
     if (!q.trim()) return;
     setState("Searching…");
     try {
-      const data = await invoke(sb, { action: "search", q: q.trim(), kind: "image", aspect: "16:9" });
+      const data = await invoke(sb, { action: "search", q: q.trim(), kind: "image", aspect: project.aspect });
       setResults(data.results || []);
       setState((data.results || []).length ? "" : "No photos found. Try another word.");
     } catch (err) { setState(err.message); }
@@ -412,11 +412,11 @@ function ThumbnailPanel({ sb, project, scenes, signed, sign, onThumbnail, onCrea
       </button>
     );
   };
-  const current = t.file?.key === thumbnailKey(t);
+  const current = t.file?.key === thumbnailKey(t, project.aspect);
   return (
     <div className="ed-panel">
       <h3>Thumbnail</h3>
-      <p className="muted small" style={{ margin: 0 }}>Sent to YouTube with the video. Long videos show it everywhere; YouTube may ignore it on a Short.</p>
+      <p className="muted small" style={{ margin: 0 }}>{project.aspect === "9:16" ? "Vertical cover for Shorts, TikTok and Reels. Keep the words in the middle: the apps cover the top and bottom." : "Sent to YouTube with the video."}</p>
       <Field label="Text" hint="2 to 5 big words work best. The last word takes the accent colour.">
         <input className="field" dir="auto" maxLength={60} value={t.text || ""} onChange={(e) => set({ text: e.target.value })} placeholder="They never told you" />
       </Field>
@@ -429,7 +429,7 @@ function ThumbnailPanel({ sb, project, scenes, signed, sign, onThumbnail, onCrea
       <div className="form-grid">
         <Field label={`Text size · ${t.size || 110}`}><input type="range" min="60" max="170" step="5" value={t.size || 110} aria-label="Text size" onChange={(e) => set({ size: Number(e.target.value) })} /></Field>
         <Field label="Position">
-          <select className="field" value={t.position || "bottom"} onChange={(e) => set({ position: e.target.value })}><option value="top">Top</option><option value="center">Middle</option><option value="bottom">Bottom</option></select>
+          <select className="field" value={t.position || (project.aspect === "9:16" ? "center" : "bottom")} onChange={(e) => set({ position: e.target.value })}><option value="top">Top</option><option value="center">Middle</option><option value="bottom">Bottom</option></select>
         </Field>
         <Field label="Text colour"><input type="color" className="ed-thumb-color" value={t.color || THUMBNAIL_STYLES[style].color} onChange={(e) => set({ color: e.target.value })} /></Field>
         <Field label="Accent colour"><input type="color" className="ed-thumb-color" value={t.accent || THUMBNAIL_STYLES[style].accent} onChange={(e) => set({ accent: e.target.value })} /></Field>
@@ -444,6 +444,10 @@ function ThumbnailPanel({ sb, project, scenes, signed, sign, onThumbnail, onCrea
       <label className="btn small ed-thumb-upload">Upload an image<input type="file" accept="image/*" hidden onChange={(e) => { upload(e.target.files?.[0]); e.target.value = ""; }} /></label>
       {state ? <p className="muted small" role="status" style={{ margin: 0 }}>{state}</p> : null}
       {t.error ? <pre className="err">{t.error}</pre> : null}
+      <label className="row ed-check">
+        <input type="checkbox" checked={t.first_frame !== false} onChange={(e) => set({ first_frame: e.target.checked })} />
+        <span>Use as the video's first frame, too short to notice. TikTok takes the first frame as the cover, and on a phone you can pick it. Applies at the next final render.</span>
+      </label>
       <div className="row">
         <button type="button" className="btn primary" disabled={!hasThumbnail(t) || creating} onClick={onCreate}>{creating ? "Creating… about 2 minutes" : current ? "Create it again" : "Create thumbnail"}</button>
         {t.file?.path ? <button type="button" className="btn small" onClick={save}>Save image</button> : null}
@@ -640,7 +644,7 @@ function Editor({ ctx }) {
     if (!creatingThumb) return;
     const th = project?.settings?.thumbnail;
     if (th?.error) setCreatingThumb(null);
-    else if (th?.file?.key === thumbnailKey(th) && Date.parse(th.file.at) >= creatingThumb) { setCreatingThumb(null); toast("Thumbnail ready"); }
+    else if (th?.file?.key === thumbnailKey(th, project.aspect) && Date.parse(th.file.at) >= creatingThumb) { setCreatingThumb(null); toast("Thumbnail ready"); }
     else if (Date.now() - creatingThumb > 6 * 60e3) { setCreatingThumb(null); toast("The thumbnail is taking too long. Try again."); }
   }, [project, creatingThumb, toast]);
   const createThumbnail = async () => {
@@ -664,7 +668,9 @@ function Editor({ ctx }) {
     const media = Object.fromEntries(scenes.filter((s) => s.clip?.path).map((s) => [s.clip.path, signed.get(s.clip.path)]));
     const track = tracks.find((t) => t.id === project.settings?.music?.track_id);
     const found = foundMusic(project.settings?.music);
+    const coverPath = project.settings?.thumbnail?.image?.path;
     return buildProps(project, scenes, {
+      coverImage: coverPath ? signed.get(coverPath) : null,
       voice, media, music: found ? found.url : track && project.settings?.music?.mood !== "none" ? signed.get(track.path) || null : null,
       sfx: { whoosh: base + "sfx/whoosh.mp3", hit: base + "sfx/hit.mp3" }, assetBase: base,
     });
@@ -821,11 +827,11 @@ function Editor({ ctx }) {
       <div className="ed-grid">
         <section className="ed-preview" aria-label="Preview">
           {tab === "thumbnail" ? (
-            <div key="thumbnail" className="ed-player ar-16x9">
+            <div key="thumbnail" className={`ed-player ar-${project.aspect.replace(":", "x")}`}>
               <Player
                 component={Thumbnail}
-                inputProps={thumbnailProps({ ...project.settings?.thumbnail, image: project.settings?.thumbnail?.image?.path ? { ...project.settings.thumbnail.image, url: signed.get(project.settings.thumbnail.image.path) } : project.settings?.thumbnail?.image }, project.language, new URL("./", location.href).href)}
-                durationInFrames={1} fps={30} compositionWidth={1280} compositionHeight={720}
+                inputProps={thumbnailProps({ ...project.settings?.thumbnail, image: project.settings?.thumbnail?.image?.path ? { ...project.settings.thumbnail.image, url: signed.get(project.settings.thumbnail.image.path) } : project.settings?.thumbnail?.image }, project.aspect, new URL("./", location.href).href)}
+                durationInFrames={1} fps={30} compositionWidth={thumbnailSize(project.aspect)[0]} compositionHeight={thumbnailSize(project.aspect)[1]}
                 style={{ width: "100%", height: "100%" }}
               />
             </div>
