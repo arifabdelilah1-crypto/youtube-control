@@ -82,8 +82,16 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   const { data: existing } = await db.from("publish_queue").select("*").eq("render_job_id", jobId);
   const isActive = (r: any) => ["queued", "uploading", "scheduled", "published"].includes(r.status);
   const done = (existing || []).filter(isActive);
+  // a new render of a video that already went out doesn't go out again by itself: its Publish tab can still send it
+  let earlier: any[] = [];
+  if (onlyIfAuto && job.project_id) {
+    const { data: others } = await db.from("render_jobs").select("id").eq("project_id", job.project_id).neq("id", jobId);
+    const ids = (others || []).map((j: any) => j.id);
+    if (ids.length) earlier = (await db.from("publish_queue").select("platform").in("render_job_id", ids).in("status", ["queued", "uploading", "scheduled", "published"])).data || [];
+  }
   // a retry touches its own platform only: a post cancelled on another one stays cancelled
-  const todo = targets.filter((x) => !done.some((r: any) => r.platform === x.platform) && (!onlyPlatform || x.platform === onlyPlatform));
+  const todo = targets.filter((x) => !done.some((r: any) => r.platform === x.platform) && !earlier.some((r: any) => r.platform === x.platform) && (!onlyPlatform || x.platform === onlyPlatform));
+  if (!todo.length && earlier.length && !done.length) return { skipped: "an earlier render of this video already went out. Publish this one from its Publish tab if you want both." };
   if (!todo.length) return done.length ? { row: done[0], rows: done, already: true } : { error: "This network doesn't post there any more. Check its Networks page.", status: 400 };
 
   let slot: string | null = null;

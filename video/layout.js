@@ -239,6 +239,7 @@ export function preRenderCheck(project, scenes) {
   if (foundMusic(project.settings?.music)) issues.push({ level: "warn", text: "The music gets a credit too. On a monetized channel, YouTube can still claim a track if its artist registered it." });
   const noFile = ordered.filter((s) => s.clip?.source === "youtube").length;
   if (noFile) issues.push({ level: "warn", text: `${noFile} scene(s) have a YouTube clip picked but no file uploaded. They show a text card until you upload the clip.` });
+  if (project.aspect === "16:9") issues.push({ level: "warn", text: "This video is 16:9, so YouTube publishes it as a normal video, not a Short. For a Short, choose 9:16 on its Studio page." });
   const total = ordered.reduce((t, s) => t + sceneSeconds(s) + SCENE_GAP, 0) + TAIL;
   if (project.aspect === "9:16" && total > 180) issues.push({ level: "block", text: `Video is ${Math.round(total)} s. Shorts can be 3 minutes at most.` });
   else if (project.aspect === "9:16" && total > 60) issues.push({ level: "warn", text: `Video is ${Math.round(total)} s. Allowed, but Shorts under 60 s usually keep viewers better.` });

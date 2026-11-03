@@ -268,6 +268,7 @@ function PublishPanel({ sb, project, jobs, scenes, stale, onProject, onRender, t
   const plan = project.settings?.publish || {};
   const [network, setNetwork] = useState({ loading: true, channels: [], schedule: null, idea: null });
   const [posts, setPosts] = useState([]);
+  const [earlier, setEarlier] = useState([]);
   const [open, setOpen] = useState(null);
   const [busy, setBusy] = useState("");
   const done = jobs.find((j) => j.status === "done");
@@ -280,9 +281,14 @@ function PublishPanel({ sb, project, jobs, scenes, stale, onProject, onRender, t
       project.idea_id ? sb.from("ideas").select("video_title,video_description").eq("id", project.idea_id).maybeSingle() : { data: null },
       done ? sb.from("publish_queue").select("*").eq("render_job_id", done.id) : { data: [] },
     ]);
+    // what earlier renders of this video already sent
+    const others = await sb.from("render_jobs").select("id").eq("project_id", project.id).neq("id", done?.id || "00000000-0000-0000-0000-000000000000");
+    const ids = (others.data || []).map((j) => j.id);
+    const old = ids.length ? await sb.from("publish_queue").select("*").in("render_job_id", ids).in("status", ["queued", "uploading", "scheduled", "published"]) : { data: [] };
     setNetwork({ loading: false, channels: ch.data || [], schedule: sc.data, idea: idea.data });
     setPosts(rows.data || []);
-  }, [sb, project.channel_id, project.idea_id, done?.id]);
+    setEarlier(old.data || []);
+  }, [sb, project.id, project.channel_id, project.idea_id, done?.id]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
     if (!posts.some((r) => ["queued", "uploading"].includes(r.status))) return undefined;
@@ -326,7 +332,12 @@ function PublishPanel({ sb, project, jobs, scenes, stale, onProject, onRender, t
   if (targets.length && !included.length) warnings.push("Every account is switched off for this video.");
   if (!text.title.trim()) warnings.push("The video has no title.");
   if (included.some((t) => t.platform === "twitter") && textFor("twitter").title.length > 280) warnings.push("X takes 280 characters: the title will be cut.");
-  if (project.aspect !== "9:16" && included.some((t) => ["tiktok", "instagram", "facebook"].includes(t.platform))) warnings.push(`This video is ${project.aspect}. TikTok and Reels are made for 9:16.`);
+  // this render's format: the Studio page may have changed since
+  const aspect = done?.params?.aspect || project.aspect;
+  if (aspect !== "9:16" && included.some((t) => ["tiktok", "instagram", "facebook"].includes(t.platform))) warnings.push(`This video is ${aspect}. TikTok and Reels are made for 9:16.`);
+  if (aspect === "16:9" && included.some((t) => t.platform === "youtube")) warnings.push("This video is 16:9, so YouTube publishes it as a normal video, not a Short. For a Short, choose 9:16 on its Studio page and render again.");
+  const earlierOf = (platform) => earlier.filter((r) => r.platform === platform).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at))[0];
+  if (included.some((t) => !postOf(t.platform) && earlierOf(t.platform))) warnings.push("An earlier render of this video already went out, so this one won't go out by itself. Publishing it too makes a duplicate: delete the old post first if this one replaces it.");
   const t = project.settings?.thumbnail;
   if (hasThumbnail(t) && t.file?.key !== thumbnailKey(t, project.aspect)) warnings.push("The thumbnail changed since it was created. It's made again with the next render.");
   if (!hasThumbnail(t)) warnings.push("No thumbnail yet: each app picks a frame from the video.");
@@ -368,7 +379,9 @@ function PublishPanel({ sb, project, jobs, scenes, stale, onProject, onRender, t
               <div className="row">
                 {post ? <span className={`pill ${POST_STATUS[post.status]?.[0] || "info"}`}>{POST_STATUS[post.status]?.[1] || post.status}</span> : on ? null : <span className="pill short">Skipped</span>}
                 {post?.slot_at && post.status === "scheduled" ? <span className="muted small">{new Date(post.slot_at).toLocaleString()}</span> : null}
-                {post?.public_url || post?.youtube_video_id ? <a className="small" href={post.public_url || `https://www.youtube.com/watch?v=${post.youtube_video_id}`} target="_blank" rel="noopener">View post</a> : null}
+                {post?.public_url || post?.youtube_video_id ? <a className="small" href={post.public_url || `https://www.youtube.com/shorts/${post.youtube_video_id}`} target="_blank" rel="noopener">View post</a> : null}
+                {!post && earlierOf(target.platform) ? <span className="pill warn">{earlierOf(target.platform).status === "scheduled" && earlierOf(target.platform).slot_at ? `Earlier render: ${new Date(earlierOf(target.platform).slot_at).toLocaleDateString()}` : "Earlier render sent"}</span> : null}
+                {!post && (earlierOf(target.platform)?.public_url || earlierOf(target.platform)?.youtube_video_id) ? <a className="small" href={earlierOf(target.platform).public_url || `https://www.youtube.com/shorts/${earlierOf(target.platform).youtube_video_id}`} target="_blank" rel="noopener">View it</a> : null}
                 {on && !post && options ? (
                   <select className="field ed-privacy" aria-label={`${PLATFORMS[target.platform]} visibility`} value={plan.options?.[target.platform]?.privacy || (target.platform === "tiktok" ? target.privacy || "PUBLIC_TO_EVERYONE" : s?.privacy || "public")}
                     onChange={(e) => save({ options: { ...(plan.options || {}), [target.platform]: { privacy: e.target.value } } })}>

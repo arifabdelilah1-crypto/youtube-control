@@ -431,9 +431,11 @@ VIEWS.research = async (route) => {
   return out;
 };
 
+const youtubeLink = (v) => `https://www.youtube.com/${v.is_short ? "shorts/" : "watch?v="}${v.youtube_video_id}`;
+
 function videoCard(v, scope) {
   return h("article", { class: "vcard" },
-    h("a", { class: "thumb", href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener" },
+    h("a", { class: "thumb", href: youtubeLink(v), target: "_blank", rel: "noopener" },
       v.thumbnail_url ? h("img", { src: v.thumbnail_url, alt: "", loading: "lazy" }) : null,
       h("span", { class: `pill tl ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
       v.outlier_score ? h("span", { class: "tr", text: `${Number(v.outlier_score).toFixed(1)}×` }) : null),
@@ -563,7 +565,7 @@ VIEWS.keyword = async (route) => {
           h("td", { class: "muted", text: String(rankOf[v.youtube_video_id]) }),
           h("td", { style: "max-width:360px" }, h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" },
             v.thumbnail_url ? h("img", { class: "mini-thumb", src: v.thumbnail_url, alt: "", loading: "lazy" }) : null,
-            h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "color:inherit;font-weight:500", text: v.title }))),
+            h("a", { href: youtubeLink(v), target: "_blank", rel: "noopener", style: "color:inherit;font-weight:500", text: v.title }))),
           h("td", { class: "muted", text: v.channel_title || "—" }), h("td", { class: "num", text: fmtc(v.subscribers) }),
           h("td", { class: "num", text: fmtc(v.views) }), h("td", { class: "num", text: fmtc(v.views / days) }), h("td", { class: "muted", text: ago(v.published_at) }));
       }))))
@@ -765,7 +767,7 @@ async function studioEditor(ideaId) {
     catch (e) { listen.textContent = "▶ Listen"; if (e.name !== "AbortError") toast("This sample isn't available yet."); }
   } });
   for (const el of [f.language, f.voice, f.voiceStyle]) el.addEventListener("change", () => { listen.textContent = "▶ Listen"; });
-  f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9)"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
+  f.aspect = h("select", { id: "s-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["16:9", "Long video (16:9), not a Short"], ["1:1", "Square (1:1)"]].map(([v, t]) => h("option", { value: v, selected: v === style.aspect, text: t })));
   f.desc = h("textarea", { id: "s-desc", class: "field", rows: "3", dir: "auto", value: idea.video_description || "" });
   f.tags = h("input", { id: "s-tags", class: "field", value: (idea.video_tags || []).join(", ") });
 
@@ -863,6 +865,10 @@ function studioAiPanel(idea, f, buildBtn, save) {
   const transcript = h("textarea", { id: "ai-transcript", class: "field", rows: "4", dir: "auto", value: idea.transcript || "",
     placeholder: "Optional: on YouTube open the video → ··· → Show transcript, copy it and paste it here. The AI then copies the structure more precisely.",
     onchange: async (e) => { await q(sb.from("ideas").update({ transcript: e.target.value.trim() || null, blueprint: null }).eq("id", idea.id)); idea.transcript = e.target.value; idea.blueprint = null; toast("Transcript saved"); } });
+  const aspectNote = h("div", { class: "row", role: "status" }, h("span", { class: "pill warn", text: "Note" }), h("span", { class: "small", text: "A 16:9 video goes to YouTube as a normal video, never as a Short. For a Short, choose 9:16." }));
+  const showAspectNote = () => { aspectNote.style.display = f.aspect.value === "16:9" ? "" : "none"; };
+  f.aspect.addEventListener("change", showAspectNote);
+  showAspectNote();
   const lengthFor = () => (f.aspect.value === "16:9" ? "long3" : "short45");
   const length = h("select", { id: "ai-length", class: "field", onchange: (e) => { e.currentTarget.dataset.picked = "1"; } },
     [["short45", "Short, about 45 s"], ["short60", "Short, about 60 s"], ["long3", "Long, about 3 min"]].map(([v, t]) => h("option", { value: v, selected: v === (ai?.length || lengthFor()), text: t })));
@@ -905,6 +911,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
   return h("section", { class: "card ai-card" },
     h("div", { class: "card-head" }, h("h2", { text: "Write with AI" }), h("span", { class: "muted small", text: "Choose these first, then generate" })),
     h("div", { class: "form-grid" }, field("s-channel", "Network", f.channel), field("s-lang", "Language", f.language), field("s-aspect", "Format", f.aspect), field("ai-length", "Length", length)),
+    aspectNote,
     field("ai-angle", "Angle (optional)", angle),
     src ? h("div", { class: "ai-src" },
       src.thumbnail ? h("a", { href: src.url, target: "_blank", rel: "noopener", class: "ai-thumb" }, h("img", { src: src.thumbnail, alt: "" })) : null,
@@ -932,7 +939,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "15";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "16";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
@@ -1101,7 +1108,8 @@ const dayKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2,
 const postTime = (r) => new Date(r.slot_at || r.created_at);
 // YouTube makes a scheduled video public by itself, without telling the app
 const postStatus = (r) => (r.status === "scheduled" && r.method !== "blotato" && r.slot_at && Date.parse(r.slot_at) <= Date.now() ? "published" : r.status);
-const postLink = (r) => r.public_url || (r.youtube_video_id ? `https://www.youtube.com/watch?v=${r.youtube_video_id}` : null);
+// YouTube sends a video that isn't a Short from /shorts/ on to its normal page
+const postLink = (r) => r.public_url || (r.youtube_video_id ? `https://www.youtube.com/shorts/${r.youtube_video_id}` : null);
 /** Monday of the week d is in. */
 const weekStart = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
 
@@ -1397,7 +1405,7 @@ VIEWS.channel = async (route) => {
           daily.length > 1 ? h("div", {}, h("div", { class: "muted small", text: "Daily views, 28 days" }), spark(daily.map((d) => d.views), 300, 48)) : null),
         h("section", { class: "card grow3" }, h("h2", { text: "Latest videos vs channel average" }),
           vids.length ? vids.map((v) => h("div", { class: "listrow" }, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" }),
-            h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "flex:1 1 220px;min-width:0;font-weight:500;color:inherit", text: v.title }),
+            h("a", { href: youtubeLink(v), target: "_blank", rel: "noopener", style: "flex:1 1 220px;min-width:0;font-weight:500;color:inherit", text: v.title }),
             h("span", { class: "mono small", text: statLine(v) }), multPill(v.vs_baseline))) : empty("No videos yet."))),
     ];
   } else if (tab === "videos") {
@@ -1407,7 +1415,7 @@ VIEWS.channel = async (route) => {
       vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:860px" },
       h("thead", {}, h("tr", {}, ["Video", "Type", "Published", "Views", "Likes", "Comments", "Impressions", "CTR", "vs average"].map((t, i) => h("th", { class: i > 2 ? "num" : null, text: t })))),
       h("tbody", {}, vids.map((v) => h("tr", {},
-        h("td", {}, h("a", { href: `https://www.youtube.com/watch?v=${v.youtube_video_id}`, target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: v.title })),
+        h("td", {}, h("a", { href: youtubeLink(v), target: "_blank", rel: "noopener", style: "font-weight:500;color:inherit", text: v.title })),
         h("td", {}, h("span", { class: `pill ${v.is_short ? "short" : "long"}`, text: v.is_short ? "Short" : "Long" })),
         h("td", { class: "muted", text: v.published_at ? new Date(v.published_at).toLocaleDateString("en-GB") : "—" }),
         h("td", { class: "num", text: fmt(v.views) }), h("td", { class: "num", text: fmt(v.likes) }), h("td", { class: "num", text: fmt(v.comments) }),

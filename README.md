@@ -147,7 +147,7 @@ The whoosh and hit in `web/sfx/` are synthesized (no license needed). The Sounds
 
 A network is one brand with all its accounts (a row in `channels`; YouTube is optional). Its page sets where it posts:
 YouTube directly or through Blotato; TikTok, Instagram Reels, X and Facebook Page Reels through Blotato
-(`render/blotato.mjs`). One render gets one queue row per platform. Calendar shows them all by day and asks Blotato how
+(`render/blotato.mjs`). One render gets one queue row per platform. A new render of a video that already went out doesn't go out again by itself on that platform; its Publish tab can still send it. Calendar shows them all by day and asks Blotato how
 its posts ended. In the editor, the Publish tab sets each video's accounts, text and time (`settings.publish`), and those choices also apply when a render auto-publishes. `BLOTATO_API_KEY` is needed in the GitHub repo secrets and the Supabase Edge Function secrets.
 
 The older one-click renderer (MoneyPrinterTurbo, `render.yml`) still works for past jobs.
