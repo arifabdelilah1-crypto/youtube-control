@@ -4,10 +4,16 @@
 // POST {action:"script",    idea_id, channel_id?, language?, angle?, aspect?, length?, draft?} -> new or improved script in TITLE/VO/FOOTAGE/CARD format,
 //      title, description, tags. Uses the research tables (keyword numbers, ranking titles, niche outliers, the channel's best videos).
 //      language: the one picked on the page (default: the channel's). length: short45 | short60 | long3 (default from the aspect).
-//      draft: the script to improve. ideas.ai.previous keeps the version it replaced.
-// Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), YOUTUBE_API_KEY
+//      draft: the script to improve. ideas.ai.previous keeps the version it replaced. effort: high (default) | low. fast: use the everyday model.
+// POST {action:"review",    idea_id, effort?, fast?}       -> a strict editor corrects the script: truth, thread, hook, speech, pictures, length. Keeps the draft if that fails.
+// POST {action:"brief",     idea_id}                       -> how to produce a script someone wrote themselves: voice style, music mood...
+// POST {action:"auto_start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs). Returns {run_id}.
+// POST {action:"auto_stop", idea_id, run_id}               -> stops it at its next step.
+// The job also calls, with x-cron-secret: pick_clips, check_clips (looks at the pictures), pick_sounds.
+// Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), DEEPSEEK_SCRIPT_MODEL (optional, default deepseek-v4-pro),
+//          YOUTUBE_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { BLUEPRINT_SYSTEM, LENGTHS, type LengthKey, SCRIPT_SYSTEM, blueprintUser, scriptUser } from "./prompts.ts";
+import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -15,10 +21,14 @@ const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const YT_KEY = Deno.env.get("YOUTUBE_API_KEY") ?? "";
 const DS_KEY = Deno.env.get("DEEPSEEK_API_KEY") ?? "";
 const DS_MODEL = Deno.env.get("DEEPSEEK_MODEL") || "deepseek-chat";
+const DS_SCRIPT_MODEL = Deno.env.get("DEEPSEEK_SCRIPT_MODEL") || "deepseek-v4-pro";
+const DS_VISION_MODEL = "deepseek-flash";  // the one that can see pictures
+const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
+const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const DAILY_RUNS = 200;
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
@@ -30,37 +40,70 @@ function isoSeconds(d?: string): number | null {
   return (+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+(m[3] || 0)) * 60 + (+(m[4] || 0));
 }
 
-async function deepseek(db: any, ideaId: string, kind: string, system: string, user: string, ownerId: string | null) {
+/** A model's answer, even when it wraps its JSON in a code fence or a sentence. */
+function parseJson(text: string) {
+  try { return JSON.parse(text); } catch { /* try below */ }
+  const from = text.indexOf("{"), to = text.lastIndexOf("}");
+  if (from < 0 || to <= from) throw new Error("DeepSeek's answer wasn't valid JSON");
+  return JSON.parse(text.slice(from, to + 1));
+}
+
+type AiOptions = { pro?: boolean; effort?: "low" | "high"; images?: { label: string; url: string }[]; think?: boolean };
+// A function gets about 150 seconds: past this it can only report that it took too long, and the caller tries again with less thinking.
+const PRO_LIMIT_MS = 130_000;
+
+async function deepseek(db: any, ideaId: string, kind: string, system: string, user: string, ownerId: string | null, opts: AiOptions = {}) {
   if (!DS_KEY) throw new Error("DeepSeek isn't set up yet: add DEEPSEEK_API_KEY in Supabase Edge Function secrets.");
   const since = new Date(Date.now() - 864e5).toISOString();
   const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
   if ((count ?? 0) >= DAILY_RUNS) throw new Error(`Daily AI limit reached (${DAILY_RUNS} runs in 24 h).`);
+  const started = Date.now();
+  const model = opts.images ? DS_VISION_MODEL : opts.pro ? DS_SCRIPT_MODEL : DS_MODEL;
+  const content = opts.images ? [{ type: "text", text: user }, ...opts.images.flatMap((m) => [{ type: "text", text: m.label }, { type: "image_url", image_url: { url: m.url, detail: "low" } }])] : user;
   let lastErr = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 120_000);
+    const timer = setTimeout(() => ctrl.abort(), Math.max(PRO_LIMIT_MS - (Date.now() - started), 1000));
     try {
       const r = await fetch("https://api.deepseek.com/chat/completions", {
         method: "POST", signal: ctrl.signal,
         headers: { Authorization: `Bearer ${DS_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: DS_MODEL, temperature: kind === "script" ? 0.9 : 0.4, max_tokens: 6000,
-          response_format: { type: "json_object" },
-          messages: [{ role: "system", content: system }, { role: "user", content: user }],
+          model, response_format: { type: "json_object" },
+          ...(opts.pro
+            ? { thinking: { type: "enabled" }, reasoning_effort: opts.effort || "high", max_tokens: 16000 }  // the thinking counts in max_tokens
+            : { temperature: kind === "script" ? 0.9 : 0.4, max_tokens: 6000, ...(opts.think === false ? { thinking: { type: "disabled" } } : {}) }),
+          messages: [{ role: "system", content: system }, { role: "user", content }],
         }),
       });
       if (!r.ok) { lastErr = `DeepSeek ${r.status}: ${(await r.text()).slice(0, 300)}`; if (r.status < 500 && r.status !== 429) break; continue; }
       const data = await r.json();
       const text = data.choices?.[0]?.message?.content || "";
-      await db.from("ai_runs").insert({ idea_id: ideaId, kind, model: data.model || DS_MODEL, owner_id: ownerId,
+      await db.from("ai_runs").insert({ idea_id: ideaId, kind, model: data.model || model, owner_id: ownerId,
         prompt_tokens: data.usage?.prompt_tokens ?? null, completion_tokens: data.usage?.completion_tokens ?? null, ok: !!text });
-      if (!text.trim()) { lastErr = "DeepSeek returned an empty answer"; continue; }
-      return JSON.parse(text);
+      if (!text.trim()) { lastErr = data.choices?.[0]?.finish_reason === "length" ? "DeepSeek ran out of room before answering" : "DeepSeek returned an empty answer"; continue; }
+      return parseJson(text);
     } catch (e) {
-      lastErr = (e as Error).name === "AbortError" ? "DeepSeek took too long (2 min)" : String((e as Error).message || e);
+      lastErr = (e as Error).name === "AbortError" ? "DeepSeek took too long" : String((e as Error).message || e);
     } finally { clearTimeout(timer); }
+    if (Date.now() - started > PRO_LIMIT_MS / 2) break;  // no time for a second try: the caller decides
   }
   throw new Error(lastErr || "DeepSeek failed");
+}
+
+const STYLES = new Set(["natural", "dark", "deep", "horror"]);
+const MUSIC = new Set(["horror", "dark", "love", "funny", "epic", "sad", "happy", "calm", "none"]);
+/** How to produce the video, keeping only the values the job knows. */
+function cleanBrief(b: any) {
+  if (!b || typeof b !== "object") return null;
+  return {
+    subject: clean(b.subject, 200), kind: clean(b.kind, 30), feeling: clean(b.feeling, 60),
+    voice_style: STYLES.has(b.voice_style) ? b.voice_style : "natural",
+    voice_gender: ["male", "female"].includes(b.voice_gender) ? b.voice_gender : "any",
+    music_mood: MUSIC.has(b.music_mood) ? b.music_mood : "calm",
+    music_words: (Array.isArray(b.music_words) ? b.music_words : []).map((w: unknown) => clean(w, 30)).filter(Boolean).slice(0, 3),
+    thumbnail_style: ["dark", "horror", "love", "funny", "clean"].includes(b.thumbnail_style) ? b.thumbnail_style : "dark",
+  };
 }
 
 // ---------- script JSON -> editor script text ----------
@@ -132,13 +175,85 @@ Deno.serve(async (req) => {
   let ideaId = "";
   try {
     const userDb = createClient(URL_, ANON, { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
-    if (!(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
-    const { data: { user } } = await userDb.auth.getUser();
+    // the "Generate video" job signs in with the cron secret, a person with their account
+    const cron = req.headers.get("x-cron-secret");
+    const isService = !!cron && cron === (await db.rpc("get_cron_secret")).data;
+    if (!isService && !(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
+    const user = isService ? null : (await userDb.auth.getUser()).data.user;
     const body = await req.json();
     ideaId = UUID.test(body.idea_id || "") ? body.idea_id : "";
     if (!ideaId) return json({ error: "idea_id required" }, 400);
     const { data: idea } = await db.from("ideas").select("*").eq("id", ideaId).single();
     if (!idea) return json({ error: "idea not found" }, 404);
+
+    // ---------- "Generate video" ----------
+    if (body.action === "auto_start") {
+      const channelId = UUID.test(body.channel_id || "") ? body.channel_id : idea.channel_id;
+      if (!channelId) return json({ error: "Pick a network first, so the video uses the right language and accounts." }, 400);
+      const { data: active } = await db.from("video_runs").select("id").eq("idea_id", ideaId).in("status", ["queued", "running"]).limit(1);
+      if (active?.length) return json({ run_id: active[0].id, already: true });
+      if (!GH_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return json({ error: "Add GITHUB_TOKEN and GITHUB_REPO in Supabase Edge Function secrets." }, 503);
+      const o = body.options && typeof body.options === "object" ? body.options : {};
+      const options = {
+        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null,
+        aspect: ["9:16", "16:9", "1:1"].includes(o.aspect) ? o.aspect : null,
+        length: Object.hasOwn(LENGTHS, o.length || "") ? o.length : null,
+        angle: o.angle ? clean(o.angle, 300) : null,
+        voice: o.voice ? clean(o.voice, 60) : null, voice_style: STYLES.has(o.voice_style) ? o.voice_style : null,
+        music: o.music !== false, sounds: o.sounds !== false, keep_script: !!o.keep_script && !!idea.script?.trim(),
+        publish: o.publish === "next" ? "next" : "ask",
+      };
+      await db.from("ideas").update({ channel_id: channelId }).eq("id", ideaId);
+      const { data: run, error } = await db.from("video_runs").insert({ idea_id: ideaId, channel_id: channelId, options, owner_id: user?.id ?? null }).select().single();
+      if (error) throw error;
+      const r = await fetch(`https://api.github.com/repos/${GH_REPO}/actions/workflows/autovideo.yml/dispatches`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${GH_TOKEN}`, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "youtube-control" },
+        body: JSON.stringify({ ref: "main", inputs: { run_id: run.id } }),
+      });
+      if (!r.ok) {
+        const msg = `GitHub dispatch failed (${r.status}): ${(await r.text()).slice(0, 300)}`;
+        await db.from("video_runs").update({ status: "failed", error: msg }).eq("id", run.id);
+        return json({ error: msg }, 503);
+      }
+      return json({ run_id: run.id });
+    }
+    if (body.action === "auto_stop") {
+      if (!UUID.test(body.run_id || "")) return json({ error: "run_id required" }, 400);
+      await db.from("video_runs").update({ status: "cancelled", error: "Stopped" }).eq("id", body.run_id).eq("idea_id", ideaId).in("status", ["queued", "running"]);
+      return json({ ok: true });
+    }
+    if (body.action === "pick_clips" || body.action === "check_clips" || body.action === "pick_sounds") {
+      if (!isService) return json({ error: "not allowed" }, 403);
+      // a wrong pick isn't a failed idea: the job carries on with what it has
+      try {
+        if (body.action === "pick_clips") {
+          const out = await deepseek(db, ideaId, "clips", PICK_CLIPS_SYSTEM, JSON.stringify({ subject: clean(body.subject, 300), scenes: body.scenes }), null, { think: false });
+          return json({ picks: Array.isArray(out.picks) ? out.picks : [] });
+        }
+        if (body.action === "check_clips") {
+          const items = (Array.isArray(body.items) ? body.items : []).filter((x: any) => /^https:\/\//.test(x?.url || "")).slice(0, 10);
+          if (!items.length) return json({ checks: [] });
+          const out = await deepseek(db, ideaId, "clip_check", CHECK_CLIPS_SYSTEM, `Subject of the video: ${clean(body.subject, 300)}`, null,
+            { think: false, images: items.map((x: any) => ({ label: `Scene ${Number(x.i)}. The narrator says: ${clean(x.text, 240)}`, url: x.url })) });
+          return json({ checks: Array.isArray(out.checks) ? out.checks : [] });
+        }
+        const out = await deepseek(db, ideaId, "sounds", PICK_SOUNDS_SYSTEM, JSON.stringify({ subject: clean(body.subject, 300), max_sounds: Number(body.max_sounds) || 1, scenes: body.scenes, library: body.library }), null, { think: false });
+        return json({ sounds: Array.isArray(out.sounds) ? out.sounds : [] });
+      } catch (e) {
+        return json({ error: String((e as Error).message || e) });
+      }
+    }
+    if (body.action === "brief") {
+      try {
+        const out = await deepseek(db, ideaId, "brief", BRIEF_SYSTEM, `Title: ${clean(idea.video_title || idea.title, 200)}\n\nScript:\n${String(idea.script || "").slice(0, 8000)}`, user?.id ?? null);
+        const brief = cleanBrief(out.brief);
+        await db.from("ideas").update({ ai: { ...(idea.ai || {}), brief } }).eq("id", ideaId);
+        return json({ brief });
+      } catch (e) {
+        return json({ error: String((e as Error).message || e) });
+      }
+    }
 
     // ---------- short lines for the thumbnail ----------
     if (body.action === "thumbnail_text") {
@@ -228,15 +343,18 @@ Deno.serve(async (req) => {
       const research = await researchFor(db, idea, channel).catch(() => null); // useful, not essential: never blocks the script
       const prompt = scriptUser({ idea, blueprint: idea.blueprint, channel, niche, language, aspect, length, draft, research,
         angle: body.angle ? clean(body.angle, 300) : null, keywords: [...new Set(kwTerms)] });
-      let out = await deepseek(db, ideaId, "script", SCRIPT_SYSTEM, prompt, user?.id ?? null);
+      const started = Date.now();
+      const thinking: AiOptions = body.fast ? {} : { pro: true, effort: body.effort === "low" ? "low" : "high" };
+      let out = await deepseek(db, ideaId, "script", SCRIPT_SYSTEM, prompt, user?.id ?? null, thinking);
       let script = toScript(out.scenes);
       if (!script) throw new Error("DeepSeek returned no scenes. Try again.");
       // Models tend to stop well short of a long target: ask once more, saying how far off it was, and keep the longer answer.
       const L = LENGTHS[length];
-      if (voWords(script) < L.min * 0.75) {
+      // (when there's time left in this call: otherwise the review that follows fixes the length)
+      if (voWords(script) < L.min * 0.75 && Date.now() - started < 45_000) {
         const again = await deepseek(db, ideaId, "script", SCRIPT_SYSTEM,
           `${prompt}\n\nYour last attempt had only ${voWords(script)} words of voice-over. That is far too short: write the full ${L.words} words in ${L.scenes} scenes.`,
-          user?.id ?? null).catch(() => null);
+          user?.id ?? null, thinking).catch(() => null);
         const longer = again ? toScript(again.scenes) : "";
         if (voWords(longer) > voWords(script)) { out = again; script = longer; }
       }
@@ -246,7 +364,7 @@ Deno.serve(async (req) => {
         title_options: (out.title_options || []).map((t: string) => clean(t, 100)).slice(0, 3),
         hook_text: clean(out.hook_text, 40), music_mood: clean(out.music_mood, 20).toLowerCase(),
         verify: (out.verify || []).map((v: string) => clean(v, 240)).slice(0, 15), notes: clean(out.notes, 400),
-        aspect, language, length, model: DS_MODEL, generated_at: new Date().toISOString(),
+        brief: cleanBrief(out.brief), aspect, language, length, model: thinking.pro ? DS_SCRIPT_MODEL : DS_MODEL, generated_at: new Date().toISOString(),
         // the version this replaces, so the Studio page can go back to it
         previous: idea.script?.trim() ? { script: idea.script, video_title: idea.video_title, video_description: idea.video_description, video_tags: idea.video_tags, search_terms: idea.search_terms,
           ai: idea.ai ? { ...idea.ai, previous: undefined } : null } : null,
@@ -258,6 +376,28 @@ Deno.serve(async (req) => {
         search_terms: (out.default_terms || []).map((t: string) => term(t)).filter(Boolean).slice(0, 6),
         ai, ai_status: "ready", ai_error: null, stage,
       }).eq("id", ideaId);
+      return json({ ok: true, script, ai });
+    }
+
+    // ---------- review ----------
+    if (body.action === "review") {
+      if (!idea.script?.trim()) return json({ ok: true, skipped: "no script yet" });
+      const length: LengthKey = Object.hasOwn(LENGTHS, idea.ai?.length || "") ? idea.ai.length : "short45";
+      const before = voWords(idea.script);
+      let out: any;
+      try {
+        out = await deepseek(db, ideaId, "review", REVIEW_SYSTEM, reviewUser({ idea, language: idea.ai?.language || "en", length, words: before }), user?.id ?? null,
+          body.fast ? {} : { pro: true, effort: body.effort === "low" ? "low" : "high" });
+      } catch (e) {
+        return json({ ok: false, error: String((e as Error).message || e) });  // the first draft stands; the caller may try with less thinking
+      }
+      const script = toScript(out.scenes);
+      // an answer that lost most of the script is a broken answer, not an edit
+      if (!script || voWords(script) < before * 0.6) return json({ ok: false, error: "The review lost too much of the script, so the draft stays." });
+      const ai = { ...(idea.ai || {}), hook_text: clean(out.hook_text, 40) || idea.ai?.hook_text,
+        verify: (out.verify || []).map((v: string) => clean(v, 240)).filter(Boolean).slice(0, 15),
+        review: { problems: (out.problems || []).map((p: string) => clean(p, 200)).filter(Boolean).slice(0, 12), words_before: before, words_after: voWords(script), at: new Date().toISOString() } };
+      await db.from("ideas").update({ script, video_title: clean(out.title, 100) || idea.video_title, ai }).eq("id", ideaId);
       return json({ ok: true, script, ai });
     }
 

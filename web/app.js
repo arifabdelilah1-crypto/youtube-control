@@ -2,6 +2,7 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 import { SUPABASE_URL, SUPABASE_KEY } from "./config.js";
 import { slotsBetween } from "./slots.js";
 import { PRESETS, playSample, presetFx, sampleUrl, voiceFx } from "./voicefx.js";
+import { VOICES } from "./voices.js";
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { flowType: "pkce", detectSessionInUrl: true, persistSession: true } });
 
@@ -129,20 +130,6 @@ const MARKETS = [["GLOBAL", "Global"], ["US", "United States"], ["GB", "United K
   ["TN", "Tunisia"], ["EG", "Egypt"], ["SA", "Saudi Arabia"], ["AE", "UAE"]];
 const LANGS = [["en", "English"], ["fr", "French"], ["ar", "Arabic"], ["es", "Spanish"], ["de", "German"], ["it", "Italian"], ["pt", "Portuguese"], ["nl", "Dutch"]];
 const marketName = (m) => (MARKETS.find(([k]) => k === m) || [m, m])[1];
-const VOICES = {
-  en: [["en-US-AndrewNeural-Male", "Andrew (US, male) · warm, confident"], ["en-US-BrianNeural-Male", "Brian (US, male) · casual, sincere"], ["en-US-ChristopherNeural-Male", "Christopher (US, male) · reliable, authority"],
-       ["en-US-GuyNeural-Male", "Guy (US, male) · passion"], ["en-US-AvaNeural-Female", "Ava (US, female) · expressive, caring"], ["en-US-JennyNeural-Female", "Jenny (US, female) · friendly, comforting"],
-       ["en-GB-RyanNeural-Male", "Ryan (UK, male)"], ["en-GB-SoniaNeural-Female", "Sonia (UK, female)"]],
-  fr: [["fr-FR-HenriNeural-Male", "Henri (male)"], ["fr-FR-RemyMultilingualNeural-Male", "Rémy (male)"], ["fr-FR-DeniseNeural-Female", "Denise (female)"],
-       ["fr-FR-VivienneMultilingualNeural-Female", "Vivienne (female)"]],
-  ar: [["ar-MA-JamalNeural-Male", "Jamal (Morocco, male)"], ["ar-MA-MounaNeural-Female", "Mouna (Morocco, female)"], ["ar-SA-HamedNeural-Male", "Hamed (Saudi, male)"],
-       ["ar-SA-ZariyahNeural-Female", "Zariyah (Saudi, female)"], ["ar-EG-ShakirNeural-Male", "Shakir (Egypt, male)"], ["ar-EG-SalmaNeural-Female", "Salma (Egypt, female)"]],
-  es: [["es-ES-AlvaroNeural-Male", "Álvaro (male)"], ["es-ES-ElviraNeural-Female", "Elvira (female)"]],
-  de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"]],
-};
-// Supertonic-3: the same ten voices in every language, made on the GitHub machine (collectors/supertonic_voice.py).
-const SUPERTONIC_VOICES = [["M", "male"], ["F", "female"]].flatMap(([k, g]) => [1, 2, 3, 4, 5].map((n) => [`supertonic-${k}${n}`, `Supertonic ${k}${n} (${g})`]));
-for (const lang of ["en", "fr", "es", "de"]) VOICES[lang].push(...SUPERTONIC_VOICES);
 const MOODS = [["epic", "Epic / cinematic"], ["suspense", "Suspense / dark"], ["phonk", "Phonk"], ["trap", "Trap / hip-hop"], ["upbeat", "Upbeat / energetic"],
   ["emotional", "Emotional / piano"], ["lofi", "Lo-fi / chill"], ["oriental", "Oriental / Arabic"], ["latin", "Latin / Spanish guitar"], ["other", "Other"]];
 /** The speed menu, with the voice's own speed when a style set one that isn't listed. */
@@ -589,56 +576,230 @@ async function generateScript(idea, { channel_id, language, angle, aspect, lengt
   if (isOutlier && !idea.source_video) { onStep("Reading the outlier…"); await aiCall({ action: "capture", idea_id: idea.id }); }
   if (isOutlier && !idea.blueprint) { onStep("Studying its format…"); await aiCall({ action: "blueprint", idea_id: idea.id }); }
   onStep(draft ? "Improving the script…" : "Writing the script…");
-  await aiCall({ action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, language: language || null, angle: angle || null, aspect: aspect || null, length: length || null, draft: draft || null });
+  const body = { action: "script", idea_id: idea.id, channel_id: channel_id || idea.channel_id || null, language: language || null, angle: angle || null, aspect: aspect || null, length: length || null, draft: draft || null };
+  // the thinking model can outlast one call: then it tries again with less thinking
+  try { await aiCall(body); } catch { onStep("Still writing…"); await aiCall({ ...body, effort: "low" }); }
+  onStep("Reviewing the script…");
+  await aiCall({ action: "review", idea_id: idea.id }).catch(() => null);  // the first draft stands
   return q(sb.from("ideas").select("*").eq("id", idea.id).single());
 }
 
 // ==================================================================
 // Ideas
 // ==================================================================
-// Columns light up like tally lamps: idle, in progress (amber), ready (green), on air (red).
-const BOARD = [
-  ["Ideas", ["new"], "Saved from research", "idle"],
-  ["Shortlisted", ["shortlisted"], "Worth making", "cue"],
-  ["In Studio", ["assigned", "scripted"], "Script being written", "cue"],
-  ["Rendered", ["produced", "scheduled"], "Video ready", "ready"],
-  ["Published", ["published"], "Live on YouTube", "on"],
-];
-VIEWS.ideas = async () => {
-  let iq = sb.from("ideas").select("*").neq("stage", "archived").order("score", { ascending: false, nullsFirst: false });
-  if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
-  const ideas = await q(iq);
-  const update = async (id, values) => { await q(sb.from("ideas").update(values).eq("id", id)); render(); };
-  const titleIn = h("input", { id: "idea-title", class: "field", placeholder: "Add an idea, e.g. What if Ronaldo never left Real Madrid?" });
-  const add = h("form", { class: "add-idea", onsubmit: async (e) => { e.preventDefault(); if (!titleIn.value.trim()) return;
-    await makeIdea({ title: titleIn.value.trim(), channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] }); render(); } },
-    h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn, h("button", { class: "btn primary", type: "submit", text: "Add idea" }));
+// One list, one main action per idea, and a lamp saying where each one is: idle, in progress (amber), ready (green), on air (red).
+const IDEA_STATES = {
+  new: ["To make", "idle"], saved: ["Saved", "cue"], draft: ["Draft", "cue"], failed: ["Needs a retry", "alert"],
+  working: ["Working", "cue"], ready: ["Ready", "ready"], check: ["Ready, to check", "cue"], published: ["Published", "on"],
+};
+const IDEA_TABS = [["all", "All", null], ["make", "To make", ["new", "saved", "draft", "failed"]], ["working", "Working", ["working"]], ["ready", "Ready", ["ready", "check"]], ["published", "Published", ["published"]]];
+const RUN_STEPS = { script: "Writing the script", review: "Reviewing the script", scenes: "Building the scenes", clips: "Choosing the clips", voice: "Recording the voice",
+  music: "Finding the music", sounds: "Adding sound effects", thumbnail: "Making the thumbnail", render: "Rendering the video", check: "Final checks" };
+const ideasUi = { tab: "all", q: "", sort: "score", selected: new Set(), open: new Set() };
+const isActiveRun = (r) => r && ["queued", "running"].includes(r.status);
+const isEmptyDraft = (i) => !i.script?.trim() && /^untitled/i.test(i.title || "");
 
-  const board = h("div", { class: "board" }, h("div", { class: "board-inner" }, BOARD.map(([name, stages, hint, lamp], ci) => {
-    const cards = ideas.filter((i) => stages.includes(i.stage));
-    return h("section", { class: "col", "data-lamp": lamp, "aria-label": name },
-      h("div", { class: "col-head" }, h("h3", { text: name }), h("span", { class: "mono small muted", text: String(cards.length) })),
-      h("div", { class: "muted small col-hint", text: hint }),
-      cards.map((i) => h("article", { class: "icard" },
-        h("div", { class: "meta" }, scorePill(i.score), h("span", { class: "muted small", text: channelById(i.channel_id)?.title || "No channel" }),
-          (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null),
-        h("a", { class: "title", href: `#/studio/${i.id}`, text: i.video_title || i.title }),
-        i.ai_status && i.ai_status !== "ready" ? h("span", { class: `pill ${i.ai_status === "failed" ? "crit" : "info"}`, title: i.ai_error || "", text: { capturing: "Reading outlier", analyzing: "Studying format", writing: "Writing script", failed: "AI failed" }[i.ai_status] }) : null,
-        h("div", { class: "acts" },
-          ci <= 2 && !i.script ? h("button", { class: "btn small primary", type: "button", text: "✨ Generate script", onclick: async (e) => {
-            const btn = e.currentTarget;
-            const channel_id = i.channel_id || (state.channel !== "all" ? state.channel : null);
-            if (!channel_id) return toast("Pick a network in the top bar first (the script is written for that channel).");
-            btn.disabled = true;
-            try { await generateScript(i, { channel_id }, (t) => { btn.textContent = t; }); toast("Script ready: open it in Studio"); go(`#/studio/${i.id}`); }
-            catch (err) { toast(err.message); render(); }
-          } }) : null,
-          ci === 0 ? h("button", { class: "btn small", type: "button", text: "Shortlist", onclick: () => update(i.id, { stage: "shortlisted" }) }) : null,
-          ci === 1 || ci === 2 ? h("a", { class: `btn small${i.script ? " primary" : ""}`, href: `#/studio/${i.id}`, text: "Open in Studio" }) : null,
-          ci === 3 ? h("button", { class: "btn small", type: "button", text: "Mark published", onclick: () => update(i.id, { stage: "published" }) }) : null,
-          h("button", { class: "btn small ghost icon", type: "button", title: "Archive", "aria-label": `Archive “${i.video_title || i.title}”`, onclick: () => update(i.id, { stage: "archived" }) }, icon("i-x"))))));
-  })));
-  return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All channels"), add, board];
+function ideaState(i, run) {
+  if (isActiveRun(run)) return "working";
+  if (i.stage === "published") return "published";
+  if (run?.status === "failed") return "failed";
+  if (i.stage === "produced" || i.stage === "scheduled") return run?.status === "review" ? "check" : "ready";
+  if (i.stage === "assigned" || i.stage === "scripted") return "draft";
+  return i.stage === "shortlisted" ? "saved" : "new";
+}
+
+/** Where a run is: a bar, the step it's on and what that step last said. */
+function runProgress(run) {
+  const steps = (run.steps || []).filter((x) => x.status !== "skipped");
+  const done = steps.filter((x) => x.status === "done").length;
+  const now = steps.find((x) => x.status === "running");
+  const label = run.status === "queued" || !steps.length ? "Starting…" : RUN_STEPS[now?.key] || "Working…";
+  return h("div", { class: "run" },
+    h("div", { class: "run-bar", role: "progressbar", "aria-label": "Progress", "aria-valuemin": "0", "aria-valuemax": String(steps.length || 10), "aria-valuenow": String(done) }, h("span", { style: `width:${steps.length ? Math.max(4, (done / steps.length) * 100) : 4}%` })),
+    h("div", { class: "muted small", role: "status", text: [steps.length ? `Step ${Math.min(done + 1, steps.length)} of ${steps.length}` : "", label, now?.detail].filter(Boolean).join(" · ") }));
+}
+
+/** What the creator should look at: the run's warnings, its failed checks and the facts to verify. */
+function ideaNotes(i, run) {
+  const issues = [...(run?.warnings || []), ...(run?.checks || []).filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`)];
+  const facts = i.ai?.verify || [];
+  if (!issues.length && !facts.length) return null;
+  const count = issues.length + facts.length;
+  return h("details", { class: "idea-notes", open: ideasUi.open.has(i.id), ontoggle: (e) => { if (e.target.open) ideasUi.open.add(i.id); else ideasUi.open.delete(i.id); } },
+    h("summary", { class: "small", text: `${count} thing${count === 1 ? "" : "s"} to check before publishing` }),
+    issues.length ? h("ul", { class: "small" }, issues.map((t) => h("li", { text: t }))) : null,
+    facts.length ? h("div", {}, h("div", { class: "eyebrow", text: "Facts to verify" }), h("ul", { class: "small" }, facts.map((t) => h("li", { text: t })))) : null);
+}
+
+/** The choices before generating, for one idea or several. Resolves when the runs have started. */
+function generateDialog(ideas, onDone) {
+  const single = ideas.length === 1 ? ideas[0] : null;
+  const start = single?.channel_id || (state.channel !== "all" ? state.channel : ideas.find((i) => i.channel_id)?.channel_id) || "";
+  const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("div", { class: "muted small", text: hint }) : null);
+  const f = {};
+  f.channel = h("select", { id: "g-channel", class: "field", required: true }, h("option", { value: "", text: "Choose a network" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === start, text: c.title })));
+  f.language = h("select", { id: "g-language", class: "field" }, h("option", { value: "", text: "Network language" }), LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, text: t })));
+  f.aspect = h("select", { id: "g-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["1:1", "Square (1:1)"], ["16:9", "Long video (16:9), not a Short"]].map(([v, t]) => h("option", { value: v, text: t })));
+  f.length = h("select", { id: "g-length", class: "field" }, [["short45", "Short, about 45 s"], ["short60", "Short, about 60 s"], ["long3", "Long, about 3 min"]].map(([v, t]) => h("option", { value: v, text: t })));
+  f.angle = h("input", { id: "g-angle", class: "field", dir: "auto", placeholder: "Optional: your twist, e.g. make it about what most people get wrong" });
+  f.voice = h("select", { id: "g-voice", class: "field" });
+  const langNow = () => f.language.value || channelById(f.channel.value)?.video_style?.language || channelById(f.channel.value)?.language || "en";
+  const fillVoices = () => f.voice.replaceChildren(h("option", { value: "", text: "Chosen from the subject" }), ...(VOICES[langNow()] || VOICES.en).map(([v, t]) => h("option", { value: v, text: t })));
+  fillVoices();
+  f.language.addEventListener("change", fillVoices); f.channel.addEventListener("change", fillVoices);
+  f.style = h("select", { id: "g-style", class: "field" }, h("option", { value: "", text: "Chosen from the subject" }), Object.entries(PRESETS).map(([k, p]) => h("option", { value: k, text: p.label })));
+  f.music = h("input", { type: "checkbox", checked: true }); f.sounds = h("input", { type: "checkbox", checked: true });
+  f.keep = h("input", { type: "checkbox", checked: true });
+  f.next = h("input", { type: "checkbox" });
+  const withScript = ideas.filter((i) => i.script?.trim()).length;
+  const longNote = h("div", { class: "row", role: "status" }, h("span", { class: "pill warn", text: "Note" }), h("span", { class: "small", text: "A 16:9 video goes to YouTube as a normal video, never as a Short." }));
+  const showLong = () => { longNote.style.display = f.aspect.value === "16:9" ? "" : "none"; };
+  f.aspect.addEventListener("change", () => { f.length.value = f.aspect.value === "16:9" ? "long3" : "short45"; showLong(); });
+  showLong();
+  const error = h("p", { class: "small", role: "alert", style: "color:var(--tally);margin:0" });
+  const go = h("button", { class: "btn primary", type: "submit", text: single ? "Generate video" : `Generate ${ideas.length} videos` });
+  const dialog = h("dialog", { class: "gen-dialog", "aria-labelledby": "gen-title" });
+  const close = () => { dialog.close(); dialog.remove(); };
+  dialog.append(h("form", { class: "gen-form", onsubmit: async (e) => {
+    e.preventDefault();
+    if (!f.channel.value) { error.textContent = "Choose a network first."; f.channel.focus(); return; }
+    go.disabled = true; go.textContent = "Starting…"; error.textContent = "";
+    const options = { language: f.language.value || null, aspect: f.aspect.value, length: f.length.value, angle: single ? f.angle.value.trim() || null : null, voice: f.voice.value || null, voice_style: f.style.value || null,
+      music: f.music.checked, sounds: f.sounds.checked, keep_script: f.keep.checked, publish: f.next.checked ? "next" : "ask" };
+    const failed = [];
+    for (const i of ideas) { try { await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options }); } catch (err) { failed.push(err.message); } }
+    if (failed.length) { error.textContent = failed[0]; go.disabled = false; go.textContent = "Try again"; onDone(); return; }
+    toast(single ? "Generating your video" : `Generating ${ideas.length} videos`);
+    close(); onDone();
+  } },
+    h("h2", { id: "gen-title", text: single ? "Generate this video" : `Generate ${ideas.length} videos` }),
+    h("p", { class: "muted small", style: "margin:0", dir: "auto", text: single ? single.video_title || single.title : "With the same choices for each." }),
+    h("div", { class: "form-grid" }, field("g-channel", "Network", f.channel), field("g-language", "Language", f.language), field("g-aspect", "Format", f.aspect), field("g-length", "Length", f.length)),
+    longNote,
+    single ? field("g-angle", "Angle", f.angle) : null,
+    h("div", { class: "form-grid" }, field("g-voice", "Voice", f.voice), field("g-style", "Voice style", f.style)),
+    h("div", { class: "gen-checks" },
+      h("label", { class: "row ed-check" }, f.music, " Background music that fits the subject"),
+      h("label", { class: "row ed-check" }, f.sounds, " Sound effects where the words call for them"),
+      withScript ? h("label", { class: "row ed-check" }, f.keep, single ? " Keep the script I already have" : ` Keep the scripts already written (${withScript})`) : null,
+      h("label", { class: "row ed-check" }, f.next, " Schedule it in the next free slot if every check passes")),
+    h("p", { class: "muted small", style: "margin:0", text: "It takes a few minutes, and you can leave this page. Unless you tick the last box, it then waits for you to check it." }),
+    error,
+    h("div", { class: "row gen-actions" }, h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: close }), go)));
+  document.body.append(dialog);
+  dialog.addEventListener("cancel", () => dialog.remove());
+  dialog.showModal();
+}
+
+VIEWS.ideas = async () => {
+  const titleIn = h("input", { id: "idea-title", class: "field", dir: "auto", placeholder: "Add an idea, e.g. What if Ronaldo never left Real Madrid?" });
+  const list = h("div", { class: "idea-list", "aria-live": "off" });
+  const tabs = h("div", { class: "seg idea-tabs", role: "group", "aria-label": "Show" });
+  const bulk = h("div", { class: "idea-bulk", role: "toolbar", "aria-label": "Selected ideas" });
+  const foot = h("div", { class: "idea-foot" });
+  let ideas = [], latest = new Map(), projects = new Map();
+
+  const load = async () => {
+    let iq = sb.from("ideas").select("*").neq("stage", "archived");
+    if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
+    const [rows, runs, vids] = await Promise.all([q(iq), q(sb.from("video_runs").select("*").order("created_at", { ascending: false }).limit(300)),
+      q(sb.from("video_projects").select("id,idea_id,aspect,language").not("idea_id", "is", null).order("created_at", { ascending: false }).limit(500))]);
+    ideas = rows;
+    latest = new Map(); for (const r of runs) if (!latest.has(r.idea_id)) latest.set(r.idea_id, r);
+    projects = new Map(); for (const p of vids) if (!projects.has(p.idea_id)) projects.set(p.idea_id, p);
+    for (const id of [...ideasUi.selected]) if (!ideas.some((i) => i.id === id)) ideasUi.selected.delete(id);
+  };
+  const reload = async () => { await load(); paint(); };
+  const update = async (ids, values) => { await q(sb.from("ideas").update(values).in("id", ids)); await reload(); };
+  const generate = (group) => generateDialog(group, () => { ideasUi.selected.clear(); reload(); });
+
+  const row = (i) => {
+    const run = latest.get(i.id);
+    const st = ideaState(i, run);
+    const [stLabel, lamp] = IDEA_STATES[st];
+    const project = projects.get(i.id);
+    const ch = channelById(i.channel_id);
+    const language = i.ai?.language || project?.language || ch?.video_style?.language || ch?.language;
+    const aspect = project?.aspect || i.ai?.aspect;
+    const check = h("input", { type: "checkbox", checked: ideasUi.selected.has(i.id), disabled: st === "working", "aria-label": `Select “${i.video_title || i.title}”`, onchange: (e) => { if (e.target.checked) ideasUi.selected.add(i.id); else ideasUi.selected.delete(i.id); paintBulk(); } });
+    const studio = h("a", { class: "btn small ghost", href: `#/studio/${i.id}`, text: i.script?.trim() ? "Edit script" : "Write it myself" });
+    const genBtn = (text, primary = true) => h("button", { class: `btn small${primary ? " primary" : " ghost"}`, type: "button", text, onclick: () => generate([i]) });
+    const archive = h("button", { class: "btn small ghost icon", type: "button", title: "Archive", "aria-label": `Archive “${i.video_title || i.title}”`, onclick: () => update([i.id], { stage: "archived" }) }, icon("i-x"));
+    const actions = {
+      new: [genBtn("Generate video"), h("button", { class: "btn small ghost", type: "button", text: "Save for later", onclick: () => update([i.id], { stage: "shortlisted" }) }), studio, archive],
+      saved: [genBtn("Generate video"), studio, archive], draft: [genBtn("Generate video"), studio, archive],
+      failed: [genBtn("Try again"), studio, archive],
+      working: [h("button", { class: "btn small ghost", type: "button", text: "Stop", onclick: async () => { try { await aiCall({ action: "auto_stop", idea_id: i.id, run_id: run.id }); await reload(); } catch (e) { toast(e.message); } } })],
+      ready: [project ? h("a", { class: "btn small primary", href: `#/edit/${project.id}?tab=publish`, text: "Review video" }) : studio, genBtn("Generate again", false),
+        h("button", { class: "btn small ghost", type: "button", text: "Mark published", onclick: () => update([i.id], { stage: "published" }) }), archive],
+      published: [project ? h("a", { class: "btn small ghost", href: `#/edit/${project.id}?tab=publish`, text: "Open" }) : studio, archive],
+    };
+    actions.check = actions.ready;
+    return h("article", { class: "idea", "data-state": st },
+      h("div", { class: "idea-pick" }, check, scorePill(i.score)),
+      h("div", { class: "idea-main" },
+        h("a", { class: "title", dir: "auto", href: `#/studio/${i.id}`, text: i.video_title || i.title }),
+        h("div", { class: "idea-meta muted small" },
+          h("span", { text: ch?.title || "No network yet" }), language ? h("span", { text: language.toUpperCase() }) : null, aspect ? h("span", { text: aspect }) : null,
+          (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null,
+          i.source_video?.url ? h("a", { href: i.source_video.url, target: "_blank", rel: "noopener", text: "Source" }) : null,
+          h("span", { text: ago(i.created_at) })),
+        st === "working" ? runProgress(run) : null,
+        st === "failed" ? h("p", { class: "small idea-error", role: "alert", text: run.error || "It stopped before the end." }) : null,
+        i.ai_status === "failed" && st !== "failed" && st !== "working" ? h("p", { class: "small idea-error", role: "alert", text: i.ai_error || "The AI failed." }) : null,
+        ["ready", "check", "published"].includes(st) ? ideaNotes(i, run) : null),
+      h("div", { class: "idea-side" },
+        h("span", { class: "idea-lamp small", "data-lamp": lamp, text: stLabel }),
+        h("div", { class: "idea-acts" }, actions[st])));
+  };
+
+  const paintBulk = () => {
+    const picked = ideas.filter((i) => ideasUi.selected.has(i.id));
+    bulk.hidden = !picked.length;
+    bulk.replaceChildren(h("strong", { class: "small", text: `${picked.length} selected` }),
+      h("button", { class: "btn small primary", type: "button", text: picked.length === 1 ? "Generate video" : `Generate ${picked.length} videos`, onclick: () => generate(picked) }),
+      h("button", { class: "btn small", type: "button", text: "Save for later", onclick: () => update(picked.map((i) => i.id), { stage: "shortlisted" }) }),
+      h("button", { class: "btn small", type: "button", text: "Archive", onclick: () => { if (confirm(`Archive ${picked.length} idea${picked.length === 1 ? "" : "s"}?`)) { ideasUi.selected.clear(); update(picked.map((i) => i.id), { stage: "archived" }); } } }),
+      h("button", { class: "btn small ghost", type: "button", text: "Clear", onclick: () => { ideasUi.selected.clear(); paint(); } }));
+  };
+  function paint() {
+    const real = ideas.filter((i) => !isEmptyDraft(i));
+    const stateOf = (i) => ideaState(i, latest.get(i.id));
+    const count = (states) => (states ? real.filter((i) => states.includes(stateOf(i))).length : real.length);
+    tabs.replaceChildren(...IDEA_TABS.map(([k, label, states]) => h("button", { type: "button", "aria-pressed": String(ideasUi.tab === k), onclick: () => { ideasUi.tab = k; paint(); } }, label, " ", h("span", { class: "mono small", text: String(count(states)) }))));
+    const states = IDEA_TABS.find(([k]) => k === ideasUi.tab)?.[2];
+    const words = ideasUi.q.toLowerCase().split(/\s+/).filter(Boolean);
+    const shown = real.filter((i) => (!states || states.includes(stateOf(i))) && words.every((w) => `${i.video_title || ""} ${i.title || ""} ${channelById(i.channel_id)?.title || ""}`.toLowerCase().includes(w)));
+    const newest = (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at);
+    shown.sort(ideasUi.sort === "newest" ? newest : (a, b) => (b.score ?? -1) - (a.score ?? -1) || newest(a, b));
+    list.replaceChildren(...(shown.length ? shown.map(row) : [empty(real.length ? "No idea matches." : "No ideas yet. Add one above, or save one from Research.", real.length ? null : h("a", { class: "btn", href: "#/research", text: "Go to Research" }))]));
+    const drafts = ideas.filter(isEmptyDraft);
+    foot.replaceChildren(...(drafts.length ? [h("span", { class: "muted small", text: `${drafts.length} empty draft${drafts.length === 1 ? "" : "s"} hidden` }),
+      h("button", { class: "btn small ghost", type: "button", text: "Archive them", onclick: () => update(drafts.map((i) => i.id), { stage: "archived" }) })] : []));
+    paintBulk();
+    // live while something is working, and quiet otherwise
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    if (ideas.some((i) => isActiveRun(latest.get(i.id)))) state.timer = setInterval(() => reload().catch(() => {}), 6000);
+  }
+
+  const add = async (thenGenerate) => {
+    if (!titleIn.value.trim()) { titleIn.focus(); return; }
+    const made = await makeIdea({ title: titleIn.value.trim(), channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] });
+    titleIn.value = "";
+    await reload();
+    if (thenGenerate) generate([made]);
+  };
+  const addForm = h("form", { class: "add-idea", onsubmit: (e) => { e.preventDefault(); add(true); } },
+    h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn,
+    h("button", { class: "btn", type: "button", text: "Add idea", onclick: () => add(false) }),
+    h("button", { class: "btn primary", type: "submit", text: "Add and generate" }));
+  const search = h("input", { class: "field idea-search", type: "search", "aria-label": "Search ideas", placeholder: "Search ideas", value: ideasUi.q, oninput: (e) => { ideasUi.q = e.target.value; paint(); } });
+  const sort = h("select", { class: "field idea-sort", "aria-label": "Sort", onchange: (e) => { ideasUi.sort = e.target.value; paint(); } }, [["score", "Best score"], ["newest", "Newest"]].map(([v, t]) => h("option", { value: v, selected: ideasUi.sort === v, text: t })));
+
+  await load();
+  paint();
+  return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All networks"),
+    addForm, h("div", { class: "idea-tools" }, tabs, h("div", { class: "row idea-filter" }, search, sort)), bulk, list, foot];
 };
 
 // ==================================================================
@@ -939,7 +1100,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "16";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "17";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });

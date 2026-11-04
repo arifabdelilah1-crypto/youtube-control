@@ -1,0 +1,35 @@
+name: Generate video
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "video_runs.id"
+        required: true
+concurrency: { group: "autovideo-${{ github.event.inputs.run_id }}", cancel-in-progress: false }
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install ffmpeg (for the final checks)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
+      - name: Generate
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          MEDIA_URL: ${{ secrets.MEDIA_URL }}
+          MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
+          RUN_ID: ${{ github.event.inputs.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node render/autovideo.mjs "$RUN_ID"
+      - name: Say so if the machine stopped it
+        if: failure() || cancelled()
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RUN_ID: ${{ github.event.inputs.run_id }}
+        run: node render/autovideo.mjs --stopped "$RUN_ID"

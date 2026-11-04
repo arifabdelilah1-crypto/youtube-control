@@ -27,7 +27,7 @@ const MEDIA_URL = Deno.env.get("MEDIA_URL") ?? "";
 const MEDIA_SECRET = Deno.env.get("MEDIA_SECRET") ?? "";
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
@@ -103,8 +103,11 @@ Deno.serve(async (req) => {
   try {
     const db = createClient(URL_, SERVICE);
     const userDb = createClient(URL_, ANON, { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
-    if (!(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
-    const { data: { user } } = await userDb.auth.getUser();
+    // the "Generate video" job signs in with the cron secret, a person with their account
+    const cron = req.headers.get("x-cron-secret");
+    const isService = !!cron && cron === (await db.rpc("get_cron_secret")).data;
+    if (!isService && !(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
+    const user = isService ? null : (await userDb.auth.getUser()).data.user;
     const body = await req.json();
 
     if (body.action === "video_link") {
@@ -254,7 +257,7 @@ Deno.serve(async (req) => {
       const { data: scenes } = await db.from("project_scenes").select("id,text,voice_path,voice_text,clip").eq("project_id", body.project_id);
       const stale = (scenes || []).filter((s) => !s.voice_path || s.voice_text !== s.text).length;
       if (!scenes?.length || stale) return json({ error: stale ? `${stale} scene(s) need their voice updated first.` : "No scenes." }, 400);
-      await trackUnsplashDownloads(KEYS.unsplash, scenes.map((s) => s.clip));
+      await trackUnsplashDownloads(KEYS.unsplash, [...scenes.map((s) => s.clip), project.settings?.thumbnail?.image]);
       const { data: job, error } = await db.from("render_jobs").insert({
         project_id: project.id, idea_id: project.idea_id, channel_id: project.channel_id,
         params: { engine: "editor", project_id: project.id, title: project.title, aspect: project.aspect },
