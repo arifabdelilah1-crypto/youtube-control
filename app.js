@@ -235,6 +235,7 @@ async function render() {
   const section = { keyword: "research", channel: "channels", edit: "studio" }[route.name] || route.name;  // "automation" = Publishing
   document.querySelectorAll(".side-links a").forEach((a) =>
     a.dataset.route === section ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
+  document.querySelector(".side-links a[aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   const fn = VIEWS[route.name] || VIEWS.home;
   view().replaceChildren(skeleton());
   try {
@@ -1300,6 +1301,90 @@ VIEWS.automation = async () => {
     weekBox, readyBox, queueBox,
     h("h2", { style: "margin:8px 0 0", text: "Schedules" }),
     channels.length ? h("div", { class: "grid-cards wide pub-grid" }, channels.map(schedCard)) : empty("No networks yet.")];
+};
+
+// ==================================================================
+// Review: finished videos waiting for a yes or no
+// ==================================================================
+VIEWS.review = async () => {
+  const since = new Date(Date.now() - 30 * 864e5).toISOString();
+  const [jobs, queue, runs, scheds, tokens] = await Promise.all([
+    q(sb.from("render_jobs").select("id,channel_id,project_id,idea_id,params,output_path,duration_s,finished_at,created_at").eq("status", "done").not("idea_id", "is", null).gte("created_at", since).order("created_at", { ascending: false }).limit(200)),
+    q(sb.from("publish_queue").select("idea_id,render_job_id").neq("status", "cancelled").limit(1000)),
+    q(sb.from("video_runs").select("idea_id,status,warnings,checks,created_at").order("created_at", { ascending: false }).limit(300)),
+    q(sb.from("publish_schedules").select("*")),
+    q(sb.from("channel_tokens").select("channel_id")),
+  ]);
+  const latestRun = new Map(); for (const r of runs) if (!latestRun.has(r.idea_id)) latestRun.set(r.idea_id, r);
+  // an idea with a post already on its way never comes back here, so a new render can't go out twice
+  const sent = new Set(queue.map((r) => r.idea_id).filter(Boolean));
+  const queuedJobs = new Set(queue.map((r) => r.render_job_id));
+  const newest = new Map();
+  for (const j of jobs) if (!newest.has(j.idea_id)) newest.set(j.idea_id, j);
+  const waiting = [...newest.values()].filter((j) => !sent.has(j.idea_id) && !queuedJobs.has(j.id) && !isActiveRun(latestRun.get(j.idea_id)) && (state.channel === "all" || j.channel_id === state.channel));
+  const ideaRows = waiting.length ? await q(sb.from("ideas").select("*").in("id", waiting.map((j) => j.idea_id)).not("stage", "in", "(archived,published)")) : [];
+  const ideas = new Map(ideaRows.map((i) => [i.id, i]));
+  const items = waiting.filter((j) => ideas.has(j.idea_id));
+  const projectIds = items.map((j) => j.project_id).filter(Boolean);
+  const scenes = projectIds.length ? await q(sb.from("project_scenes").select("project_id,idx,clip").in("project_id", projectIds).lte("idx", 1).order("idx")) : [];
+  const posters = new Map();
+  for (const s of scenes) if (!posters.has(s.project_id) && (s.clip?.thumb || s.clip?.preview)) posters.set(s.project_id, s.clip.thumb || s.clip.preview);
+  const connected = new Set(tokens.map((t) => t.channel_id));
+
+  const card = (j) => {
+    const i = ideas.get(j.idea_id);
+    const run = latestRun.get(i.id);
+    const title = i.video_title || j.params?.title || i.title;
+    const row = scheds.find((x) => x.channel_id === j.channel_id);
+    const sc = { ...DEFAULT_SCHED, ...(row || {}) };
+    const targets = targetsOfSchedule(sc.channel_id ? sc : { ...sc, channel_id: connected.has(j.channel_id) ? j.channel_id : null });
+    const aspect = j.params?.aspect || i.ai?.aspect || "9:16";
+    const issues = [...(run?.warnings || []), ...(run?.checks || []).filter((c) => !c.ok)].length + (i.ai?.verify || []).length;
+    const notes = ideaNotes(i, run);
+    if (notes) notes.open = true;
+    const poster = posters.get(j.project_id);
+    const player = h("button", { class: `review-player ${aspect === "16:9" ? "wide" : aspect === "1:1" ? "square" : ""}`, type: "button", "aria-label": `Play “${title}”`, onclick: async (e) => {
+      const box = e.currentTarget;
+      box.disabled = true;
+      const url = await videoLink(j);
+      if (!url) { box.disabled = false; return; }
+      box.replaceWith(h("video", { class: box.className, src: url, controls: true, autoplay: true, playsinline: true }));
+    } }, poster ? h("img", { src: poster, alt: "", loading: "lazy" }) : null, h("span", { class: "review-play" }, icon("i-play")));
+    const publish = h("button", { class: "btn primary", type: "button", disabled: !targets.length, text: "Publish", title: "Goes to this network's next free slot", onclick: async (e) => {
+      const btn = e.currentTarget;
+      if (issues && !confirm(`${issues} thing${issues === 1 ? "" : "s"} to check on this video. Publish it anyway?`)) return;
+      btn.disabled = true;
+      try { const r = await publishCall({ action: "queue", render_job_id: j.id, when: "next" }); toast(r.row?.slot_at ? `Queued for ${inTz(r.row.slot_at, sc.timezone)}` : "Queued"); render(); }
+      catch (err) { toast(err.message); btn.disabled = false; }
+    } });
+    return h("article", { class: "card review" },
+      player,
+      h("div", { class: "review-body" },
+        h("h2", { dir: "auto", text: title }),
+        h("div", { class: "idea-meta muted small" },
+          h("span", { text: channelById(j.channel_id)?.title || "No network" }),
+          j.duration_s ? h("span", { text: `${Math.round(j.duration_s)} s` }) : null,
+          h("span", { text: ago(j.finished_at || j.created_at) }),
+          aspect === "16:9" ? h("span", { class: "pill warn", text: "Long video, not a Short" }) : null,
+          run && !issues ? h("span", { class: "pill ok", text: "Checks passed" }) : null),
+        targets.length
+          ? h("div", { class: "net-chips", "aria-label": "Where it posts" }, targets.map((x) => h("span", { class: "pill short", text: PLATFORM_NAMES[x.platform] || x.platform })))
+          : h("a", { class: "small", href: `#/channel/${j.channel_id}`, text: "This network posts nowhere yet: pick its accounts" }),
+        notes,
+        h("div", { class: "review-acts" },
+          publish,
+          j.project_id ? h("a", { class: "btn", href: `#/edit/${j.project_id}?tab=publish`, text: "Edit" }) : null,
+          h("button", { class: "btn", type: "button", text: "Redo", onclick: () => generateDialog([i], (started) => { if (started) render(); }) }),
+          h("button", { class: "btn ghost", type: "button", text: "Reject", onclick: async () => {
+            if (!confirm(`Reject “${title}”? It leaves this list and the idea is archived.`)) return;
+            await q(sb.from("ideas").update({ stage: "archived" }).eq("id", i.id));
+            toast("Rejected"); render();
+          } }))));
+  };
+
+  return [pageHead("Review", items.length ? `${items.length} video${items.length === 1 ? "" : "s"} waiting. Watch each one, then publish, redo or reject it.` : "Finished videos wait here for your decision."),
+    items.length ? h("div", { class: "review-list" }, items.map(card))
+      : empty("No video is waiting for you.", h("a", { class: "btn primary small", href: "#/ideas", text: "Go to Ideas" }))];
 };
 
 // ==================================================================
