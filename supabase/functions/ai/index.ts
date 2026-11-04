@@ -7,13 +7,14 @@
 //      draft: the script to improve. ideas.ai.previous keeps the version it replaced. effort: high (default) | low. fast: use the everyday model.
 // POST {action:"review",    idea_id, effort?, fast?}       -> (effort: low by default) a strict editor corrects the script: truth, thread, hook, speech, pictures, length. Keeps the draft if that fails.
 // POST {action:"brief",     idea_id}                       -> how to produce a script someone wrote themselves: voice style, music mood...
+// POST {action:"hooks",     idea_id}                       -> three other openings for the script: {hooks: [{line, text}]}. Changes nothing.
 // POST {action:"auto_start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs). Returns {run_id}.
 // POST {action:"auto_stop", idea_id, run_id}               -> stops it at its next step.
 // The jobs also call, with x-cron-secret: pick_clips, check_clips (looks at the pictures), pick_sounds, pick_trends.
 // Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), DEEPSEEK_SCRIPT_MODEL (optional, default deepseek-v4-pro),
 //          YOUTUBE_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, PICK_TRENDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
+import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, HOOKS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, PICK_TRENDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -273,6 +274,20 @@ Deno.serve(async (req) => {
         return json({ brief });
       } catch (e) {
         return json({ error: String((e as Error).message || e) });
+      }
+    }
+
+    // ---------- other ways to open the video ----------
+    if (body.action === "hooks") {
+      if (!idea.script?.trim()) return json({ error: "This idea has no script yet." });
+      const lines = String(idea.script).split("\n").map((l) => l.trim()).filter(Boolean);
+      const said = (lines.some((l) => l.startsWith("VO: ")) ? lines.filter((l) => l.startsWith("VO: ")) : lines).map(voice).filter(Boolean);
+      try {
+        const out = await deepseek(db, ideaId, "hooks", HOOKS_SYSTEM, JSON.stringify({ target_language: idea.ai?.language || "en", title: clean(idea.video_title || idea.title, 200),
+          current_first_line: said[0], second_line: said[1] || null, script: said.join("\n").slice(0, 8000) }), user?.id ?? null, { pro: true, effort: "low" });
+        return json({ hooks: (Array.isArray(out.hooks) ? out.hooks : []).map((x: any) => ({ line: voice(x?.line), text: clean(x?.text, 40) })).filter((x: any) => x.line).slice(0, 3) });
+      } catch (e) {
+        return json({ error: String((e as Error).message || e) });  // a failed suggestion isn't a failed idea
       }
     }
 

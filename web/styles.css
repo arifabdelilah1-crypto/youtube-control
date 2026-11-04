@@ -595,3 +595,9 @@ video.review-player { background: #000; cursor: auto; object-fit: contain; }
 @media (max-width: 760px) {
   .nav-badge { position: absolute; top: 3px; right: 12px; margin: 0; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; line-height: 16px; }
 }
+
+/* ---- Review: other openings ---- */
+.review-hooks { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; margin-top: 4px; border-top: 1px solid var(--line-soft); }
+.review-hook { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 13px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 14px; }
+.review-hook .btn { flex: none; }
+@media (max-width: 560px) { .review-hook { flex-direction: column; align-items: stretch; } }

@@ -1326,12 +1326,34 @@ VIEWS.automation = async () => {
 // ==================================================================
 // Review: finished videos waiting for a yes or no
 // ==================================================================
+/** The first thing the narrator says, in both ways a script can be written. */
+function currentOpening(script) {
+  const lines = String(script || "").split("\n");
+  const said = lines.find((l) => l.startsWith("VO: "));
+  return said ? said.slice(4) : (lines.find((l) => l.trim()) || "").replace(/\s*\[[^\]]*\]\s*$/, "");
+}
+/** The script with a new first line. The first scene's big text follows it; everything else stays. */
+function withOpening(script, { line, text }) {
+  const lines = String(script).split("\n");
+  const said = lines.findIndex((l) => l.startsWith("VO: "));
+  if (said >= 0) {
+    lines[said] = `VO: ${line}`;
+    const big = lines.slice(0, said).findIndex((l) => l.startsWith("TITLE: "));
+    if (big >= 0 && text) lines[big] = `TITLE: ${text}`;
+    return lines.join("\n");
+  }
+  const first = lines.findIndex((l) => l.trim());
+  const footage = lines[first].match(/\[[^\]]*\]\s*$/)?.[0] || "";
+  lines[first] = `${line} ${footage}`.trim();
+  return lines.join("\n");
+}
+
 VIEWS.review = async () => {
   const since = new Date(Date.now() - 30 * 864e5).toISOString();
   const [jobs, queue, runs, scheds, tokens] = await Promise.all([
     q(sb.from("render_jobs").select("id,channel_id,project_id,idea_id,params,output_path,duration_s,finished_at,created_at").eq("status", "done").not("idea_id", "is", null).gte("created_at", since).order("created_at", { ascending: false }).limit(200)),
     q(sb.from("publish_queue").select("idea_id,render_job_id").neq("status", "cancelled").limit(1000)),
-    q(sb.from("video_runs").select("idea_id,status,warnings,checks,created_at").order("created_at", { ascending: false }).limit(300)),
+    q(sb.from("video_runs").select("idea_id,status,options,warnings,checks,created_at").order("created_at", { ascending: false }).limit(300)),
     q(sb.from("publish_schedules").select("*")),
     q(sb.from("channel_tokens").select("channel_id")),
   ]);
@@ -1377,6 +1399,36 @@ VIEWS.review = async () => {
       try { const r = await publishCall({ action: "queue", render_job_id: j.id, when: "next" }); toast(r.row?.slot_at ? `Queued for ${inTz(r.row.slot_at, sc.timezone)}` : "Queued"); render(); }
       catch (err) { toast(err.message); btn.disabled = false; }
     } });
+    const useOpening = async (choice, btn) => {
+      btn.disabled = true;
+      const before = { script: i.script, ai: i.ai };
+      try {
+        await q(sb.from("ideas").update({ script: withOpening(i.script, choice), ai: { ...(i.ai || {}), hook_text: choice.text } }).eq("id", i.id));
+        await aiCall({ action: "auto_start", idea_id: i.id, channel_id: j.channel_id, options: { aspect, ...(run?.options || {}), keep_script: true, publish: "ask" } });
+        toast("Making it again with this opening: about 8 minutes"); render();
+      } catch (err) {
+        await q(sb.from("ideas").update(before).eq("id", i.id)).catch(() => {});
+        toast(err.message); btn.disabled = false;
+      }
+    };
+    const openings = h("div", { class: "review-hooks", hidden: true });
+    const changeOpening = h("button", { class: "btn", type: "button", text: "Change opening", onclick: async (e) => {
+      const btn = e.currentTarget;
+      if (!openings.hidden) { openings.hidden = true; return; }
+      btn.disabled = true; btn.textContent = "Writing 3 openings…";
+      try {
+        const out = await aiCall({ action: "hooks", idea_id: i.id });
+        if (!out.hooks?.length) throw new Error("No opening came back. Try again.");
+        openings.replaceChildren(
+          h("div", { class: "muted small", dir: "auto" }, h("strong", { text: "Now: " }), currentOpening(i.script)),
+          ...out.hooks.map((o) => h("div", { class: "review-hook" },
+            h("div", { style: "min-width:0" }, h("div", { dir: "auto", text: o.line }), o.text ? h("div", { class: "muted small", dir: "auto", text: `On screen: ${o.text}` }) : null),
+            h("button", { class: "btn small primary", type: "button", text: "Use this", onclick: (ev) => useOpening(o, ev.currentTarget) }))),
+          h("div", { class: "muted small", text: "The video is made again with the opening you pick, in about 8 minutes. The rest of the script stays." }));
+        openings.hidden = false;
+      } catch (err) { toast(err.message); }
+      btn.disabled = false; btn.textContent = "Change opening";
+    } });
     return h("article", { class: "card review" },
       player,
       h("div", { class: "review-body" },
@@ -1394,12 +1446,14 @@ VIEWS.review = async () => {
         h("div", { class: "review-acts" },
           publish,
           j.project_id ? h("a", { class: "btn", href: `#/edit/${j.project_id}?tab=publish`, text: "Edit" }) : null,
+          i.script?.trim() ? changeOpening : null,
           h("button", { class: "btn", type: "button", text: "Redo", onclick: () => generateDialog([i], (started) => { if (started) render(); }) }),
           h("button", { class: "btn ghost", type: "button", text: "Reject", onclick: async () => {
             if (!confirm(`Reject “${title}”? It leaves this list and the idea is archived.`)) return;
             await q(sb.from("ideas").update({ stage: "archived" }).eq("id", i.id));
             toast("Rejected"); render();
-          } }))));
+          } })),
+        openings));
   };
 
   return [pageHead("Review", items.length ? `${items.length} video${items.length === 1 ? "" : "s"} waiting. Watch each one, then publish, redo or reject it.` : "Finished videos wait here for your decision."),
