@@ -68,7 +68,7 @@ Channel stats need nothing: Supabase runs them.
 | Job | Schedule (UTC) | Does |
 |---|---|---|
 | `.github/workflows/research.yml` | daily 06:00 | YouTube search per seed term and market, autocomplete, outliers, competitors |
-| `.github/workflows/trends.yml` | daily 07:30 | Google Trends (YouTube Search) interest and momentum, rising queries |
+| `.github/workflows/trends.yml` | 07:30 and 16:30 | Google's trending-searches feed per network's countries: DeepSeek keeps what fits a network and adds it to Ideas with its headlines |
 | Channel stats (Supabase pg_cron → `channel-sync`) | every 6 h, and **Refresh now** | Public stats; analytics, search terms, traffic and impressions for connected channels |
 | `.github/disabled/hourly.yml` | off | Blotato sync + alerts. Move it into `.github/workflows/` once the Blotato sync is built and `BLOTATO_API_KEY` is set |
 

@@ -272,7 +272,13 @@ def run_niche(db: DB, yt: YouTube, niche: dict, state: dict) -> None:
     done = 0
 
     # 0) what costs 1 unit a call comes first
-    cheap = discover_cheap(db, yt, niche, [s["term"] for s in seeds])
+    try:
+        cheap = discover_cheap(db, yt, niche, [s["term"] for s in seeds])
+    except QuotaExhausted:
+        raise
+    except Exception as e:  # noqa: BLE001 — never in the way of the searches below
+        log(f"  cheap discovery failed: {e}")
+        cheap = {"cheap_error": str(e)[:200], "outlier_channels": []}
     outlier_channels.update(cheap.pop("outlier_channels"))
     budget = niche["daily_unit_budget"] - niche_units_today(db, niche["slug"])
 

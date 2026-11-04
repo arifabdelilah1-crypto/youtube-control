@@ -375,7 +375,7 @@ VIEWS.research = async (route) => {
   }
 
   if (tab === "rising") {
-    const trends = scope.global ? [] : await q(sb.from("ideas").select("id,title,video_title,sources,created_at").eq("niche_id", scope.niche.id).contains("sources", [{ type: "trend" }]).neq("stage", "archived").order("created_at", { ascending: false }).limit(18));
+    const trends = scope.global ? [] : await q(sb.from("ideas").select("id,title,video_title,sources,created_at").eq("niche_id", scope.niche.id).filter("sources", "cs", JSON.stringify([{ type: "trend" }])).neq("stage", "archived").order("created_at", { ascending: false }).limit(18));
     out.push(h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Trending now" }), h("span", { class: "muted small", text: "Google Trends, what fits this niche" })),
       trends.length ? h("div", { class: "grid-cards" }, trends.map((i) => { const t = i.sources.find((x) => x.type === "trend");
         return h("a", { class: "tile", href: `#/studio/${i.id}` },

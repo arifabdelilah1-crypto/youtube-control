@@ -19,7 +19,7 @@ from common import HTTP, SUPABASE_URL, DB, job_run, log, require_env
 
 FEED = "https://trends.google.com/trending/rss"
 NS = {"ht": "https://trends.google.com/trending/rss"}
-MARKETS_PER_NETWORK = 2
+MARKETS_PER_NETWORK = 3
 IDEAS_PER_NETWORK = 5
 AI_FUNCTION = os.environ.get("AI_FUNCTION", "ai")
 
