@@ -41,8 +41,8 @@ async function readState(state: string) {
   if (Date.now() > p.exp) throw new Error("state expired");
   return p as { u: string; r: string; exp: number; n?: string };
 }
-const back = (returnTo: string, ok: boolean, msg = "") =>
-  Response.redirect(`${returnTo}#/settings?${ok ? "connected=1" : "error=" + encodeURIComponent(msg)}`, 302);
+const back = (returnTo: string, ok: boolean, msg = "", network?: string) =>
+  Response.redirect(`${returnTo}#/${network ? `channel/${network}` : "settings"}?${ok ? "connected=1" : "error=" + encodeURIComponent(msg)}`, 302);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
@@ -68,7 +68,7 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   let st;
   try { st = await readState(url.searchParams.get("state") || ""); } catch (e) { return new Response(`Invalid request: ${(e as Error).message}`, { status: 400 }); }
-  if (url.searchParams.get("error")) return back(st.r, false, url.searchParams.get("error")!);
+  if (url.searchParams.get("error")) return back(st.r, false, url.searchParams.get("error")!, st.n);
   try {
     const tr = await fetch("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -79,10 +79,19 @@ Deno.serve(async (req) => {
     if (!tr.ok || !tok.refresh_token) throw new Error(tok.error_description || "no refresh token returned");
 
     const cr = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: `Bearer ${tok.access_token}` } });
-    const items = (await cr.json()).items || [];
+    let items = (await cr.json()).items || [];
     if (!items.length) throw new Error("this Google account has no YouTube channel");
 
     const db = createClient(URL_, SERVICE);
+    // Reconnecting a network that already has a YouTube channel: only that same channel is accepted
+    if (st.n) {
+      const { data: net } = await db.from("channels").select("youtube_channel_id,title").eq("id", st.n).maybeSingle();
+      if (net?.youtube_channel_id) {
+        const same = items.filter((c: any) => c.id === net.youtube_channel_id);
+        if (!same.length) throw new Error(`you picked "${items[0].snippet?.title}", but this network is "${net.title}". Sign in again and pick "${net.title}" (with brand channels, choose it on Google's channel list)`);
+        items = same;
+      } else items = items.slice(0, 1);
+    }
     for (const c of items) {
       const thumbs = c.snippet?.thumbnails || {};
       const fields = {
@@ -103,8 +112,8 @@ Deno.serve(async (req) => {
       // Pull its stats right away (runs in the background via pg_net)
       await db.rpc("call_edge", { p_function: "channel-sync", p_body: { channel_id: row.id } });
     }
-    return back(st.r, true);
+    return back(st.r, true, "", st.n);
   } catch (e) {
-    return back(st.r, false, (e as Error).message);
+    return back(st.r, false, (e as Error).message, st.n);
   }
 });

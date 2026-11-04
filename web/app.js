@@ -1771,7 +1771,7 @@ function networkPanels(chRow, sc, blotato) {
     h("div", { class: "field-wrap" }, h("label", { for: `net-name-${id}`, text: "Network name" }), name),
     blotato.error ? h("p", { class: "muted small", style: "margin:0", text: `Blotato's accounts couldn't load: ${blotato.error}` }) : null,
     noAccounts ? h("p", { class: "muted small", style: "margin:0", text: "No TikTok, Instagram, X or Facebook account in Blotato yet. Connect them there, then reload this page." }) : null,
-    row("youtube", ytPill, ytMethod, ytWrap, chRow.connected ? null : h("button", { class: "btn small primary", type: "button", text: "Connect with Google", onclick: () => startOAuth(id) })),
+    row("youtube", ytPill, ytMethod, ytWrap, h("button", { class: `btn small${chRow.connected ? "" : " primary"}`, type: "button", text: chRow.connected ? "Reconnect Google" : "Connect with Google", onclick: () => startOAuth(id) })),
     row("tiktok", status("tiktok", tiktok), tiktok, ttPrivacy, h("label", { class: "pub-check small" }, ttAi, "Mark as AI-generated")),
     row("instagram", status("instagram", instagram), instagram),
     row("twitter", status("twitter", x), x, h("span", { class: "muted small", text: "Posts the title, 280 characters at most." })),
@@ -1825,7 +1825,11 @@ VIEWS.channel = async (route) => {
     h("div", { class: "row" },
       chRow?.youtube_channel_id ? h("span", { class: "muted small", title: chRow?.stats_synced_at ? when(chRow.stats_synced_at) : "", text: `Updated ${chRow?.stats_synced_at ? ago(chRow.stats_synced_at) : "—"}` }) : null,
       chRow?.youtube_channel_id ? h("button", { class: "btn", type: "button", text: "Refresh now", onclick: (e) => refreshChannel(id, e.currentTarget) }) : null,
+      chRow?.youtube_channel_id ? h("button", { class: `btn${ch.connected ? "" : " primary"}`, type: "button", title: "Sign in with Google again to renew this channel's access (same channel, same network)",
+        text: ch.connected ? "Reconnect Google" : "Connect with Google", onclick: (e) => { e.currentTarget.disabled = true; startOAuth(id); } }) : null,
       h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this network" })));
+  if (route.params.get("connected")) toast("YouTube reconnected. Stats are loading.");
+  if (route.params.get("error")) toast(`Google connection failed: ${route.params.get("error")}`);
   if (!chRow?.youtube_channel_id) return [header, ...panels];
   const statLine = (v) => [`${fmtc(v.views)} views`, `${fmtc(v.likes)} likes`, v.impressions_28d !== null && v.impressions_28d !== undefined ? `${fmtc(v.impressions_28d)} impr.` : null].filter(Boolean).join(" · ");
   const tabs = h("div", { class: "tabs", role: "tablist" },
