@@ -98,6 +98,13 @@ async function syncChannel(ch: any) {
   if (Object.keys(rows).length) await db.from("channel_daily_stats").upsert(Object.values(rows), { onConflict: "channel_id,day" });
   info.days = Object.keys(rows).length;
 
+  // How much of each video people watch, on today's row of the videos just listed (above 100% means they watch it again)
+  try {
+    const watched = await report(token, { ...rng, dimensions: "video", metrics: "views,averageViewPercentage", sort: "-views", maxResults: 200 });
+    await Promise.all(watched.map((r: any) => db.from("own_video_daily").update({ avg_view_pct: r.averageViewPercentage }).eq("youtube_video_id", r.video).eq("day", day(new Date()))));
+    info.watched = watched.length;
+  } catch (e) { info.watched_error = String((e as Error).message); }
+
   const r28 = { startDate: day(s28), endDate: day(end) };
   const terms = await report(token, { ...r28, dimensions: "insightTrafficSourceDetail", filters: "insightTrafficSourceType==YT_SEARCH", metrics: "views", sort: "-views", maxResults: 25 }).catch(() => []);
   if (terms.length) await db.from("channel_search_terms").upsert(terms.map((t: any) => ({ channel_id: ch.id, period_end: day(end), term: t.insightTrafficSourceDetail, views: t.views })),

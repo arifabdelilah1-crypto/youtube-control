@@ -1607,7 +1607,7 @@ VIEWS.results = async () => {
   const summary = h("div", { class: "result-summary" });
   const hero = h("div", {});
   const list = h("div", { class: "result-list" });
-  const sorts = { best: (a, b) => (b.vs_baseline ?? -1) - (a.vs_baseline ?? -1) || (b.views ?? 0) - (a.views ?? 0), views: (a, b) => (b.views ?? 0) - (a.views ?? 0), newest: (a, b) => Date.parse(b.published_at) - Date.parse(a.published_at) };
+  const sorts = { best: (a, b) => (b.vs_baseline ?? -1) - (a.vs_baseline ?? -1) || (b.views ?? 0) - (a.views ?? 0), views: (a, b) => (b.views ?? 0) - (a.views ?? 0), watched: (a, b) => (pctOf.get(b.youtube_video_id) ?? -1) - (pctOf.get(a.youtube_video_id) ?? -1), newest: (a, b) => Date.parse(b.published_at) - Date.parse(a.published_at) };
   const watchUrl = (v) => `https://www.youtube.com/watch?v=${v.youtube_video_id}`;
   const thumb = (v) => h("a", { class: "result-thumb", href: watchUrl(v), target: "_blank", rel: "noopener", "aria-label": `Watch “${v.title}” on YouTube` },
     v.thumbnail_url ? h("img", { src: v.thumbnail_url, alt: "", loading: "lazy" }) : icon("i-play"));
@@ -1620,7 +1620,8 @@ VIEWS.results = async () => {
     return idea?.script?.trim() ? h("button", { class: `btn small${primary ? " primary" : " ghost"}`, type: "button", text: "Translate", onclick: () => translateDialog(idea, () => {}) }) : null;
   };
   const level = (m) => (m === null || m === undefined ? "none" : m >= 1.5 ? "up" : m >= 1 ? "even" : "down");
-  const stat = (label, value) => h("div", { class: "result-stat" }, h("strong", { text: value }), h("span", { text: label }));
+  const stat = (label, value, title) => h("div", { class: "result-stat", title: title || null }, h("strong", { text: value }), h("span", { text: label }));
+  const WATCHED_HELP = "Average share of the video people watch. Above 100% means they watch it again.";
   function paint() {
     const since = resultsUi.days ? Date.now() - resultsUi.days * 864e5 : 0;
     const inPeriod = videos.filter((v) => Date.parse(v.published_at) >= since && (state.channel === "all" || v.channel_id === state.channel));
@@ -1628,6 +1629,8 @@ VIEWS.results = async () => {
     const shown = inPeriod.filter((v) => v !== top).sort(sorts[resultsUi.sort]);
     const total = inPeriod.reduce((n, v) => n + Number(v.views || 0), 0);
     const scale = Math.max(2, ...inPeriod.map((v) => Number(v.vs_baseline) || 0));
+    const hasWatched = inPeriod.some((v) => pctOf.has(v.youtube_video_id));
+    list.classList.toggle("has-watched", hasWatched);
     summary.replaceChildren(stat(inPeriod.length === 1 ? "video" : "videos", fmtc(inPeriod.length)), stat("views", fmtc(total)),
       stat("above their usual", fmtc(inPeriod.filter((v) => Number(v.vs_baseline) >= 1).length)));
     const performance = (v) => {
@@ -1645,7 +1648,7 @@ VIEWS.results = async () => {
         h("div", { class: "result-hero-figures" },
           h("div", { class: "result-hero-mult", "data-level": level(top.vs_baseline === null ? null : Number(top.vs_baseline)) }, h("strong", { text: top.vs_baseline === null || top.vs_baseline === undefined ? "—" : `${Number(top.vs_baseline).toFixed(1)}×` }), h("span", { text: "its usual views" })),
           stat("views", fmtc(top.views)), stat("likes", fmtc(top.likes)),
-          ...(pctOf.has(top.youtube_video_id) ? [stat("watched", `${Math.round(pctOf.get(top.youtube_video_id))}%`)] : [])),
+          ...(pctOf.has(top.youtube_video_id) ? [stat("watched", `${Math.round(pctOf.get(top.youtube_video_id))}%`, WATCHED_HELP)] : [])),
         translate(top, true)))] : []));
     list.replaceChildren(...(shown.length ? shown.map((v) => h("article", { class: "result-row" },
       thumb(v),
@@ -1654,7 +1657,7 @@ VIEWS.results = async () => {
         h("div", { class: "result-meta" }, network(v), h("span", { text: ago(v.published_at) }))),
       stat("views", fmtc(v.views)),
       stat("likes", fmtc(v.likes)),
-      ...(pctOf.has(v.youtube_video_id) ? [stat("watched", `${Math.round(pctOf.get(v.youtube_video_id))}%`)] : []),
+      ...(hasWatched ? [stat("watched", pctOf.has(v.youtube_video_id) ? `${Math.round(pctOf.get(v.youtube_video_id))}%` : "—", WATCHED_HELP)] : []),
       performance(v),
       h("div", { class: "result-action" }, translate(v, false))))
       : top ? [] : [empty("No published video in this period. Try a longer one.")]));
@@ -1664,7 +1667,7 @@ VIEWS.results = async () => {
       resultsUi.days = d; periods.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", "false")); e.currentTarget.setAttribute("aria-pressed", "true"); paint();
     } })));
   const sort = h("select", { class: "field idea-sort", "aria-label": "Sort", onchange: (e) => { resultsUi.sort = e.target.value; paint(); } },
-    [["best", "Best vs usual"], ["views", "Most views"], ["newest", "Newest"]].map(([v, t]) => h("option", { value: v, selected: resultsUi.sort === v, text: t })));
+    [["best", "Best vs usual"], ["views", "Most views"], ["watched", "Most watched"], ["newest", "Newest"]].map(([v, t]) => h("option", { value: v, selected: resultsUi.sort === v, text: t })));
   paint();
   return [pageHead("Results", "How each video did on YouTube. TikTok and Instagram aren't counted yet.", periods, sort), summary, hero, list];
 };
