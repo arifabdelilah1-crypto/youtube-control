@@ -233,12 +233,12 @@ export const MUSIC_MOODS: Record<string, string[]> = {
 const LICENSE_NAMES: Record<string, string> = { by: "CC BY", cc0: "CC0" };
 
 /**
- * Tracks from Openverse's Jamendo index. Only CC BY and CC0: BY-ND forbids changing the music and BY-SA could put the
+ * Instrumental tracks from Openverse's Jamendo index. Only CC BY and CC0: BY-ND forbids changing the music and BY-SA could put the
  * whole video under its terms. No key needed; a shared hourly limit, so "busy" is told apart from "no results".
  */
 export async function openverseMusic(q: string, page = 1): Promise<MusicTrack[]> {
   if (!q.trim()) return [];
-  const params = new URLSearchParams({ q: q.slice(0, 100), license: "by,cc0", category: "music", source: "jamendo", page: String(page), page_size: "20" });
+  const params = new URLSearchParams({ q: `instrumental ${q.slice(0, 90)}`, license: "by,cc0", category: "music", source: "jamendo", page: String(page), page_size: "20" });
   const r = await fetch(`https://api.openverse.org/v1/audio/?${params}`, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) })
     .catch(() => { throw new Error("The music search isn't responding right now. Try again later, or use your own tracks."); });
   if (r.status === 429) throw new Error("The music search is busy. Try again in a minute.");
@@ -247,6 +247,10 @@ export async function openverseMusic(q: string, page = 1): Promise<MusicTrack[]>
   return ((await r.json()).results || []).map((t: any): MusicTrack | null => {
     const seconds = Math.round((t.duration || 0) / 1000);
     if (!/^https:\/\/[\w.-]+\.jamendo\.com\//.test(t.url || "") || seconds < 30 || !LICENSE_NAMES[t.license]) return null;
+    // words in the music would fight the voice-over: only tracks Jamendo marks as instrumental
+    // deno-lint-ignore no-explicit-any
+    const tags = (t.tags || []).map((x: any) => String(x.name).toLowerCase());
+    if (!tags.includes("instrumental") || tags.some((x: string) => /vocal|singer|lyric|rap\b/.test(x)) || /vocal|karaoke|a ?cappella|\bfeat\b|\bft\b/i.test(t.title || "")) return null;
     return { id: String(t.id), source: "jamendo", title: t.title || "Untitled", author: t.creator || "Unknown artist", url: t.url, duration: seconds,
       license: `${LICENSE_NAMES[t.license]} ${t.license_version || ""}`.trim(), license_url: t.license_url || "", page: t.foreign_landing_url || "" };
   }).filter((t: MusicTrack | null): t is MusicTrack => !!t);

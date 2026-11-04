@@ -28,7 +28,7 @@ async function invoke(sb, body) {
 // ------------------------------------------------------------------
 function useSigned(sb) {
   const cache = useRef(new Map());
-  const [, bump] = useState(0);
+  const [version, bump] = useState(0);
   const sign = useCallback(async (paths) => {
     const missing = [...new Set(paths.filter((p) => p && !cache.current.has(p)))];
     if (!missing.length) return;
@@ -36,7 +36,7 @@ function useSigned(sb) {
     for (const item of data || []) if (item.signedUrl) cache.current.set(item.path, item.signedUrl);
     bump((n) => n + 1);
   }, [sb]);
-  return [cache.current, sign];
+  return [cache.current, sign, version];  // the map stays the same one: version says when it has new links
 }
 
 function Field({ label, children, hint }) {
@@ -920,7 +920,7 @@ function Editor({ ctx }) {
   const [frame, setFrame] = useState(0);
   const [missing, setMissing] = useState(false);
   const player = useRef(null);
-  const [signed, sign] = useSigned(sb);
+  const [signed, sign, signedVersion] = useSigned(sb);
   const saveTimer = useRef(null);
 
   const load = useCallback(async () => {
@@ -994,7 +994,7 @@ function Editor({ ctx }) {
       voice, media, music: found ? found.url : track && project.settings?.music?.mood !== "none" ? signed.get(track.path) || null : null,
       sfx: { whoosh: base + "sfx/whoosh.mp3", hit: base + "sfx/hit.mp3" }, assetBase: base,
     });
-  }, [project, scenes, tracks, signed]);
+  }, [project, scenes, tracks, signed, signedVersion]);
 
   useEffect(() => {
     const p = player.current;
