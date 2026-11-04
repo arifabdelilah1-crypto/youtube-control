@@ -1591,6 +1591,85 @@ VIEWS.music = async () => {
 };
 
 // ==================================================================
+// Results: every published video, all networks together
+// ==================================================================
+const resultsUi = { days: 30, sort: "best" };
+VIEWS.results = async () => {
+  const [videos, posts, watched] = await Promise.all([
+    q(sb.from("v_own_video_latest").select("*").order("published_at", { ascending: false }).limit(1000)),
+    q(sb.from("publish_queue").select("youtube_video_id,idea_id").not("youtube_video_id", "is", null).not("idea_id", "is", null).limit(1000)),
+    q(sb.from("own_video_daily").select("youtube_video_id,avg_view_pct,day").not("avg_view_pct", "is", null).order("day", { ascending: false }).limit(3000)),
+  ]);
+  const ideaIds = [...new Set(posts.map((p) => p.idea_id))];
+  const ideas = new Map((ideaIds.length ? await q(sb.from("ideas").select("id,title,video_title,script,channel_id").in("id", ideaIds)) : []).map((i) => [i.id, i]));
+  const ideaOf = new Map(posts.map((p) => [p.youtube_video_id, ideas.get(p.idea_id)]));
+  const pctOf = new Map(); for (const w of watched) if (!pctOf.has(w.youtube_video_id)) pctOf.set(w.youtube_video_id, Number(w.avg_view_pct));
+  const summary = h("div", { class: "result-summary" });
+  const hero = h("div", {});
+  const list = h("div", { class: "result-list" });
+  const sorts = { best: (a, b) => (b.vs_baseline ?? -1) - (a.vs_baseline ?? -1) || (b.views ?? 0) - (a.views ?? 0), views: (a, b) => (b.views ?? 0) - (a.views ?? 0), newest: (a, b) => Date.parse(b.published_at) - Date.parse(a.published_at) };
+  const watchUrl = (v) => `https://www.youtube.com/watch?v=${v.youtube_video_id}`;
+  const thumb = (v) => h("a", { class: "result-thumb", href: watchUrl(v), target: "_blank", rel: "noopener", "aria-label": `Watch “${v.title}” on YouTube` },
+    v.thumbnail_url ? h("img", { src: v.thumbnail_url, alt: "", loading: "lazy" }) : icon("i-play"));
+  const network = (v) => {
+    const ch = channelById(v.channel_id);
+    return h("span", { class: "result-network" }, ch?.thumbnail_url ? h("img", { src: ch.thumbnail_url, alt: "", loading: "lazy" }) : null, h("span", { text: ch?.title || "" }));
+  };
+  const translate = (v, primary) => {
+    const idea = ideaOf.get(v.youtube_video_id);
+    return idea?.script?.trim() ? h("button", { class: `btn small${primary ? " primary" : " ghost"}`, type: "button", text: "Translate", onclick: () => translateDialog(idea, () => {}) }) : null;
+  };
+  const level = (m) => (m === null || m === undefined ? "none" : m >= 1.5 ? "up" : m >= 1 ? "even" : "down");
+  const stat = (label, value) => h("div", { class: "result-stat" }, h("strong", { text: value }), h("span", { text: label }));
+  function paint() {
+    const since = resultsUi.days ? Date.now() - resultsUi.days * 864e5 : 0;
+    const inPeriod = videos.filter((v) => Date.parse(v.published_at) >= since && (state.channel === "all" || v.channel_id === state.channel));
+    const top = [...inPeriod].sort(sorts.best)[0];
+    const shown = inPeriod.filter((v) => v !== top).sort(sorts[resultsUi.sort]);
+    const total = inPeriod.reduce((n, v) => n + Number(v.views || 0), 0);
+    const scale = Math.max(2, ...inPeriod.map((v) => Number(v.vs_baseline) || 0));
+    summary.replaceChildren(stat(inPeriod.length === 1 ? "video" : "videos", fmtc(inPeriod.length)), stat("views", fmtc(total)),
+      stat("above their usual", fmtc(inPeriod.filter((v) => Number(v.vs_baseline) >= 1).length)));
+    const performance = (v) => {
+      const m = v.vs_baseline === null || v.vs_baseline === undefined ? null : Number(v.vs_baseline);
+      return h("div", { class: "result-perf", "data-level": level(m), title: "Views compared with this network's usual video" },
+        h("span", { class: "result-perf-value", text: m === null ? "—" : `${m.toFixed(1)}×` }),
+        h("span", { class: "result-perf-track" }, h("span", { class: "result-perf-mark", style: `left:${(1 / scale) * 100}%` }), m === null ? null : h("span", { class: "result-perf-fill", style: `width:${Math.min(100, (m / scale) * 100)}%` })));
+    };
+    hero.replaceChildren(...(top ? [h("article", { class: "result-hero" },
+      thumb(top),
+      h("div", { class: "result-hero-body" },
+        h("div", { class: "eyebrow", text: "Best video" }),
+        h("a", { class: "result-hero-title", dir: "auto", href: watchUrl(top), target: "_blank", rel: "noopener", text: top.title }),
+        h("div", { class: "result-meta" }, network(top), h("span", { text: ago(top.published_at) })),
+        h("div", { class: "result-hero-figures" },
+          h("div", { class: "result-hero-mult", "data-level": level(top.vs_baseline === null ? null : Number(top.vs_baseline)) }, h("strong", { text: top.vs_baseline === null || top.vs_baseline === undefined ? "—" : `${Number(top.vs_baseline).toFixed(1)}×` }), h("span", { text: "its usual views" })),
+          stat("views", fmtc(top.views)), stat("likes", fmtc(top.likes)),
+          ...(pctOf.has(top.youtube_video_id) ? [stat("watched", `${Math.round(pctOf.get(top.youtube_video_id))}%`)] : [])),
+        translate(top, true)))] : []));
+    list.replaceChildren(...(shown.length ? shown.map((v) => h("article", { class: "result-row" },
+      thumb(v),
+      h("div", { class: "result-main" },
+        h("a", { class: "result-title", dir: "auto", href: watchUrl(v), target: "_blank", rel: "noopener", text: v.title }),
+        h("div", { class: "result-meta" }, network(v), h("span", { text: ago(v.published_at) }))),
+      stat("views", fmtc(v.views)),
+      stat("likes", fmtc(v.likes)),
+      ...(pctOf.has(v.youtube_video_id) ? [stat("watched", `${Math.round(pctOf.get(v.youtube_video_id))}%`)] : []),
+      performance(v),
+      h("div", { class: "result-action" }, translate(v, false))))
+      : top ? [] : [empty("No published video in this period. Try a longer one.")]));
+  }
+  const periods = h("div", { class: "seg", role: "group", "aria-label": "Period" }, [[7, "7 days"], [30, "30 days"], [90, "90 days"], [0, "All"]].map(([d, label]) =>
+    h("button", { type: "button", "aria-pressed": String(resultsUi.days === d), text: label, onclick: (e) => {
+      resultsUi.days = d; periods.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", "false")); e.currentTarget.setAttribute("aria-pressed", "true"); paint();
+    } })));
+  const sort = h("select", { class: "field idea-sort", "aria-label": "Sort", onchange: (e) => { resultsUi.sort = e.target.value; paint(); } },
+    [["best", "Best vs usual"], ["views", "Most views"], ["newest", "Newest"]].map(([v, t]) => h("option", { value: v, selected: resultsUi.sort === v, text: t })));
+  paint();
+  return [pageHead("Results", "How each video did on YouTube. TikTok and Instagram aren't counted yet.", periods, sort), summary, hero, list];
+};
+
+// ==================================================================
 // Channels
 // ==================================================================
 // ==================================================================
