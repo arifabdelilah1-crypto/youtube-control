@@ -8,13 +8,14 @@
 // POST {action:"review",    idea_id, effort?, fast?}       -> (effort: low by default) a strict editor corrects the script: truth, thread, hook, speech, pictures, length. Keeps the draft if that fails.
 // POST {action:"brief",     idea_id}                       -> how to produce a script someone wrote themselves: voice style, music mood...
 // POST {action:"hooks",     idea_id}                       -> three other openings for the script: {hooks: [{line, text}]}. Changes nothing.
+// POST {action:"translate", idea_id, channel_id, language} -> a new idea: this script in another language, for a network. Pictures and facts stay. Returns {idea}.
 // POST {action:"auto_start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs). Returns {run_id}.
 // POST {action:"auto_stop", idea_id, run_id}               -> stops it at its next step.
 // The jobs also call, with x-cron-secret: pick_clips, check_clips (looks at the pictures), pick_sounds, pick_trends.
 // Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), DEEPSEEK_SCRIPT_MODEL (optional, default deepseek-v4-pro),
 //          YOUTUBE_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, HOOKS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, PICK_TRENDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
+import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, HOOKS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, PICK_TRENDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, TRANSLATE_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -288,6 +289,48 @@ Deno.serve(async (req) => {
         return json({ hooks: (Array.isArray(out.hooks) ? out.hooks : []).map((x: any) => ({ line: voice(x?.line), text: clean(x?.text, 40) })).filter((x: any) => x.line).slice(0, 3) });
       } catch (e) {
         return json({ error: String((e as Error).message || e) });  // a failed suggestion isn't a failed idea
+      }
+    }
+
+    // ---------- the same video in another language ----------
+    if (body.action === "translate") {
+      const channelId = UUID.test(body.channel_id || "") ? body.channel_id : "";
+      const language = /^[a-z]{2}$/.test(body.language || "") ? body.language : "";
+      if (!channelId || !language) return json({ error: "Pick a network and a language." });
+      if (!idea.script?.trim()) return json({ error: "This idea has no script yet." });
+      const { data: channel } = await db.from("channels").select("id,niche_id").eq("id", channelId).single();
+      if (!channel) return json({ error: "That network doesn't exist any more." });
+      const { data: same } = await db.from("ideas").select("id").eq("channel_id", channelId).neq("stage", "archived").filter("sources", "cs", JSON.stringify([{ type: "translation", ref: ideaId, language }])).limit(1);
+      if (same?.length) return json({ error: "This video is already translated for that network, in that language." });
+      // the script's own blocks: only the words change, the pictures and cards stay
+      const script = String(idea.script);
+      const blocks = (/^VO: /m.test(script) ? script.split(/\n\s*\n/) : script.split("\n").filter((l) => l.trim()).map((l) => `VO: ${voice(l)}`))
+        .map((b) => b.split("\n").map((l) => l.trim()).filter(Boolean)).filter((b) => b.some((l) => l.startsWith("VO: ")));
+      const lineOf = (b: string[], label: string) => b.find((l) => l.startsWith(`${label}: `))?.slice(label.length + 2) || "";
+      try {
+        const description = String(idea.video_description || "").split(/(^|\n)Credits:\n/)[0].trim();
+        const out = await deepseek(db, ideaId, "translate", TRANSLATE_SYSTEM, JSON.stringify({ target_language: language, source_language: idea.ai?.language || null,
+          title: clean(idea.video_title || idea.title, 200), hook_text: idea.ai?.hook_text || "", description: description.slice(0, 3000), tags: (idea.video_tags || []).slice(0, 20),
+          scenes: blocks.map((b, i) => ({ i, title: lineOf(b, "TITLE"), vo: lineOf(b, "VO") })) }), user?.id ?? null, { pro: true, effort: "low" });
+        const said = new Map((Array.isArray(out.scenes) ? out.scenes : []).map((s: any) => [Number(s?.i), s]));
+        if (blocks.some((_, i) => !voice((said.get(i) as any)?.vo))) return json({ error: "The translation came back incomplete. Try again." });
+        const translated = blocks.map((b, i) => {
+          const s: any = said.get(i);
+          const title = clean(s.title, 40).replace(/^(TITLE|VO|FOOTAGE|CARD)\s*:/i, "");
+          return b.flatMap((l) => l.startsWith("TITLE: ") ? (title ? [`TITLE: ${title}`] : []) : l.startsWith("VO: ") ? [`VO: ${voice(s.vo)}`] : [l]).join("\n");
+        }).join("\n\n");
+        const videoTitle = clean(out.title, 100) || clean(idea.video_title || idea.title, 100);
+        const { data: made, error } = await db.from("ideas").insert({
+          title: videoTitle, video_title: videoTitle, video_description: clean(out.description, 4000) && String(out.description).trim().slice(0, 4000),
+          video_tags: (Array.isArray(out.tags) ? out.tags : []).map((t: unknown) => clean(t, 60)).filter(Boolean).slice(0, 20), search_terms: idea.search_terms || [],
+          script: translated, stage: "scripted", score: idea.score ?? null, channel_id: channelId, niche_id: channel.niche_id || null,
+          sources: [{ type: "translation", ref: ideaId, language }],
+          ai: { language, aspect: idea.ai?.aspect || "9:16", length: idea.ai?.length || "short45", brief: idea.ai?.brief || null, hook_text: clean(out.hook_text, 40), verify: idea.ai?.verify || [], translated_from: ideaId, generated_at: new Date().toISOString() },
+        }).select().single();
+        if (error) throw error;
+        return json({ idea: made });
+      } catch (e) {
+        return json({ error: String((e as Error).message || e) });  // a failed translation isn't a failed idea
       }
     }
 

@@ -653,6 +653,45 @@ function ideaNotes(i, run) {
     facts.length ? h("div", {}, h("div", { class: "eyebrow", text: "Facts to verify" }), h("ul", { class: "small" }, facts.map((t) => h("li", { text: t })))) : null);
 }
 
+/** The same video for another network, in its language: a new idea, then its video. */
+function translateDialog(idea, onDone) {
+  const others = state.channels.filter((c) => c.id !== idea.channel_id);
+  const langOf = (c) => c?.video_style?.language || c?.language || "";
+  const channel = h("select", { id: "t-channel", class: "field", required: true }, others.map((c) => h("option", { value: c.id, text: c.title })));
+  const language = h("select", { id: "t-language", class: "field" }, LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, text: t })));
+  const follow = () => { const l = langOf(channelById(channel.value)); if (l && VOICES[l]) language.value = l; };
+  channel.addEventListener("change", follow);
+  follow();
+  const msg = h("p", { class: "small idea-error", role: "alert", hidden: true });
+  const go = h("button", { class: "btn primary", type: "submit", text: "Translate and make the video", disabled: !others.length });
+  const dialog = h("dialog", { class: "gen-dialog" }, h("form", { class: "gen-form", onsubmit: async (e) => {
+    e.preventDefault();
+    go.disabled = true; go.textContent = "Translating…"; msg.hidden = true;
+    try {
+      const out = await aiCall({ action: "translate", idea_id: idea.id, channel_id: channel.value, language: language.value });
+      await aiCall({ action: "auto_start", idea_id: out.idea.id, channel_id: channel.value, options: { language: language.value, aspect: out.idea.ai?.aspect, length: out.idea.ai?.length, keep_script: true, publish: "ask" } });
+      dialog.close();
+      toast("Translated. The video is being made: it'll wait for you in Review.");
+      onDone?.();
+    } catch (err) {
+      msg.textContent = err.message; msg.hidden = false;
+      go.disabled = false; go.textContent = "Translate and make the video";
+    }
+  } },
+    h("h2", { text: "Translate this video" }),
+    h("p", { class: "muted small", style: "margin:0", dir: "auto", text: idea.video_title || idea.title }),
+    h("div", { class: "form-grid" },
+      h("div", { class: "field-wrap" }, h("label", { for: "t-channel", text: "For network" }), channel),
+      h("div", { class: "field-wrap" }, h("label", { for: "t-language", text: "Language" }), language)),
+    h("p", { class: "muted small", style: "margin:0", text: "The words and the voice change, the pictures stay. It's made as a new video in about 8 minutes, and nothing is published without you." }),
+    msg,
+    h("div", { class: "row gen-actions" },
+      h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: () => dialog.close() }), go)));
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
+
 /** The choices before generating, for one idea or several. Resolves when the runs have started. */
 function generateDialog(ideas, onDone) {
   const single = ideas.length === 1 ? ideas[0] : null;
@@ -767,6 +806,7 @@ VIEWS.ideas = async () => {
     const check = h("input", { type: "checkbox", checked: ideasUi.selected.has(i.id), disabled: st === "working", "aria-label": `Select “${i.video_title || i.title}”`, onchange: (e) => { if (e.target.checked) ideasUi.selected.add(i.id); else ideasUi.selected.delete(i.id); paintBulk(); } });
     const studio = h("a", { class: "btn small ghost", href: `#/studio/${i.id}`, text: i.script?.trim() ? "Edit script" : "Write it myself" });
     const genBtn = (text, primary = true) => h("button", { class: `btn small${primary ? " primary" : " ghost"}`, type: "button", text, onclick: () => generate([i]) });
+    const translate = i.script?.trim() ? h("button", { class: "btn small ghost", type: "button", text: "Translate", onclick: () => translateDialog(i, reload) }) : null;
     const archive = h("button", { class: "btn small ghost icon", type: "button", title: "Archive", "aria-label": `Archive “${i.video_title || i.title}”`, onclick: () => update([i.id], { stage: "archived" }) }, icon("i-x"));
     const actions = {
       new: [genBtn("Generate video"), h("button", { class: "btn small ghost", type: "button", text: "Save for later", onclick: () => update([i.id], { stage: "shortlisted" }) }), studio, archive],
@@ -774,8 +814,8 @@ VIEWS.ideas = async () => {
       failed: [genBtn("Try again"), studio, archive],
       working: [],
       ready: [project ? h("a", { class: "btn small primary", href: `#/edit/${project.id}?tab=publish`, text: "Review video" }) : studio, genBtn("Generate again", false),
-        h("button", { class: "btn small ghost", type: "button", text: "Mark published", onclick: () => update([i.id], { stage: "published" }) }), archive],
-      published: [project ? h("a", { class: "btn small ghost", href: `#/edit/${project.id}?tab=publish`, text: "Open" }) : studio, archive],
+        h("button", { class: "btn small ghost", type: "button", text: "Mark published", onclick: () => update([i.id], { stage: "published" }) }), translate, archive],
+      published: [project ? h("a", { class: "btn small ghost", href: `#/edit/${project.id}?tab=publish`, text: "Open" }) : studio, translate, archive],
     };
     actions.check = actions.ready;
     return h("article", { class: "idea", "data-state": st },
@@ -786,6 +826,7 @@ VIEWS.ideas = async () => {
           h("span", { text: ch?.title || "No network yet" }), language ? h("span", { text: language.toUpperCase() }) : null, aspect ? h("span", { text: aspect }) : null,
           (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null,
           trend ? h("span", { class: "pill short", title: trend.why || "Trending on Google", text: `Trend ${trend.geo} ${trend.traffic}` }) : null,
+          (i.sources || []).some((x) => x.type === "translation") ? h("span", { class: "pill short", text: "Translated" }) : null,
           trend?.news?.[0]?.url ? h("a", { href: trend.news[0].url, target: "_blank", rel: "noopener", text: "News" }) : null,
           i.source_video?.url ? h("a", { href: i.source_video.url, target: "_blank", rel: "noopener", text: "Source" }) : null,
           h("span", { text: ago(i.created_at) })),
@@ -1461,6 +1502,7 @@ VIEWS.review = async () => {
           publish,
           j.project_id ? h("a", { class: "btn", href: `#/edit/${j.project_id}?tab=publish`, text: "Edit" }) : null,
           i.script?.trim() ? changeOpening : null,
+          i.script?.trim() ? h("button", { class: "btn", type: "button", text: "Translate", onclick: () => translateDialog(i, render) }) : null,
           h("button", { class: "btn", type: "button", text: "Redo", onclick: () => generateDialog([i], (started) => { if (started) render(); }) }),
           h("button", { class: "btn ghost", type: "button", text: "Reject", onclick: async () => {
             if (!confirm(`Reject “${title}”? It leaves this list and the idea is archived.`)) return;
