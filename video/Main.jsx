@@ -99,7 +99,7 @@ function Captions({ groups, cfg, rtl, font, height }) {
         const active = t >= w.s && t < (group.words[i + 1]?.s ?? group.e + 0.4);
         const base = { fontFamily: font, fontWeight: 800, fontSize: size, lineHeight: 1.15, display: "inline-block", textTransform: cfg.uppercase && !rtl && !clean ? "uppercase" : "none" };
         const looks = {
-          classic: { ...outline, color: active ? cfg.highlight : cfg.color, transform: active ? "scale(1.08)" : "none" },
+          classic: { ...outline, color: active ? cfg.highlight : cfg.color, transform: active ? "scale(1.03)" : "none" },
           box: { color: active ? cfg.highlight : cfg.color },
           pill: { ...(active ? { color: "#000", background: cfg.highlight } : { ...outline, color: cfg.color }), borderRadius: size * 0.22, padding: `0 ${Math.round(size * 0.16)}px` },
           clean: { color: active ? cfg.highlight : cfg.color, textShadow: "0 2px 4px rgba(0,0,0,.9), 0 4px 22px rgba(0,0,0,.85)" },
@@ -108,7 +108,7 @@ function Captions({ groups, cfg, rtl, font, height }) {
       })}
     </>
   );
-  const gap = `0 ${Math.round(size * (look === "pill" ? 0.12 : 0.28))}px`;
+  const gap = `0 ${Math.round(size * (look === "pill" ? 0.12 : 0.32))}px`;
   return (
     <div style={{ position: "absolute", left: "6%", right: "6%", top, display: "flex", justifyContent: "center", direction: rtl ? "rtl" : "ltr", transform: `scale(${interpolate(pop, [0, 1], [0.82, 1])})` }}>
       <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap,
