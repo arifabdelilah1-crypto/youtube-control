@@ -5,7 +5,7 @@
 //      title, description, tags. Uses the research tables (keyword numbers, ranking titles, niche outliers, the channel's best videos).
 //      language: the one picked on the page (default: the channel's). length: short45 | short60 | long3 (default from the aspect).
 //      draft: the script to improve. ideas.ai.previous keeps the version it replaced. effort: high (default) | low. fast: use the everyday model.
-// POST {action:"review",    idea_id, effort?, fast?}       -> a strict editor corrects the script: truth, thread, hook, speech, pictures, length. Keeps the draft if that fails.
+// POST {action:"review",    idea_id, effort?, fast?}       -> (effort: low by default) a strict editor corrects the script: truth, thread, hook, speech, pictures, length. Keeps the draft if that fails.
 // POST {action:"brief",     idea_id}                       -> how to produce a script someone wrote themselves: voice style, music mood...
 // POST {action:"auto_start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs). Returns {run_id}.
 // POST {action:"auto_stop", idea_id, run_id}               -> stops it at its next step.
@@ -89,6 +89,20 @@ async function deepseek(db: any, ideaId: string, kind: string, system: string, u
     if (Date.now() - started > PRO_LIMIT_MS / 2) break;  // no time for a second try: the caller decides
   }
   throw new Error(lastErr || "DeepSeek failed");
+}
+
+/** A picture as data: some sites refuse DeepSeek's own fetch, and one refusal would lose the whole batch. */
+async function imageData(url: string): Promise<string | null> {
+  try {
+    const r = await fetch(url, { headers: { "User-Agent": "YouTubeControl/1.0 (https://github.com/arifabdelilah1-crypto/youtube-control)" }, signal: AbortSignal.timeout(10_000) });
+    const type = (r.headers.get("content-type") || "").split(";")[0];
+    if (!r.ok || !/^image\/(jpeg|png|gif|webp)$/.test(type)) return null;
+    const bytes = new Uint8Array(await r.arrayBuffer());
+    if (bytes.length > 3_000_000) return null;
+    let text = "";
+    for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    return `data:${type};base64,${btoa(text)}`;
+  } catch { return null; }
 }
 
 const STYLES = new Set(["natural", "dark", "deep", "horror"]);
@@ -233,10 +247,11 @@ Deno.serve(async (req) => {
         }
         if (body.action === "check_clips") {
           const items = (Array.isArray(body.items) ? body.items : []).filter((x: any) => /^https:\/\//.test(x?.url || "")).slice(0, 10);
-          if (!items.length) return json({ checks: [] });
+          const seen = (await Promise.all(items.map(async (x: any) => ({ x, url: await imageData(x.url) })))).filter((m) => m.url);
+          if (!seen.length) return json({ checks: [], seen: 0 });
           const out = await deepseek(db, ideaId, "clip_check", CHECK_CLIPS_SYSTEM, `Subject of the video: ${clean(body.subject, 300)}`, null,
-            { think: false, images: items.map((x: any) => ({ label: `Scene ${Number(x.i)}. The narrator says: ${clean(x.text, 240)}`, url: x.url })) });
-          return json({ checks: Array.isArray(out.checks) ? out.checks : [] });
+            { think: false, images: seen.map(({ x, url }) => ({ label: `Scene ${Number(x.i)}. The narrator says: ${clean(x.text, 240)}`, url: url as string })) });
+          return json({ checks: Array.isArray(out.checks) ? out.checks : [], seen: seen.length });
         }
         const out = await deepseek(db, ideaId, "sounds", PICK_SOUNDS_SYSTEM, JSON.stringify({ subject: clean(body.subject, 300), max_sounds: Number(body.max_sounds) || 1, scenes: body.scenes, library: body.library }), null, { think: false });
         return json({ sounds: Array.isArray(out.sounds) ? out.sounds : [] });
@@ -387,7 +402,7 @@ Deno.serve(async (req) => {
       let out: any;
       try {
         out = await deepseek(db, ideaId, "review", REVIEW_SYSTEM, reviewUser({ idea, language: idea.ai?.language || "en", length, words: before }), user?.id ?? null,
-          body.fast ? {} : { pro: true, effort: body.effort === "low" ? "low" : "high" });
+          body.fast ? {} : { pro: true, effort: body.effort === "high" ? "high" : "low" });  // with full thinking, a review often outlasts one call
       } catch (e) {
         return json({ ok: false, error: String((e as Error).message || e) });  // the first draft stands; the caller may try with less thinking
       }

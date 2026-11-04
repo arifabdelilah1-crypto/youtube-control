@@ -93,7 +93,7 @@ async function writeScript(idea, channel, options) {
 }
 
 async function reviewScript(ideaId) {
-  for (const extra of [{}, { effort: "low" }]) {
+  for (const extra of [{}, { fast: true }]) {
     const out = await call("ai", { action: "review", idea_id: ideaId, ...extra }).catch((e) => ({ ok: false, error: e.message }));
     if (out.ok) {
       const n = out.ai?.review?.problems?.length ?? 0;
@@ -171,7 +171,7 @@ async function chooseClips(projectId, subject, aspect, note) {
     for (const part of batches(toSee, 10)) {
       const out = await call("ai", { action: "check_clips", idea_id: run.idea_id, subject, items: part.map(({ i, s }) => ({ i, text: s.text, url: chosen[i].type === "image" ? chosen[i].preview || chosen[i].thumb : chosen[i].thumb })) }).catch((e) => ({ error: e.message }));
       if (out.error) { log(`picture check failed: ${out.error}`); continue; }
-      looked = true;
+      looked ||= out.seen > 0;
       for (const c of out.checks || []) if (c?.fits === false && chosen[c.i]) rejected.push(c);
       for (const { i } of part) if (chosen[i]) chosen[i] = { ...chosen[i], seen: true };
     }
