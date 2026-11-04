@@ -42,6 +42,9 @@ export function pickTrack(tracks, { seconds = 0, usedIds = [], random = Math.ran
   return list.length ? list[Math.floor(random() * list.length)] : null;
 }
 
+/** A row of the team's music list, in the shape the render and the credits expect. */
+export const libraryTrack = (x) => ({ id: x.track_id, source: "jamendo", title: x.title, author: x.author, url: x.url, duration: x.duration, license: x.license, license_url: x.license_url, page: x.page });
+
 /** The sounds that are really in the library, on real scenes, within the limit. Returns {scene index: [sounds]}. */
 export function placeSounds(picked, library, sceneSeconds, maxSounds) {
   const byId = new Map(library.map((x) => [x.id, x]));

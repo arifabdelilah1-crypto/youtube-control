@@ -1368,7 +1368,11 @@ VIEWS.review = async () => {
   const ideas = new Map(ideaRows.map((i) => [i.id, i]));
   const items = waiting.filter((j) => ideas.has(j.idea_id));
   const projectIds = items.map((j) => j.project_id).filter(Boolean);
-  const scenes = projectIds.length ? await q(sb.from("project_scenes").select("project_id,idx,clip").in("project_id", projectIds).lte("idx", 1).order("idx")) : [];
+  const [scenes, projects] = projectIds.length ? await Promise.all([
+    q(sb.from("project_scenes").select("project_id,idx,clip").in("project_id", projectIds).lte("idx", 1).order("idx")),
+    q(sb.from("video_projects").select("id,settings").in("id", projectIds)),
+  ]) : [[], []];
+  const trackOf = new Map(projects.map((p) => [p.id, p.settings?.music?.found]));
   const posters = new Map();
   for (const s of scenes) if (!posters.has(s.project_id) && (s.clip?.thumb || s.clip?.preview)) posters.set(s.project_id, s.clip.thumb || s.clip.preview);
   const connected = new Set(tokens.map((t) => t.channel_id));
@@ -1385,6 +1389,7 @@ VIEWS.review = async () => {
     const notes = ideaNotes(i, run);
     if (notes) notes.open = true;
     const poster = posters.get(j.project_id);
+    const track = trackOf.get(j.project_id);
     const player = h("button", { class: `review-player ${aspect === "16:9" ? "wide" : aspect === "1:1" ? "square" : ""}`, type: "button", "aria-label": `Play “${title}”`, onclick: async (e) => {
       const box = e.currentTarget;
       box.disabled = true;
@@ -1443,6 +1448,15 @@ VIEWS.review = async () => {
           ? h("div", { class: "net-chips", "aria-label": "Where it posts" }, targets.map((x) => h("span", { class: "pill short", text: PLATFORM_NAMES[x.platform] || x.platform })))
           : h("a", { class: "small", href: `#/channel/${j.channel_id}`, text: "This network posts nowhere yet: pick its accounts" }),
         notes,
+        track ? h("div", { class: "review-music muted small" }, h("span", { dir: "auto", text: `Music: ${track.title}` }),
+          h("button", { class: "btn small ghost", type: "button", text: "Ban this music", onclick: async (e) => {
+            const btn = e.currentTarget;
+            btn.disabled = true;
+            try {
+              await q(sb.from("music_library").upsert(libraryRow(track, "banned"), { onConflict: "track_id" }));
+              btn.replaceWith(h("span", { text: "Banned. Use Redo to change it on this video." }));
+            } catch (err) { toast(err.message); btn.disabled = false; }
+          } })) : null,
         h("div", { class: "review-acts" },
           publish,
           j.project_id ? h("a", { class: "btn", href: `#/edit/${j.project_id}?tab=publish`, text: "Edit" }) : null,
@@ -1459,6 +1473,79 @@ VIEWS.review = async () => {
   return [pageHead("Review", items.length ? `${items.length} video${items.length === 1 ? "" : "s"} waiting. Watch each one, then publish, redo or reject it.` : "Finished videos wait here for your decision."),
     items.length ? h("div", { class: "review-list" }, items.map(card))
       : empty("No video is waiting for you.", h("a", { class: "btn primary small", href: "#/ideas", text: "Go to Ideas" }))];
+};
+
+// ==================================================================
+// Music: the team's list of background tracks
+// ==================================================================
+const MUSIC_LIST_MOODS = [["dark", "Dark"], ["horror", "Horror"], ["epic", "Epic"], ["calm", "Calm"], ["sad", "Sad"], ["happy", "Happy"], ["love", "Love"], ["funny", "Funny"]];
+const musicUi = { tab: "find", mood: "dark", q: "", results: null, page: 1, busy: false, error: "" };
+const libraryRow = (t, status, mood) => ({ track_id: t.id, status, mood: mood || null, title: t.title, author: t.author, url: t.url, duration: t.duration, license: t.license, license_url: t.license_url, page: t.page });
+const clock = (s) => `${Math.floor((s || 0) / 60)}:${String(Math.round((s || 0) % 60)).padStart(2, "0")}`;
+
+VIEWS.music = async () => {
+  let library = await q(sb.from("music_library").select("*").order("created_at", { ascending: false }));
+  const box = h("div", { class: "music-list" });
+  const tabs = h("div", { class: "tabs", role: "tablist" });
+  const finder = h("div", { class: "music-finder" });
+  const reload = async () => { library = await q(sb.from("music_library").select("*").order("created_at", { ascending: false })); paint(); };
+  const mark = async (t, status) => {
+    await q(sb.from("music_library").upsert(libraryRow(t, status, status === "saved" ? musicUi.mood : null), { onConflict: "track_id" }));
+    toast(status === "saved" ? "Saved" : "Banned: it won't be picked again");
+    await reload();
+  };
+  const forget = async (id) => { await q(sb.from("music_library").delete().eq("track_id", id)); await reload(); };
+  const row = (t, actions, extra) => h("article", { class: "music-row" },
+    h("div", { class: "music-info" }, h("div", { class: "music-title", dir: "auto", text: t.title }),
+      h("div", { class: "muted small", text: [t.author, clock(t.duration), t.license].filter(Boolean).join(" · ") }), extra || null),
+    t.url ? h("audio", { src: t.url, controls: true, preload: "none" }) : null,
+    h("div", { class: "music-acts" }, actions));
+  const search = async (page) => {
+    musicUi.busy = true; musicUi.error = ""; musicUi.page = page; paint();
+    try {
+      const { data, error } = await sb.functions.invoke("studio", { body: { action: "music_search", ...(musicUi.q ? { q: musicUi.q } : { mood: musicUi.mood }), page } });
+      if (error || data?.error) throw new Error(data?.error || "The music search isn't responding right now.");
+      musicUi.results = page > 1 ? [...(musicUi.results || []), ...(data.results || [])] : data.results || [];
+    } catch (e) { musicUi.error = e.message; }
+    musicUi.busy = false; paint();
+  };
+  function paint() {
+    const saved = library.filter((x) => x.status === "saved");
+    const banned = library.filter((x) => x.status === "banned");
+    tabs.replaceChildren(...[["find", "Find music"], ["saved", `Saved ${saved.length}`], ["banned", `Banned ${banned.length}`]].map(([k, label]) =>
+      h("button", { type: "button", role: "tab", "aria-selected": String(musicUi.tab === k), text: label, onclick: () => { musicUi.tab = k; paint(); } })));
+    finder.hidden = musicUi.tab !== "find";
+    if (musicUi.tab === "saved") {
+      box.replaceChildren(...(saved.length ? saved.map((x) => row({ ...x, id: x.track_id }, [h("button", { class: "btn small ghost", type: "button", text: "Remove", onclick: () => forget(x.track_id) })],
+        x.mood ? h("span", { class: "pill short", text: MUSIC_LIST_MOODS.find(([m]) => m === x.mood)?.[1] || x.mood }) : null))
+        : [empty("Nothing saved yet. Tracks you save are used first for videos of that mood.")]));
+      return;
+    }
+    if (musicUi.tab === "banned") {
+      box.replaceChildren(...(banned.length ? banned.map((x) => row({ ...x, id: x.track_id }, [h("button", { class: "btn small ghost", type: "button", text: "Allow again", onclick: () => forget(x.track_id) })]))
+        : [empty("Nothing banned. A track you ban is never picked again.")]));
+      return;
+    }
+    const known = new Map(library.map((x) => [x.track_id, x.status]));
+    const shown = (musicUi.results || []).filter((t) => known.get(t.id) !== "banned");
+    box.replaceChildren(
+      ...(musicUi.error ? [h("p", { class: "small idea-error", role: "alert", text: musicUi.error })] : []),
+      ...(shown.length ? shown.map((t) => row(t, known.get(t.id) === "saved" ? [h("span", { class: "pill ok", text: "Saved" })]
+        : [h("button", { class: "btn small primary", type: "button", text: "Save", onclick: () => mark(t, "saved") }), h("button", { class: "btn small ghost", type: "button", text: "Ban", onclick: () => mark(t, "banned") })]))
+        : musicUi.busy ? [] : [empty("No track found. Try another mood or word.")]),
+      ...(musicUi.busy ? [h("div", { class: "muted small", role: "status", text: "Searching…" })] : shown.length ? [h("button", { class: "btn small", type: "button", text: "Show more", onclick: () => search(musicUi.page + 1) })] : []));
+  }
+  const words = h("input", { class: "field", type: "search", placeholder: "Or a word, e.g. piano", "aria-label": "Search by word", value: musicUi.q, onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); musicUi.q = e.target.value.trim(); search(1); } } });
+  const moods = h("div", { class: "chips-tabs", role: "group", "aria-label": "Mood" }, MUSIC_LIST_MOODS.map(([m, label]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(musicUi.mood === m), text: label, onclick: (e) => {
+    musicUi.mood = m; musicUi.q = ""; words.value = "";
+    moods.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", "false")); e.currentTarget.setAttribute("aria-pressed", "true");
+    search(1);
+  } })));
+  finder.append(moods, h("div", { class: "row" }, words, h("button", { class: "btn", type: "button", text: "Search", onclick: () => { musicUi.q = words.value.trim(); search(1); } })),
+    h("div", { class: "muted small", text: "Only instrumental tracks you can use for free, with credit. Saved tracks go under the mood selected above." }));
+  paint();
+  if (!musicUi.results) search(1);
+  return [pageHead("Music", "Your background tracks: save the ones you like and ban the ones you don't."), tabs, finder, box];
 };
 
 // ==================================================================

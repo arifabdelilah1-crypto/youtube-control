@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { creditsText, foundMusic, hasThumbnail, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 import { PRESETS, presetFx } from "../web/voicefx.js";
-import { applyPicks, checkVideo, chooseVoice, pickTrack, placeSounds, usable, voiceCoverage } from "./autolib.mjs";
+import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -232,11 +232,20 @@ async function findMusic(projectId, brief, channelId, seconds) {
   const words = (brief.music_words || [])[0];
   const others = await rest("GET", "video_projects", `?channel_id=eq.${channelId}&id=neq.${projectId}&select=settings&order=created_at.desc&limit=30`);
   const usedIds = others.map((p) => p.settings?.music?.found?.id).filter(Boolean);
+  // the team's list comes first: its kept tracks for this mood, and its banned ones never come back
+  const library = await rest("GET", "music_library", "?select=*").catch((e) => { log(`music list: ${e.message}`); return []; });
+  const banned = new Set(library.filter((x) => x.status === "banned").map((x) => x.track_id));
+  const kept = library.filter((x) => x.status === "saved" && x.mood === mood && !usedIds.includes(x.track_id)).map(libraryTrack);
+  const mine = pickTrack(kept, { seconds, usedIds });
+  if (mine) {
+    await saveSettings(projectId, { music: { mood: "found", track_id: null, found: mine, volume: 0.22, start: 0 } });
+    return `“${mine.title}”, from your music list`;
+  }
   const searches = [mood ? { mood } : null, words ? { q: words } : null, { mood: "calm" }].filter(Boolean);
   for (let attempt = 0; attempt < 3; attempt++) {
     for (const search of searches) {
       const out = await call("studio", { action: "music_search", ...search, page: attempt + 1 }, 60).catch((e) => ({ error: e.message, results: [] }));
-      const track = pickTrack(out.results || [], { seconds, usedIds });
+      const track = pickTrack((out.results || []).filter((t) => !banned.has(t.id)), { seconds, usedIds });
       if (track) {
         await saveSettings(projectId, { music: { mood: "found", track_id: null, found: track, volume: 0.22, start: 0 } });
         return `“${track.title}”, ${search.mood || search.q}`;
