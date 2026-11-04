@@ -63,7 +63,7 @@ function scorePill(s, big) {
 }
 const volLabel = (v) => (v === null || v === undefined ? "—" : v < 20 ? "Very low" : v < 40 ? "Low" : v < 60 ? "Medium" : v < 80 ? "High" : "Very high");
 const diffLabel = (d) => (d === null || d === undefined ? "—" : d < 25 ? "Easy" : d < 50 ? "Medium" : d < 75 ? "Hard" : "Very hard");
-const diffColor = (d) => (d < 25 ? "#12985A" : d < 50 ? "#5B6370" : d < 75 ? "#D48A0A" : "#B3261E");
+const diffColor = (d) => (d < 25 ? "#34D399" : d < 50 ? "#A1A1AA" : d < 75 ? "#FBBF24" : "#F87171");
 function bar(pct, color, thick) {
   return h("div", { class: thick ? "bar thick" : "bar" }, h("div", { style: `width:${Math.max(pct, 2)}%;${color ? `background:${color}` : ""}` }));
 }
@@ -73,7 +73,7 @@ function spark(values, w = 84, hgt = 24) {
   const min = Math.min(...vals), max = Math.max(...vals), span = max - min || 1;
   const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * (w - 4) + 2},${hgt - 2 - ((v - min) / span) * (hgt - 4)}`).join(" ");
   return svg("svg", { width: w, height: hgt, viewBox: `0 0 ${w} ${hgt}`, "aria-hidden": "true", class: "spark" },
-    svg("polyline", { points: pts, fill: "none", stroke: "#111418", "stroke-width": "1.75", "stroke-linejoin": "round" }));
+    svg("polyline", { points: pts, fill: "none", stroke: "#FAFAFA", "stroke-width": "1.75", "stroke-linejoin": "round" }));
 }
 function lineChart(points, label) {
   const w = 640, ht = 200, pl = 40, pr = 10, pt = 14, pb = 28;
@@ -82,15 +82,15 @@ function lineChart(points, label) {
   const Y = (v) => pt + (1 - v / max) * (ht - pt - pb);
   const g = svg("svg", { viewBox: `0 0 ${w} ${ht}`, role: "img", "aria-label": label, style: "width:100%;height:auto" });
   [0, 0.5, 1].forEach((f) => {
-    g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "#C2C9D1" : "#E7EAEE" }));
-    const t = svg("text", { x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end", "font-size": "11", fill: "#5B6370" }); t.textContent = Math.round(max * f); g.append(t);
+    g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.06)" }));
+    const t = svg("text", { x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end", "font-size": "11", fill: "#A1A1AA" }); t.textContent = Math.round(max * f); g.append(t);
   });
   [0, points.length - 1].forEach((i) => {
-    const t = svg("text", { x: X(i), y: ht - 8, "text-anchor": i ? "end" : "start", "font-size": "11", fill: "#5B6370" }); t.textContent = points[i].x; g.append(t);
+    const t = svg("text", { x: X(i), y: ht - 8, "text-anchor": i ? "end" : "start", "font-size": "11", fill: "#A1A1AA" }); t.textContent = points[i].x; g.append(t);
   });
-  g.append(svg("polyline", { fill: "none", stroke: "#111418", "stroke-width": "2.5", "stroke-linejoin": "round", points: points.map((p, i) => `${X(i)},${Y(p.y)}`).join(" ") }));
+  g.append(svg("polyline", { fill: "none", stroke: "#FAFAFA", "stroke-width": "2.5", "stroke-linejoin": "round", points: points.map((p, i) => `${X(i)},${Y(p.y)}`).join(" ") }));
   const last = points[points.length - 1];
-  if (last) g.append(svg("circle", { cx: X(points.length - 1), cy: Y(last.y), r: "4.5", fill: "#E5322C", stroke: "#FBFCFD", "stroke-width": "2" }));
+  if (last) g.append(svg("circle", { cx: X(points.length - 1), cy: Y(last.y), r: "4.5", fill: "#A78BFA", stroke: "#121316", "stroke-width": "2" }));
   return g;
 }
 function toast(msg) {
@@ -1551,7 +1551,7 @@ function reachNotice(c) {
   if (!c?.connected || !c.reach_error) return null;
   const url = c.reach_error.match(/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s"]+/)?.[0]?.replace(/[.,)]+$/, "");
   const disabled = /has not been used|is disabled|SERVICE_DISABLED/i.test(c.reach_error);
-  return h("section", { class: "card", style: "border-color:#E8C27A" },
+  return h("section", { class: "card", style: "border-color:rgba(251,191,36,.4)" },
     h("h2", { text: disabled ? "Impressions need one setting in Google Cloud" : "Impressions couldn't be imported" }),
     h("p", { class: "muted small", style: "margin:0", text: disabled
       ? "Enable the “YouTube Reporting API” in the Google Cloud project used for sign-in, then press Refresh now. YouTube then takes about 2 days to prepare the first impressions file."
@@ -1657,7 +1657,7 @@ function yppRow(label, val, target, unit) {
   const p = pctOf(val, target);
   return h("div", { style: "display:flex;flex-direction:column;gap:6px" },
     h("div", { style: "display:flex;justify-content:space-between;font-size:13.5px" }, h("span", { style: "font-weight:500", text: label }), h("span", { class: "mono", text: `${fmtc(val)} / ${fmtc(target)}${unit}` })),
-    bar(p, p >= 100 ? "#12985A" : null, true));
+    bar(p, p >= 100 ? "#34D399" : null, true));
 }
 function multPill(m) {
   if (m === null || m === undefined) return h("span", { class: "flat", text: "—" });
@@ -1738,7 +1738,7 @@ VIEWS.settings = async (route) => {
   const used = quota.filter((r) => r.api === "youtube_data"), total = used.reduce((a, r) => a + r.units, 0);
   const quotaBox = h("section", { class: "card grow2" }, h("h2", { text: "YouTube API today" }),
     h("div", { style: "display:flex;justify-content:space-between" }, h("span", { text: `${fmt(total)} of 10,000 units` }), h("span", { class: "mono", text: `${Math.round(total / 100)}%` })),
-    bar(total / 100, total > 9000 ? "#B3261E" : null, true),
+    bar(total / 100, total > 9000 ? "#F87171" : null, true),
     h("p", { class: "muted small", style: "margin:0", text: `About ${Math.max(0, Math.floor((9500 - total) / 102))} keyword analyses left today. Resets at midnight Pacific time.` }));
 
   // --- Music library
