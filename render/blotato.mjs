@@ -18,11 +18,30 @@ function xCredits(description = "") {
   return { additionalPosts: posts.map((text) => ({ text, mediaUrls: [] })) };
 }
 
+const CAPTION_LIMIT = 2200;
+/** The text of a post, within the limit. CC BY music and photos need their credits, so the text gives way first, then the credits' long descriptions. */
+export function captionText(description = "") {
+  const text = String(description || "");
+  if (text.length <= CAPTION_LIMIT) return text;
+  const at = text.search(/(^|\n)Credits:\n/);
+  if (at < 0) return text.slice(0, CAPTION_LIMIT);
+  const body = text.slice(0, at).trim();
+  let credits = text.slice(at).trim();
+  if (credits.length > CAPTION_LIMIT - 200) credits = credits.replace(/^- (?:Thumbnail: )?"[^\n]*?" by /gm, "- ");
+  const room = CAPTION_LIMIT - credits.length - 2;
+  if (room <= 0) return credits.slice(0, CAPTION_LIMIT);
+  // the end of a sentence if there's one in the last part, else a plain cut
+  const cut = body.slice(0, room);
+  const end = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("\n"), cut.lastIndexOf("? "), cut.lastIndexOf("! "));
+  const kept = end > room * 0.6 ? cut.slice(0, end + 1) : cut;
+  return `${kept.trim()}\n\n${credits}`;
+}
+
 /** The request for one platform. target: the channel's settings for it (publish_schedules.targets). */
 export function blotatoPost({ row, target = {}, mediaUrl, coverUrl, scheduledTime }) {
   const isX = row.platform === "twitter";
   // X takes 280 characters: the title, not the description
-  const text = isX ? String(row.title || "").slice(0, 280) : String(row.description || row.title || "").slice(0, 2200);
+  const text = isX ? String(row.title || "").slice(0, 280) : captionText(row.description || row.title || "");
   const shared = { accountId: row.blotato_account_id, content: { platform: row.platform, text, mediaUrls: [mediaUrl], ...(isX ? xCredits(row.description) : {}) } };
   let platformTarget;
   if (row.platform === "tiktok") {

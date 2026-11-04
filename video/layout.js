@@ -18,7 +18,7 @@ export const THUMBNAIL_STYLES = {
 };
 
 export const DEFAULT_SETTINGS = {
-  captions: { enabled: true, position: "bottom", color: "#FFFFFF", highlight: "#FFE600", size: 84, uppercase: true, words: 3 },
+  captions: { enabled: true, style: "classic", position: "bottom", color: "#FFFFFF", highlight: "#FFE600", size: 84, uppercase: true, words: 3 },
   hook: { enabled: true, text: "" },
   titles: { enabled: true },
   progress: { enabled: true, color: "#FFE600" },

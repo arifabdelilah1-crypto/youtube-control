@@ -494,6 +494,11 @@ function StylePanel({ sb, project, ctx, onProject, onSettings, toast }) {
       <h3>Captions</h3>
       <label className="row ed-check"><input type="checkbox" checked={s.captions.enabled} onChange={(e) => set("captions", { enabled: e.target.checked })} /> Show captions</label>
       <div className="form-grid">
+        <Field label="Style">
+          <select className="field" value={s.captions.style || "classic"} onChange={(e) => set("captions", { style: e.target.value })}>
+            <option value="classic">Classic: bold outline</option><option value="box">Box: dark background</option><option value="pill">Pill: colored current word</option><option value="clean">Clean: normal case</option>
+          </select>
+        </Field>
         <Field label="Position">
           <select className="field" value={s.captions.position} onChange={(e) => set("captions", { position: e.target.value })}>
             <option value="top">Top</option><option value="center">Center</option><option value="bottom">Bottom</option>

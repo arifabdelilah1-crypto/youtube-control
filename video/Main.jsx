@@ -89,23 +89,32 @@ function Captions({ groups, cfg, rtl, font, height }) {
   const startF = Math.round(group.s * fps);
   const pop = spring({ frame: frame - startF, fps, config: { damping: 14, stiffness: 220 }, durationInFrames: 8 });
   const top = { top: "16%", center: "42%", bottom: "64%" }[cfg.position] || "64%";
-  const size = Math.round((cfg.size || 84) * (height / 1920));
-  return (
-    <div style={{ position: "absolute", left: "6%", right: "6%", top, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: `0 ${Math.round(size * 0.28)}px`,
-      direction: rtl ? "rtl" : "ltr", transform: `scale(${interpolate(pop, [0, 1], [0.82, 1])})` }}>
+  const look = cfg.style || "classic";
+  const clean = look === "clean";
+  const size = Math.round((cfg.size || 84) * (height / 1920) * (look === "classic" ? 1 : 0.86));
+  const outline = { WebkitTextStroke: `${Math.max(2, Math.round(size / 14))}px #000`, paintOrder: "stroke fill", textShadow: "0 6px 18px rgba(0,0,0,.55)" };
+  const words = (
+    <>
       {group.words.map((w, i) => {
         const active = t >= w.s && t < (group.words[i + 1]?.s ?? group.e + 0.4);
-        return (
-          <span key={i} style={{
-            fontFamily: font, fontWeight: 800, fontSize: size, lineHeight: 1.15,
-            color: active ? cfg.highlight : cfg.color,
-            textTransform: cfg.uppercase && !rtl ? "uppercase" : "none",
-            WebkitTextStroke: `${Math.max(2, Math.round(size / 14))}px #000`, paintOrder: "stroke fill",
-            textShadow: "0 6px 18px rgba(0,0,0,.55)",
-            transform: active ? "scale(1.08)" : "none", display: "inline-block",
-          }}>{w.w}</span>
-        );
+        const base = { fontFamily: font, fontWeight: 800, fontSize: size, lineHeight: 1.15, display: "inline-block", textTransform: cfg.uppercase && !rtl && !clean ? "uppercase" : "none" };
+        const looks = {
+          classic: { ...outline, color: active ? cfg.highlight : cfg.color, transform: active ? "scale(1.08)" : "none" },
+          box: { color: active ? cfg.highlight : cfg.color },
+          pill: { ...(active ? { color: "#000", background: cfg.highlight } : { ...outline, color: cfg.color }), borderRadius: size * 0.22, padding: `0 ${Math.round(size * 0.16)}px` },
+          clean: { color: active ? cfg.highlight : cfg.color, textShadow: "0 2px 4px rgba(0,0,0,.9), 0 4px 22px rgba(0,0,0,.85)" },
+        };
+        return <span key={i} style={{ ...base, ...(looks[look] || looks.classic) }}>{w.w}</span>;
       })}
+    </>
+  );
+  const gap = `0 ${Math.round(size * (look === "pill" ? 0.12 : 0.28))}px`;
+  return (
+    <div style={{ position: "absolute", left: "6%", right: "6%", top, display: "flex", justifyContent: "center", direction: rtl ? "rtl" : "ltr", transform: `scale(${interpolate(pop, [0, 1], [0.82, 1])})` }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap,
+        ...(look === "box" ? { background: "rgba(0,0,0,.82)", borderRadius: size * 0.3, padding: `${Math.round(size * 0.14)}px ${Math.round(size * 0.34)}px` } : {}) }}>
+        {words}
+      </div>
     </div>
   );
 }

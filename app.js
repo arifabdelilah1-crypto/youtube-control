@@ -1166,7 +1166,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
 }
 
 // Video editor (React bundle, loaded on demand)
-const EDITOR_VERSION = "18";  // bump when editor.bundle.js changes
+const EDITOR_VERSION = "19";  // bump when editor.bundle.js changes
 VIEWS.edit = async (route) => {
   const mod = await import(`./editor.bundle.js?v=${EDITOR_VERSION}`);
   const el = h("div", { class: "ed-root" });
@@ -1787,7 +1787,7 @@ function networkPanels(chRow, sc, blotato) {
     h("div", { class: "net-defaults" },
       line("Voice", voiceName || "App default"), line("Voice style", PRESETS[editor.voice_fx?.style]?.label || (editor.voice_fx?.style === "custom" ? "Custom" : "Natural")),
       line("Voice speed", style.voice_rate ? `${style.voice_rate}×` : "App default"), line("Format", style.aspect || "9:16"),
-      line("Music level", editor.music ? `${Math.round(editor.music.volume * 100)}%` : "App default"), line("Thumbnail style", editor.thumbnail?.style ? editor.thumbnail.style[0].toUpperCase() + editor.thumbnail.style.slice(1) : "Dark psycho")),
+      line("Captions", { box: "Box", pill: "Pill", clean: "Clean" }[editor.captions?.style] || "Classic"), line("Music level", editor.music ? `${Math.round(editor.music.volume * 100)}%` : "App default"), line("Thumbnail style", editor.thumbnail?.style ? editor.thumbnail.style[0].toUpperCase() + editor.thumbnail.style.slice(1) : "Dark psycho")),
     h("p", { class: "muted small", style: "margin:0", text: "To change these, set up a video the way you like, then press “Use these settings for this network” in the editor's Style tab." }));
   return [accounts, defaults];
 }
