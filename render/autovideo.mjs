@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { creditsText, foundMusic, hasThumbnail, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 import { PRESETS, presetFx } from "../web/voicefx.js";
-import { applyPicks, checkVideo, chooseVoice, pickTrack, placeSounds, usable } from "./autolib.mjs";
+import { applyPicks, checkVideo, chooseVoice, pickTrack, placeSounds, usable, voiceCoverage } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -117,6 +117,8 @@ async function buildScenes(idea, channel, options, project) {
   const settings = { ...base,
     hook: { enabled: true, ...(base.hook || {}), text: ai.hook_text || base.hook?.text || "" },
     voice_fx: presetFx(voiceStyle),
+    // the voice carries these videos: no whoosh on the cuts, no hit on the hook
+    sfx: { ...(base.sfx || {}), enabled: false },
     // nothing goes out by itself before the final checks
     publish: { ...(base.publish || {}), mode: "ask" },
   };
@@ -314,9 +316,16 @@ async function finalChecks(job, project) {
   const volume = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-af", "volumedetect", "-vn", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
   const black = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-vf", "blackdetect=d=0.5:pix_th=0.05", "-an", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
   const blackSeconds = [...black.matchAll(/black_duration:([\d.]+)/g)].reduce((t, m) => t + Number(m[1]), 0);
+  // is the narrator really heard over the music? What a listener would catch, against the script
+  const scenes = await sceneRows(project.id);
+  const listen = spawnSync("python", [path.join(ROOT, "render/voice_check.py"), file, project.language], { encoding: "utf8", timeout: 15 * 60e3 });
+  const voice = listen.status === 0
+    ? (() => { const share = voiceCoverage(scenes.map((s) => s.text).join(" "), listen.stdout); log(`Heard: ${listen.stdout.slice(0, 300)}`); return { name: "Voice", ok: share >= 0.6, detail: `${Math.round(share * 100)}% of the script is heard` }; })()
+    : { name: "Voice", ok: false, detail: "The voice couldn't be checked by listening. Listen to the video." };
+  if (listen.status !== 0) log(`voice check: ${String(listen.stderr).slice(-400)}`);
   fs.rmSync(file, { force: true });
-  return checkVideo({ aspect: project.aspect, expectedSeconds: Number(job.duration_s) || 0, width: video.width, height: video.height, duration: Number(probe.format?.duration) || 0, hasAudio,
-    meanVolume: Number(volume.match(/mean_volume: (-?[\d.]+)/)?.[1] ?? -91), blackSeconds });
+  return [voice, ...checkVideo({ aspect: project.aspect, expectedSeconds: Number(job.duration_s) || 0, width: video.width, height: video.height, duration: Number(probe.format?.duration) || 0, hasAudio,
+    meanVolume: Number(volume.match(/mean_volume: (-?[\d.]+)/)?.[1] ?? -91), blackSeconds })];
 }
 
 // ---------- the run ----------
@@ -353,8 +362,11 @@ async function main(id) {
   const total = (await sceneRows(projectId)).reduce((t, s) => t + sceneSeconds(s), 0);
   if (options.music === false) await skip("music", "You chose no music");
   else await step("music", () => findMusic(projectId, brief, channel.id, total));
-  if (options.sounds === false) await skip("sounds", "You chose no sound effects");
-  else await step("sounds", () => addSounds(projectId, brief, total));
+  if (options.sounds) await step("sounds", () => addSounds(projectId, brief, total));
+  else {
+    await rest("PATCH", "project_scenes", `?project_id=eq.${projectId}`, { sounds: [] });
+    await skip("sounds", "No sound effects");
+  }
   await step("thumbnail", () => makeThumbnailChoice(projectId, idea, brief, project.aspect));
   let job;
   await step("render", async () => { job = await renderVideo(projectId, idea.id); return `${Math.round(job.duration_s)} s`; });

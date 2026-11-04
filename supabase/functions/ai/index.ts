@@ -214,7 +214,7 @@ Deno.serve(async (req) => {
         length: Object.hasOwn(LENGTHS, o.length || "") ? o.length : null,
         angle: o.angle ? clean(o.angle, 300) : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: STYLES.has(o.voice_style) ? o.voice_style : null,
-        music: o.music !== false, sounds: o.sounds !== false, keep_script: !!o.keep_script && !!idea.script?.trim(),
+        music: o.music !== false, sounds: o.sounds === true, keep_script: !!o.keep_script && !!idea.script?.trim(),
         publish: o.publish === "next" ? "next" : "ask",
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", ideaId);

@@ -648,7 +648,7 @@ function generateDialog(ideas, onDone) {
   fillVoices();
   f.language.addEventListener("change", fillVoices); f.channel.addEventListener("change", fillVoices);
   f.style = h("select", { id: "g-style", class: "field" }, h("option", { value: "", text: "Chosen from the subject" }), Object.entries(PRESETS).map(([k, p]) => h("option", { value: k, text: p.label })));
-  f.music = h("input", { type: "checkbox", checked: true }); f.sounds = h("input", { type: "checkbox", checked: true });
+  f.music = h("input", { type: "checkbox", checked: true }); f.sounds = h("input", { type: "checkbox" });
   f.keep = h("input", { type: "checkbox", checked: true });
   f.next = h("input", { type: "checkbox" });
   const withScript = ideas.filter((i) => i.script?.trim()).length;
@@ -680,7 +680,7 @@ function generateDialog(ideas, onDone) {
     h("div", { class: "form-grid" }, field("g-voice", "Voice", f.voice), field("g-style", "Voice style", f.style)),
     h("div", { class: "gen-checks" },
       h("label", { class: "row ed-check" }, f.music, " Background music that fits the subject"),
-      h("label", { class: "row ed-check" }, f.sounds, " Sound effects where the words call for them"),
+      h("label", { class: "row ed-check" }, f.sounds, " Add sound effects where the words call for them"),
       withScript ? h("label", { class: "row ed-check" }, f.keep, single ? " Keep the script I already have" : ` Keep the scripts already written (${withScript})`) : null,
       h("label", { class: "row ed-check" }, f.next, " Schedule it in the next free slot if every check passes")),
     h("p", { class: "muted small", style: "margin:0", text: "It takes a few minutes, and you can leave this page. Unless you tick the last box, it then waits for you to check it." }),

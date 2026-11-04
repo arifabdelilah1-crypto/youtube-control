@@ -73,3 +73,12 @@ export function checkVideo({ aspect, expectedSeconds, width, height, duration, h
   if (aspect === "9:16") rows.push({ name: "Short", ok: duration <= 180, detail: duration <= 180 ? "under 3 minutes" : "over 3 minutes: YouTube won't make it a Short" });
   return rows;
 }
+
+const words = (text) => String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2);
+
+/** How much of the script can be heard: 0 to 1, from the transcript of the finished video. */
+export function voiceCoverage(script, heard) {
+  const said = new Set(words(heard));
+  const expected = words(script);
+  return expected.length ? expected.filter((w) => said.has(w)).length / expected.length : 0;
+}
