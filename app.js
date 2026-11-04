@@ -227,6 +227,25 @@ function liveCounts(snaps, vids) {
   return live;
 }
 
+/** Where to go to fix an alert. */
+function alertLink(a) {
+  const kind = String(a.dedupe_key || "").split(":")[0];
+  if (kind === "post_failed" || kind === "post_stuck") return "#/automation";
+  if (kind === "video_stuck") return "#/ideas";
+  if (kind === "google_token" || kind === "sync_error") return a.channel_id ? `#/channel/${a.channel_id}` : "#/channels";
+  return "#/settings";
+}
+
+/** A count on Home's menu link, so a breakdown shows on every page. */
+async function paintAlertBadge() {
+  const link = document.querySelector('.side-links a[data-route="home"]');
+  if (!link) return;
+  const { count, error } = await sb.from("alerts").select("id", { count: "exact", head: true }).is("resolved_at", null).in("severity", ["critical", "warning"]);
+  if (error) return;  // a badge is never worth an error on the page
+  link.querySelector(".nav-badge")?.remove();
+  if (count) link.append(h("span", { class: "nav-badge", "aria-label": `${count} alert${count === 1 ? "" : "s"}`, text: count > 9 ? "9+" : String(count) }));
+}
+
 const VIEWS = {};
 async function render() {
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
@@ -238,6 +257,7 @@ async function render() {
   document.querySelector(".side-links a[aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   const fn = VIEWS[route.name] || VIEWS.home;
   view().replaceChildren(skeleton());
+  paintAlertBadge().catch(() => {});
   try {
     const nodes = await fn(route);
     if (parseRoute().name === route.name) { view().replaceChildren(...[nodes].flat().filter(Boolean)); labelTables(view()); }
@@ -266,7 +286,7 @@ VIEWS.home = async () => {
   const [rows, daily, alerts, ideas, snaps, vids] = await Promise.all([
     networkOverview(days),
     q(sb.rpc("portfolio_daily", { p_days: days })),
-    q(sb.from("alerts").select("*").is("resolved_at", null).order("created_at", { ascending: false }).limit(6)),
+    q(sb.from("alerts").select("*").is("resolved_at", null).order("severity").order("created_at", { ascending: false }).limit(8)),
     q(sb.from("ideas").select("*").in("stage", ["new", "shortlisted"]).order("score", { ascending: false, nullsFirst: false }).limit(5)),
     q(sb.from("channel_snapshots").select("channel_id,total_views,captured_at").order("captured_at", { ascending: false }).limit(300)),
     q(sb.from("v_own_video_latest").select("channel_id,views,likes,published_at")),
@@ -296,8 +316,8 @@ VIEWS.home = async () => {
           h("div", { style: "flex:1 1 220px;min-width:0" }, h("div", { style: "font-weight:500", text: i.title }), h("div", { class: "muted small", text: channelById(i.channel_id)?.title || nicheName(i.niche_id) }))))
           : empty("Search keywords in Research and save the good ones as ideas.", h("a", { class: "btn", href: "#/research", text: "Open Research" }))),
       h("section", { class: "card grow2" }, h("h2", { text: "Alerts" }),
-        alerts.length ? alerts.map((a) => h("div", { class: "listrow", style: "flex-wrap:nowrap;align-items:flex-start" },
-          h("span", { class: `pill ${a.severity === "critical" ? "crit" : a.severity === "warning" ? "warn" : "info"}`, text: a.severity }),
+        alerts.length ? alerts.map((a) => h("a", { class: "listrow link", style: "flex-wrap:nowrap;align-items:flex-start", href: alertLink(a) },
+          h("span", { class: `pill ${a.severity === "critical" ? "crit" : a.severity === "warning" ? "warn" : "info"}`, text: a.severity === "critical" ? "Urgent" : a.severity === "warning" ? "Warning" : "Info" }),
           h("div", { style: "min-width:0" }, h("div", { style: "font-weight:500", text: a.title }), h("div", { class: "muted small", text: `${a.detail || ""} · ${ago(a.created_at)}` }))))
           : empty("All good, nothing needs attention."))),
   ];
