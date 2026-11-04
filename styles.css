@@ -255,6 +255,14 @@ details.card > summary { cursor: pointer; font-weight: 700; font-size: 15px; }
 .idea-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--ink); border-radius: var(--r-lg); position: sticky; top: 8px; z-index: 5; }
 .idea-bulk[hidden] { display: none; }
 .idea-bulk strong { margin-right: auto; }
+.idea-live { display: flex; flex-direction: column; gap: 10px; padding: 14px 15px; background: var(--cue-soft); border: 1px solid var(--cue); border-radius: var(--r-lg); }
+.idea-live[hidden] { display: none; }
+.idea-live-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.idea-live-head h2 { margin: 0; font-size: 15px; }
+.idea-live-run { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--panel); border-radius: 10px; }
+.idea-live-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.idea-live-main .title { font-weight: 600; color: inherit; text-decoration: none; overflow-wrap: anywhere; }
+.idea-live-main .title:hover { text-decoration: underline; }
 .idea-list { display: flex; flex-direction: column; gap: 8px; }
 .idea { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 14px; align-items: start; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 13px 15px; }
 .idea[data-state="working"] { border-color: var(--cue); }

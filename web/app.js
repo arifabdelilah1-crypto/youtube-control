@@ -592,11 +592,12 @@ const IDEA_STATES = {
   new: ["To make", "idle"], saved: ["Saved", "cue"], draft: ["Draft", "cue"], failed: ["Needs a retry", "alert"],
   working: ["Working", "cue"], ready: ["Ready", "ready"], check: ["Ready, to check", "cue"], published: ["Published", "on"],
 };
-const IDEA_TABS = [["all", "All", null], ["make", "To make", ["new", "saved", "draft", "failed"]], ["working", "Working", ["working"]], ["ready", "Ready", ["ready", "check"]], ["published", "Published", ["published"]]];
+const IDEA_TABS = [["all", "All", null], ["make", "To make", ["new", "saved", "draft", "failed"]], ["ready", "Ready", ["ready", "check"]], ["published", "Published", ["published"]]];
 const RUN_STEPS = { script: "Writing the script", review: "Reviewing the script", scenes: "Building the scenes", clips: "Choosing the clips", voice: "Recording the voice",
   music: "Finding the music", sounds: "Adding sound effects", thumbnail: "Making the thumbnail", render: "Rendering the video", check: "Final checks" };
-const ideasUi = { tab: "all", q: "", sort: "score", selected: new Set(), open: new Set() };
+const ideasUi = { tab: "all", q: "", sort: "score", selected: new Set(), open: new Set(), fresh: new Set() };
 const isActiveRun = (r) => r && ["queued", "running"].includes(r.status);
+const runTitle = (r) => r.ideas?.video_title || r.ideas?.title || "Your video";
 const isEmptyDraft = (i) => !i.script?.trim() && /^untitled/i.test(i.title || "");
 
 function ideaState(i, run) {
@@ -667,10 +668,16 @@ function generateDialog(ideas, onDone) {
     const options = { language: f.language.value || null, aspect: f.aspect.value, length: f.length.value, angle: single ? f.angle.value.trim() || null : null, voice: f.voice.value || null, voice_style: f.style.value || null,
       music: f.music.checked, sounds: f.sounds.checked, keep_script: f.keep.checked, publish: f.next.checked ? "next" : "ask" };
     const failed = [];
-    for (const i of ideas) { try { await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options }); } catch (err) { failed.push(err.message); } }
-    if (failed.length) { error.textContent = failed[0]; go.disabled = false; go.textContent = "Try again"; onDone(); return; }
+    for (const i of ideas) {
+      try {
+        // a new idea exists from here on: cancelling the dialog leaves nothing behind
+        if (!i.id) i.id = (await q(sb.from("ideas").insert({ title: i.title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
+        await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options });
+      } catch (err) { failed.push(err.message); }
+    }
+    if (failed.length) { error.textContent = failed[0]; go.disabled = false; go.textContent = "Try again"; onDone(false); return; }
     toast(single ? "Generating your video" : `Generating ${ideas.length} videos`);
-    close(); onDone();
+    close(); onDone(true);
   } },
     h("h2", { id: "gen-title", text: single ? "Generate this video" : `Generate ${ideas.length} videos` }),
     h("p", { class: "muted small", style: "margin:0", dir: "auto", text: single ? single.video_title || single.title : "With the same choices for each." }),
@@ -696,22 +703,36 @@ VIEWS.ideas = async () => {
   const list = h("div", { class: "idea-list", "aria-live": "off" });
   const tabs = h("div", { class: "seg idea-tabs", role: "group", "aria-label": "Show" });
   const bulk = h("div", { class: "idea-bulk", role: "toolbar", "aria-label": "Selected ideas" });
+  const live = h("section", { class: "idea-live", "aria-label": "Working now" });
   const foot = h("div", { class: "idea-foot" });
-  let ideas = [], latest = new Map(), projects = new Map();
+  let ideas = [], latest = new Map(), projects = new Map(), active = [];
 
   const load = async () => {
     let iq = sb.from("ideas").select("*").neq("stage", "archived");
     if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
-    const [rows, runs, vids] = await Promise.all([q(iq), q(sb.from("video_runs").select("*").order("created_at", { ascending: false }).limit(300)),
+    const [rows, runs, vids] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(300)),
       q(sb.from("video_projects").select("id,idea_id,aspect,language").not("idea_id", "is", null).order("created_at", { ascending: false }).limit(500))]);
     ideas = rows;
     latest = new Map(); for (const r of runs) if (!latest.has(r.idea_id)) latest.set(r.idea_id, r);
+    // every network's, so a video started for another one can still be followed
+    const before = active;
+    active = [...latest.values()].filter(isActiveRun);
+    for (const old of before) {
+      if (active.some((r) => r.id === old.id)) continue;
+      const done = runs.find((r) => r.id === old.id);
+      if (done?.status === "ready" || done?.status === "review") toast(`Video ready: ${runTitle(done)}`);
+      else if (done?.status === "failed") toast(`It stopped: ${runTitle(done)}`);
+    }
     projects = new Map(); for (const p of vids) if (!projects.has(p.idea_id)) projects.set(p.idea_id, p);
     for (const id of [...ideasUi.selected]) if (!ideas.some((i) => i.id === id)) ideasUi.selected.delete(id);
   };
   const reload = async () => { await load(); paint(); };
   const update = async (ids, values) => { await q(sb.from("ideas").update(values).in("id", ids)); await reload(); };
-  const generate = (group) => generateDialog(group, () => { ideasUi.selected.clear(); reload(); });
+  const generate = (group, onStart) => generateDialog(group, (started) => {
+    if (started) { ideasUi.selected.clear(); onStart?.(); }
+    reload();
+  });
+  const stopRun = async (run) => { try { await aiCall({ action: "auto_stop", idea_id: run.idea_id, run_id: run.id }); await reload(); } catch (e) { toast(e.message); } };
 
   const row = (i) => {
     const run = latest.get(i.id);
@@ -729,7 +750,7 @@ VIEWS.ideas = async () => {
       new: [genBtn("Generate video"), h("button", { class: "btn small ghost", type: "button", text: "Save for later", onclick: () => update([i.id], { stage: "shortlisted" }) }), studio, archive],
       saved: [genBtn("Generate video"), studio, archive], draft: [genBtn("Generate video"), studio, archive],
       failed: [genBtn("Try again"), studio, archive],
-      working: [h("button", { class: "btn small ghost", type: "button", text: "Stop", onclick: async () => { try { await aiCall({ action: "auto_stop", idea_id: i.id, run_id: run.id }); await reload(); } catch (e) { toast(e.message); } } })],
+      working: [],
       ready: [project ? h("a", { class: "btn small primary", href: `#/edit/${project.id}?tab=publish`, text: "Review video" }) : studio, genBtn("Generate again", false),
         h("button", { class: "btn small ghost", type: "button", text: "Mark published", onclick: () => update([i.id], { stage: "published" }) }), archive],
       published: [project ? h("a", { class: "btn small ghost", href: `#/edit/${project.id}?tab=publish`, text: "Open" }) : studio, archive],
@@ -744,7 +765,6 @@ VIEWS.ideas = async () => {
           (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null,
           i.source_video?.url ? h("a", { href: i.source_video.url, target: "_blank", rel: "noopener", text: "Source" }) : null,
           h("span", { text: ago(i.created_at) })),
-        st === "working" ? runProgress(run) : null,
         st === "failed" ? h("p", { class: "small idea-error", role: "alert", text: run.error || "It stopped before the end." }) : null,
         i.ai_status === "failed" && st !== "failed" && st !== "working" ? h("p", { class: "small idea-error", role: "alert", text: i.ai_error || "The AI failed." }) : null,
         ["ready", "check", "published"].includes(st) ? ideaNotes(i, run) : null),
@@ -762,8 +782,21 @@ VIEWS.ideas = async () => {
       h("button", { class: "btn small", type: "button", text: "Archive", onclick: () => { if (confirm(`Archive ${picked.length} idea${picked.length === 1 ? "" : "s"}?`)) { ideasUi.selected.clear(); update(picked.map((i) => i.id), { stage: "archived" }); } } }),
       h("button", { class: "btn small ghost", type: "button", text: "Clear", onclick: () => { ideasUi.selected.clear(); paint(); } }));
   };
+  const paintLive = () => {
+    live.hidden = !active.length;
+    live.replaceChildren(
+      h("div", { class: "idea-live-head" }, h("h2", { text: "Working now" }), h("span", { class: "muted small", text: "You can leave this page: it carries on." })),
+      ...active.map((r) => h("div", { class: "idea-live-run" },
+        h("div", { class: "idea-live-main" },
+          h("a", { class: "title", dir: "auto", href: `#/studio/${r.idea_id}`, text: runTitle(r) }),
+          h("div", { class: "muted small", text: channelById(r.channel_id)?.title || "" }),
+          runProgress(r)),
+        h("button", { class: "btn small ghost", type: "button", text: "Stop", onclick: () => stopRun(r) }))));
+  };
   function paint() {
-    const real = ideas.filter((i) => !isEmptyDraft(i));
+    paintLive();
+    const working = (i) => isActiveRun(latest.get(i.id));
+    const real = ideas.filter((i) => !isEmptyDraft(i) && !working(i));
     const stateOf = (i) => ideaState(i, latest.get(i.id));
     const count = (states) => (states ? real.filter((i) => states.includes(stateOf(i))).length : real.length);
     tabs.replaceChildren(...IDEA_TABS.map(([k, label, states]) => h("button", { type: "button", "aria-pressed": String(ideasUi.tab === k), onclick: () => { ideasUi.tab = k; paint(); } }, label, " ", h("span", { class: "mono small", text: String(count(states)) }))));
@@ -771,23 +804,30 @@ VIEWS.ideas = async () => {
     const words = ideasUi.q.toLowerCase().split(/\s+/).filter(Boolean);
     const shown = real.filter((i) => (!states || states.includes(stateOf(i))) && words.every((w) => `${i.video_title || ""} ${i.title || ""} ${channelById(i.channel_id)?.title || ""}`.toLowerCase().includes(w)));
     const newest = (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at);
-    shown.sort(ideasUi.sort === "newest" ? newest : (a, b) => (b.score ?? -1) - (a.score ?? -1) || newest(a, b));
-    list.replaceChildren(...(shown.length ? shown.map(row) : [empty(real.length ? "No idea matches." : "No ideas yet. Add one above, or save one from Research.", real.length ? null : h("a", { class: "btn", href: "#/research", text: "Go to Research" }))]));
+    const order = ideasUi.sort === "newest" ? newest : (a, b) => (b.score ?? -1) - (a.score ?? -1) || newest(a, b);
+    // an idea just added stays in sight, whatever its score
+    shown.sort((a, b) => Number(ideasUi.fresh.has(b.id)) - Number(ideasUi.fresh.has(a.id)) || order(a, b));
+    list.replaceChildren(...(shown.length ? shown.map(row) : [empty(real.length ? "No idea matches." : active.length ? "Everything here is being generated." : "No ideas yet. Add one above, or save one from Research.", real.length || active.length ? null : h("a", { class: "btn", href: "#/research", text: "Go to Research" }))]));
     const drafts = ideas.filter(isEmptyDraft);
     foot.replaceChildren(...(drafts.length ? [h("span", { class: "muted small", text: `${drafts.length} empty draft${drafts.length === 1 ? "" : "s"} hidden` }),
       h("button", { class: "btn small ghost", type: "button", text: "Archive them", onclick: () => update(drafts.map((i) => i.id), { stage: "archived" }) })] : []));
     paintBulk();
     // live while something is working, and quiet otherwise
     if (state.timer) { clearInterval(state.timer); state.timer = null; }
-    if (ideas.some((i) => isActiveRun(latest.get(i.id)))) state.timer = setInterval(() => reload().catch(() => {}), 6000);
+    if (active.length) state.timer = setInterval(() => reload().catch(() => {}), 6000);
   }
 
+  const showAll = () => { ideasUi.tab = "all"; ideasUi.q = ""; search.value = ""; };
   const add = async (thenGenerate) => {
-    if (!titleIn.value.trim()) { titleIn.focus(); return; }
-    const made = await makeIdea({ title: titleIn.value.trim(), channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] });
+    const title = titleIn.value.trim();
+    if (!title) { titleIn.focus(); return; }
+    // the words stay in the box until the video really starts
+    if (thenGenerate) { generate([{ title, channel_id: state.channel !== "all" ? state.channel : null }], () => { titleIn.value = ""; }); return; }
+    const made = await makeIdea({ title, channel_id: state.channel !== "all" ? state.channel : null, sources: [{ type: "manual" }] });
     titleIn.value = "";
+    ideasUi.fresh.add(made.id);
+    showAll();
     await reload();
-    if (thenGenerate) generate([made]);
   };
   const addForm = h("form", { class: "add-idea", onsubmit: (e) => { e.preventDefault(); add(true); } },
     h("label", { for: "idea-title", class: "sr", text: "Idea title" }), titleIn,
@@ -799,7 +839,7 @@ VIEWS.ideas = async () => {
   await load();
   paint();
   return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All networks"),
-    addForm, h("div", { class: "idea-tools" }, tabs, h("div", { class: "row idea-filter" }, search, sort)), bulk, list, foot];
+    addForm, live, h("div", { class: "idea-tools" }, tabs, h("div", { class: "row idea-filter" }, search, sort)), bulk, list, foot];
 };
 
 // ==================================================================
