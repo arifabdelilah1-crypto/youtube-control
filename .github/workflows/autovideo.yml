@@ -20,6 +20,7 @@ jobs:
           python-version: "3.11"
       - name: Install what the final checks use
         continue-on-error: true  # the checks say so if the listening one can't run
+        timeout-minutes: 4       # a stuck machine mustn't hold the video up: this usually takes 30 seconds
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
           pip install -q faster-whisper==1.2.1
