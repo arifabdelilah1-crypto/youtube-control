@@ -1,7 +1,8 @@
 """Daily research job.
 
 For every active niche and market it:
-  1. searches YouTube for recent videos on each seed term (and on promising autocomplete keywords),
+  0. reads what costs 1 unit a call: the latest uploads of competitors and the most popular videos of its categories,
+  1. searches YouTube for recent videos on a few seed terms and promising autocomplete keywords (100 units each),
   2. stores videos, their channels and a view snapshot,
   3. measures competition and outliers per keyword,
   4. records YouTube and Google autocomplete ranks and discovers new keywords,
@@ -13,6 +14,7 @@ Run:  python collectors/research.py            (all niches)
 """
 from __future__ import annotations
 
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -26,7 +28,12 @@ LOOKBACK_DAYS = 14
 OUTLIER_MIN = 3.0            # views >= 3x channel size counts as an outlier
 BIG_CHANNEL_SUBS = 100_000
 SEARCH_COST = 102            # search (100) + videos (1) + channels (1)
-MAX_DISCOVERED_PER_RUN = 8   # extra autocomplete keywords researched per niche per day
+MAX_SEARCHES_PER_NICHE = 6   # the costly way to find videos: seeds take turns, so each one still comes round
+COMPETITORS_PER_DAY = 40     # the cheap way: they take turns too
+UPLOADS_PER_COMPETITOR = 15
+# the YouTube category where each niche's popular videos are; the rest use the default below
+NICHE_CATEGORIES = {"football": ["17"], "cars": ["2"], "finance-uk": ["25", "27"], "motivation": ["26", "27"], "dark-psychology": ["27", "26"], "what-if": ["24", "27"]}
+DEFAULT_CATEGORIES = ["24"]
 
 
 def popularity_prefix(term: str) -> str:
@@ -37,25 +44,8 @@ def popularity_prefix(term: str) -> str:
     return " ".join(words[:-1]) + " " + words[-1][0]
 
 
-def research_term(db: DB, yt: YouTube, niche: dict, market: str, term: str, source: str) -> dict:
-    lang = (niche.get("languages") or ["en"])[0]
-    after = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    params = {
-        "part": "snippet", "type": "video", "q": term, "order": "viewCount",
-        "publishedAfter": after, "maxResults": 50, "relevanceLanguage": lang,
-    }
-    if market != "GLOBAL":
-        params["regionCode"] = market
-    search = yt.call("search", params, bucket="research", niche_key=niche["slug"])
-    ids = [it["id"]["videoId"] for it in search.get("items", []) if it.get("id", {}).get("videoId")]
-
-    videos = []
-    if ids:
-        vres = yt.call("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(ids)},
-                       bucket="details", niche_key=niche["slug"])
-        videos = vres.get("items", [])
-
+def save_videos(db: DB, yt: YouTube, niche: dict, videos: list[dict]) -> tuple[list[dict], list[str], list[int], int]:
+    """Stores videos, their channels and a view snapshot. Returns the rows, outlier channels, views and big-channel count."""
     chan_ids = sorted({v["snippet"]["channelId"] for v in videos})
     channels = {}
     if chan_ids:
@@ -106,6 +96,96 @@ def research_term(db: DB, yt: YouTube, niche: dict, market: str, term: str, sour
 
     db.upsert("videos", video_rows, on_conflict="youtube_video_id")
     db.insert("video_snapshots", snaps, returning=False) if snaps else None
+    return video_rows, outliers, views_list, big
+
+
+def in_batches(yt: YouTube, niche: dict, ids: list[str]) -> list[dict]:
+    videos = []
+    for i in range(0, len(ids), 50):
+        res = yt.call("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(ids[i : i + 50])}, bucket="details", niche_key=niche["slug"])
+        videos += res.get("items", [])
+    return videos
+
+
+def competitor_uploads(db: DB, yt: YouTube, niche: dict) -> list[dict]:
+    """The latest videos of today's competitors, 1 unit a channel. A channel's uploads list is its id with UU in front."""
+    rows = db.select("competitors", {"select": "youtube_channel_id", "niche_id": f"eq.{niche['id']}", "order": "added_at.asc"})
+    if not rows:
+        return []
+    start = (datetime.now(timezone.utc).timetuple().tm_yday * COMPETITORS_PER_DAY) % len(rows)
+    today = (rows + rows)[start : start + min(COMPETITORS_PER_DAY, len(rows))]
+    cutoff = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
+    ids: list[str] = []
+    for row in today:
+        channel = row["youtube_channel_id"]
+        if not channel.startswith("UC"):
+            continue
+        try:
+            res = yt.call("playlistItems", {"part": "contentDetails", "playlistId": "UU" + channel[2:], "maxResults": UPLOADS_PER_COMPETITOR}, bucket="research", niche_key=niche["slug"])
+        except RuntimeError as e:  # a channel closed since it was added
+            log(f"  uploads of {channel}: {str(e)[:120]}")
+            continue
+        for item in res.get("items", []):
+            d = item["contentDetails"]
+            if d.get("videoPublishedAt") and datetime.fromisoformat(d["videoPublishedAt"].replace("Z", "+00:00")) >= cutoff:
+                ids.append(d["videoId"])
+    return in_batches(yt, niche, list(dict.fromkeys(ids)))
+
+
+def niche_words(seeds: list[str]) -> set[str]:
+    return {w for term in seeds for w in re.findall(r"\w{4,}", term.lower())}
+
+
+def popular_videos(yt: YouTube, niche: dict, seeds: list[str]) -> list[dict]:
+    """The most popular videos of the niche's categories per country, 1 unit for 50. Only those that speak of the niche."""
+    words = niche_words(seeds)
+    if not words:
+        return []
+    found: dict[str, dict] = {}
+    for market in (niche.get("markets") or ["GLOBAL"])[:2]:
+        for category in NICHE_CATEGORIES.get(niche["slug"], DEFAULT_CATEGORIES):
+            params = {"part": "snippet,statistics,contentDetails", "chart": "mostPopular", "videoCategoryId": category, "maxResults": 50, "regionCode": "US" if market == "GLOBAL" else market}
+            try:
+                res = yt.call("videos", params, bucket="research", niche_key=niche["slug"])
+            except RuntimeError as e:  # not every category exists in every country
+                log(f"  popular {market}/{category}: {str(e)[:120]}")
+                continue
+            for v in res.get("items", []):
+                text = f"{v['snippet'].get('title', '')} {' '.join(v['snippet'].get('tags') or [])}".lower()
+                if words & set(re.findall(r"\w{4,}", text)):
+                    found[v["id"]] = v
+    return list(found.values())
+
+
+def discover_cheap(db: DB, yt: YouTube, niche: dict, seeds: list[str]) -> dict:
+    uploads = competitor_uploads(db, yt, niche)
+    popular = popular_videos(yt, niche, seeds)
+    videos = list({v["id"]: v for v in uploads + popular}.values())
+    _, outliers, _, _ = save_videos(db, yt, niche, videos)
+    log(f"  cheap: {len(uploads)} competitor uploads, {len(popular)} popular, {len(outliers)} outliers")
+    return {"competitor_uploads": len(uploads), "popular": len(popular), "outlier_channels": outliers}
+
+
+def research_term(db: DB, yt: YouTube, niche: dict, market: str, term: str, source: str) -> dict:
+    lang = (niche.get("languages") or ["en"])[0]
+    after = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    params = {
+        "part": "snippet", "type": "video", "q": term, "order": "viewCount",
+        "publishedAfter": after, "maxResults": 50, "relevanceLanguage": lang,
+    }
+    if market != "GLOBAL":
+        params["regionCode"] = market
+    search = yt.call("search", params, bucket="research", niche_key=niche["slug"])
+    ids = [it["id"]["videoId"] for it in search.get("items", []) if it.get("id", {}).get("videoId")]
+
+    videos = []
+    if ids:
+        vres = yt.call("videos", {"part": "snippet,statistics,contentDetails", "id": ",".join(ids)},
+                       bucket="details", niche_key=niche["slug"])
+        videos = vres.get("items", [])
+
+    video_rows, outliers, views_list, big = save_videos(db, yt, niche, videos)
 
     kw = db.upsert("keywords", {"niche_id": niche["id"], "market": market, "term": term, "source": source},
                    on_conflict="niche_id,market,term", returning=True)[0]
@@ -191,9 +271,14 @@ def run_niche(db: DB, yt: YouTube, niche: dict, state: dict) -> None:
     outlier_channels: Counter = Counter()
     done = 0
 
+    # 0) what costs 1 unit a call comes first
+    cheap = discover_cheap(db, yt, niche, [s["term"] for s in seeds])
+    outlier_channels.update(cheap.pop("outlier_channels"))
+    budget = niche["daily_unit_budget"] - niche_units_today(db, niche["slug"])
+
     # 1) seeds, least recently researched first, every market
     for seed in seeds:
-        if budget < SEARCH_COST * len(markets) or yt.remaining() < SEARCH_COST:
+        if done + len(markets) > MAX_SEARCHES_PER_NICHE or budget < SEARCH_COST * len(markets) or yt.remaining() < SEARCH_COST:
             break
         for market in markets:
             res = research_term(db, yt, niche, market, seed["term"], "seed")
@@ -203,7 +288,7 @@ def run_niche(db: DB, yt: YouTube, niche: dict, state: dict) -> None:
         db.update("seed_terms", {"id": f"eq.{seed['id']}"}, {"last_researched_at": now_iso()})
 
     # 2) best discovered keywords not researched in the last 7 days, first market only
-    if budget >= SEARCH_COST and yt.remaining() >= SEARCH_COST:
+    if done < MAX_SEARCHES_PER_NICHE and budget >= SEARCH_COST and yt.remaining() >= SEARCH_COST:
         week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
         researched = {r["keyword_id"] for r in db.select("keyword_snapshots", {
             "select": "keyword_id", "captured_on": f"gte.{week_ago}", "recent_uploads": "not.is.null",
@@ -213,16 +298,14 @@ def run_niche(db: DB, yt: YouTube, niche: dict, state: dict) -> None:
             "niche_id": f"eq.{niche['id']}", "source": "eq.autocomplete", "market": f"eq.{markets[0]}",
             "order": "yt_autocomplete_rank.asc.nullslast", "limit": "100",
         })
-        picked = 0
         for c in candidates:
-            if picked >= MAX_DISCOVERED_PER_RUN or budget < SEARCH_COST or yt.remaining() < SEARCH_COST:
+            if done >= MAX_SEARCHES_PER_NICHE or budget < SEARCH_COST or yt.remaining() < SEARCH_COST:
                 break
             if c["keyword_id"] in researched:
                 continue
             res = research_term(db, yt, niche, c["market"], c["term"], "autocomplete")
             outlier_channels.update(res["outlier_channels"])
             budget -= SEARCH_COST
-            picked += 1
             done += 1
 
     # 3) refresh outliers for velocity
@@ -233,7 +316,7 @@ def run_niche(db: DB, yt: YouTube, niche: dict, state: dict) -> None:
              for ch, n in outlier_channels.items() if n >= 2]
     db.upsert("competitors", comps, on_conflict="niche_id,youtube_channel_id")
 
-    state["details"][niche["slug"]] = {"terms": done, "refreshed": refreshed, "new_competitors": len(comps)}
+    state["details"][niche["slug"]] = {"terms": done, **cheap, "refreshed": refreshed, "new_competitors": len(comps)}
 
 
 def main() -> None:

@@ -375,14 +375,13 @@ VIEWS.research = async (route) => {
   }
 
   if (tab === "rising") {
-    const rows = (await q(sb.from("v_keyword_scores").select("term,market,trends_interest,momentum_raw,score").eq("niche_id", scope.niche.id).not("trends_interest", "is", null).limit(300)))
-      .sort((a, b) => b.momentum_raw - a.momentum_raw).slice(0, 18);
-    out.push(h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Rising searches" }), h("span", { class: "muted small", text: "Google Trends, YouTube Search · last 7 vs 30 days" })),
-      rows.length ? h("div", { class: "grid-cards" }, rows.map((r) => { const ch = (Number(r.momentum_raw) - 1) * 100;
-        return h("a", { class: "tile", href: link(`keyword/${encodeURIComponent(r.term)}`, { market: r.market, scope: scopeKey(scope) }) },
-          h("div", { style: "flex:1;min-width:0" }, h("div", { style: "font-weight:500", text: r.term }), h("div", { class: "muted small", text: `Interest ${fmt(r.trends_interest)}` })),
-          h("span", { class: ch >= 0 ? "up" : "down", text: `${ch >= 0 ? "+" : ""}${ch.toFixed(0)}%` })); }))
-        : empty(scope.global ? "Rising data comes from the daily Trends job, which runs for your niches. Pick a niche in the scope menu." : "Appears after the daily Trends job runs.")));
+    const trends = scope.global ? [] : await q(sb.from("ideas").select("id,title,video_title,sources,created_at").eq("niche_id", scope.niche.id).contains("sources", [{ type: "trend" }]).neq("stage", "archived").order("created_at", { ascending: false }).limit(18));
+    out.push(h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Trending now" }), h("span", { class: "muted small", text: "Google Trends, what fits this niche" })),
+      trends.length ? h("div", { class: "grid-cards" }, trends.map((i) => { const t = i.sources.find((x) => x.type === "trend");
+        return h("a", { class: "tile", href: `#/studio/${i.id}` },
+          h("div", { style: "flex:1;min-width:0" }, h("div", { dir: "auto", style: "font-weight:500", text: i.video_title || i.title }), h("div", { class: "muted small", dir: "auto", text: `${t.ref} · ${t.geo}` })),
+          h("span", { class: "muted small", text: t.traffic })); }))
+        : empty(scope.global ? "Pick a niche in the scope menu to see what's trending for it." : "Appears after the Trends job runs, twice a day, when a trending search fits this niche.")));
     return out;
   }
 
@@ -541,7 +540,7 @@ VIEWS.keyword = async (route) => {
     tips.length ? h("section", { class: "card" }, h("h2", { text: "What this means" }), h("ul", { class: "tips" }, tips.map((t) => h("li", { text: t })))) : null,
     h("section", { class: "card" }, h("h2", { text: "Interest over time" }),
       hist.length > 1 ? lineChart(hist.map((p) => ({ x: p.captured_on, y: Number(p.trends_avg_7d) })), `Interest over time for ${term}`)
-        : h("p", { class: "muted small", style: "margin:0", text: "Google Trends history appears for keywords in your niches once the daily Trends job has run a few times." })));
+        : h("p", { class: "muted small", style: "margin:0", text: "No search history for this keyword." })));
 
   const page1 = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "YouTube page 1" }), h("span", { class: "muted small", text: "What a viewer sees when searching this keyword" })),
     vids.length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:720px" },
@@ -595,7 +594,8 @@ const IDEA_STATES = {
 const IDEA_TABS = [["all", "All", null], ["make", "To make", ["new", "saved", "draft", "failed"]], ["ready", "Ready", ["ready", "check"]], ["published", "Published", ["published"]]];
 const RUN_STEPS = { script: "Writing the script", review: "Reviewing the script", scenes: "Building the scenes", clips: "Choosing the clips", voice: "Recording the voice",
   music: "Finding the music", sounds: "Adding sound effects", thumbnail: "Making the thumbnail", render: "Rendering the video", check: "Final checks" };
-const ideasUi = { tab: "all", q: "", sort: "score", selected: new Set(), open: new Set(), fresh: new Set() };
+const ideasUi = { tab: "all", q: "", sort: "score", source: "", selected: new Set(), open: new Set(), fresh: new Set() };
+const ideaSource = (i) => (i.sources || []).find((x) => ["trend", "outlier", "manual", "keyword"].includes(x.type))?.type || "other";
 const isActiveRun = (r) => r && ["queued", "running"].includes(r.status);
 const runTitle = (r) => r.ideas?.video_title || r.ideas?.title || "Your video";
 const isEmptyDraft = (i) => !i.script?.trim() && /^untitled/i.test(i.title || "");
@@ -742,6 +742,7 @@ VIEWS.ideas = async () => {
     const ch = channelById(i.channel_id);
     const language = i.ai?.language || project?.language || ch?.video_style?.language || ch?.language;
     const aspect = project?.aspect || i.ai?.aspect;
+    const trend = (i.sources || []).find((x) => x.type === "trend");
     const check = h("input", { type: "checkbox", checked: ideasUi.selected.has(i.id), disabled: st === "working", "aria-label": `Select “${i.video_title || i.title}”`, onchange: (e) => { if (e.target.checked) ideasUi.selected.add(i.id); else ideasUi.selected.delete(i.id); paintBulk(); } });
     const studio = h("a", { class: "btn small ghost", href: `#/studio/${i.id}`, text: i.script?.trim() ? "Edit script" : "Write it myself" });
     const genBtn = (text, primary = true) => h("button", { class: `btn small${primary ? " primary" : " ghost"}`, type: "button", text, onclick: () => generate([i]) });
@@ -763,6 +764,8 @@ VIEWS.ideas = async () => {
         h("div", { class: "idea-meta muted small" },
           h("span", { text: ch?.title || "No network yet" }), language ? h("span", { text: language.toUpperCase() }) : null, aspect ? h("span", { text: aspect }) : null,
           (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null,
+          trend ? h("span", { class: "pill short", title: trend.why || "Trending on Google", text: `Trend ${trend.geo} ${trend.traffic}` }) : null,
+          trend?.news?.[0]?.url ? h("a", { href: trend.news[0].url, target: "_blank", rel: "noopener", text: "News" }) : null,
           i.source_video?.url ? h("a", { href: i.source_video.url, target: "_blank", rel: "noopener", text: "Source" }) : null,
           h("span", { text: ago(i.created_at) })),
         st === "failed" ? h("p", { class: "small idea-error", role: "alert", text: run.error || "It stopped before the end." }) : null,
@@ -802,7 +805,7 @@ VIEWS.ideas = async () => {
     tabs.replaceChildren(...IDEA_TABS.map(([k, label, states]) => h("button", { type: "button", "aria-pressed": String(ideasUi.tab === k), onclick: () => { ideasUi.tab = k; paint(); } }, label, " ", h("span", { class: "mono small", text: String(count(states)) }))));
     const states = IDEA_TABS.find(([k]) => k === ideasUi.tab)?.[2];
     const words = ideasUi.q.toLowerCase().split(/\s+/).filter(Boolean);
-    const shown = real.filter((i) => (!states || states.includes(stateOf(i))) && words.every((w) => `${i.video_title || ""} ${i.title || ""} ${channelById(i.channel_id)?.title || ""}`.toLowerCase().includes(w)));
+    const shown = real.filter((i) => (!states || states.includes(stateOf(i))) && (!ideasUi.source || ideaSource(i) === ideasUi.source) && words.every((w) => `${i.video_title || ""} ${i.title || ""} ${channelById(i.channel_id)?.title || ""}`.toLowerCase().includes(w)));
     const newest = (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at);
     const order = ideasUi.sort === "newest" ? newest : (a, b) => (b.score ?? -1) - (a.score ?? -1) || newest(a, b);
     // an idea just added stays in sight, whatever its score
@@ -836,10 +839,12 @@ VIEWS.ideas = async () => {
   const search = h("input", { class: "field idea-search", type: "search", "aria-label": "Search ideas", placeholder: "Search ideas", value: ideasUi.q, oninput: (e) => { ideasUi.q = e.target.value; paint(); } });
   const sort = h("select", { class: "field idea-sort", "aria-label": "Sort", onchange: (e) => { ideasUi.sort = e.target.value; paint(); } }, [["score", "Best score"], ["newest", "Newest"]].map(([v, t]) => h("option", { value: v, selected: ideasUi.sort === v, text: t })));
 
+  const source = h("select", { class: "field idea-sort", "aria-label": "Source", onchange: (e) => { ideasUi.source = e.target.value; paint(); } }, [["", "All sources"], ["trend", "Google Trends"], ["outlier", "Outliers"], ["keyword", "Keywords"], ["manual", "Added by hand"]].map(([v, t]) => h("option", { value: v, selected: ideasUi.source === v, text: t })));
+
   await load();
   paint();
   return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All networks"),
-    addForm, live, h("div", { class: "idea-tools" }, tabs, h("div", { class: "row idea-filter" }, search, sort)), bulk, list, foot];
+    addForm, live, h("div", { class: "idea-tools" }, tabs, h("div", { class: "row idea-filter" }, search, source, sort)), bulk, list, foot];
 };
 
 // ==================================================================
@@ -1727,9 +1732,9 @@ VIEWS.settings = async (route) => {
     Object.keys(latest).length ? h("div", { class: "tablebox" }, h("table", { style: "min-width:460px" },
       h("thead", {}, h("tr", {}, ["Job", "Last run", "API units", "Status"].map((t, i) => h("th", { class: i === 2 ? "num" : null, text: t })))),
       h("tbody", {}, Object.entries(latest).map(([name, r]) => h("tr", {}, h("td", { style: "font-weight:500", text: name.replace("_", " ") }), h("td", { class: "muted", text: ago(r.started_at) }),
-        h("td", { class: "num", text: fmt(r.units_used) }), h("td", {}, pill(r.status)))))))
+        h("td", { class: "num", text: fmt(r.units_used) }), h("td", {}, pill(r.status === "running" && Date.now() - Date.parse(r.started_at) > 3 * 3600e3 ? "stopped" : r.status)))))))
       : empty("No job has run yet."),
-    h("p", { class: "muted small", style: "margin:0", text: "Channel stats: on the server every 6 h. Research (06:00 UTC), Trends (07:30 UTC) and renders run on GitHub Actions." }));
+    h("p", { class: "muted small", style: "margin:0", text: "Channel stats: on the server every 6 h. Research (06:00 UTC), Trends (07:30 and 16:30 UTC) and renders run on GitHub Actions." }));
   const used = quota.filter((r) => r.api === "youtube_data"), total = used.reduce((a, r) => a + r.units, 0);
   const quotaBox = h("section", { class: "card grow2" }, h("h2", { text: "YouTube API today" }),
     h("div", { style: "display:flex;justify-content:space-between" }, h("span", { text: `${fmt(total)} of 10,000 units` }), h("span", { class: "mono", text: `${Math.round(total / 100)}%` })),

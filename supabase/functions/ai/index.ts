@@ -9,11 +9,11 @@
 // POST {action:"brief",     idea_id}                       -> how to produce a script someone wrote themselves: voice style, music mood...
 // POST {action:"auto_start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs). Returns {run_id}.
 // POST {action:"auto_stop", idea_id, run_id}               -> stops it at its next step.
-// The job also calls, with x-cron-secret: pick_clips, check_clips (looks at the pictures), pick_sounds.
+// The jobs also call, with x-cron-secret: pick_clips, check_clips (looks at the pictures), pick_sounds, pick_trends.
 // Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), DEEPSEEK_SCRIPT_MODEL (optional, default deepseek-v4-pro),
 //          YOUTUBE_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
+import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, PICK_TRENDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -52,7 +52,7 @@ type AiOptions = { pro?: boolean; effort?: "low" | "high"; images?: { label: str
 // A function gets about 150 seconds: past this it can only report that it took too long, and the caller tries again with less thinking.
 const PRO_LIMIT_MS = 130_000;
 
-async function deepseek(db: any, ideaId: string, kind: string, system: string, user: string, ownerId: string | null, opts: AiOptions = {}) {
+async function deepseek(db: any, ideaId: string | null, kind: string, system: string, user: string, ownerId: string | null, opts: AiOptions = {}) {
   if (!DS_KEY) throw new Error("DeepSeek isn't set up yet: add DEEPSEEK_API_KEY in Supabase Edge Function secrets.");
   const since = new Date(Date.now() - 864e5).toISOString();
   const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
@@ -195,6 +195,12 @@ Deno.serve(async (req) => {
     if (!isService && !(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
     const user = isService ? null : (await userDb.auth.getUser()).data.user;
     const body = await req.json();
+    // the Trends job: no idea exists yet
+    if (body.action === "pick_trends") {
+      if (!isService) return json({ error: "not allowed" }, 403);
+      const out = await deepseek(db, null, "trends", PICK_TRENDS_SYSTEM, JSON.stringify({ channel: body.channel, searches: body.items }), null, { think: false });
+      return json({ picks: Array.isArray(out.picks) ? out.picks : [] });
+    }
     ideaId = UUID.test(body.idea_id || "") ? body.idea_id : "";
     if (!ideaId) return json({ error: "idea_id required" }, 400);
     const { data: idea } = await db.from("ideas").select("*").eq("id", ideaId).single();

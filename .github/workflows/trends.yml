@@ -1,13 +1,14 @@
 name: Google Trends
 on:
   schedule:
-    - cron: "30 7 * * *"       # daily 07:30 UTC, after research has found keywords
+    - cron: "30 7 * * *"       # 07:30 and 16:30 UTC: the feed follows the day's news
+    - cron: "30 16 * * *"
   workflow_dispatch:
 concurrency: { group: trends, cancel-in-progress: false }
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
