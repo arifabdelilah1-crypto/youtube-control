@@ -15,7 +15,8 @@ export function chooseVoice({ language, picked, networkVoice, gender = "any" }) 
 }
 
 const clipKey = (c) => `${c.source}-${c.id}`;
-export const usable = (c) => !!(c?.url && c.source !== "youtube");
+// green-screen clips are raw material: they look broken in a video
+export const usable = (c) => !!(c?.url && c.source !== "youtube" && !/green.?screen|chroma.?key|\bchroma\b/i.test(c.tags || ""));
 
 /** The clip each scene gets from the editor's picks: valid, and never the same one twice. Returns {i: candidate} for those decided. */
 export function applyPicks(scenes, picks, chosen = {}) {
