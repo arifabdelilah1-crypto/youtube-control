@@ -2030,6 +2030,52 @@ const voiceFits = (s) => !!s.voice_path && s.voice_text === (s.text || "").trim(
 const sceneSeconds = (s) => (s.kind === "narrator" ? (voiceFits(s) && s.voice_duration ? Number(s.voice_duration) + 0.25 : Math.max(1.5, (s.text || "").trim().split(/\s+/).filter(Boolean).length / NARRATOR_WPS + 0.4)) : Math.max(0, s.end - s.start));
 const edgeVoices = (lang) => (VOICES[lang] || VOICES.en).filter(([v]) => !v.startsWith("supertonic"));
 
+/** Frames of the long video's small preview, drawn in the browser (one hidden player, one frame at a time). */
+const frameGrabbers = new Map();
+function frameGrabber(url) {
+  if (!url) return null;
+  if (frameGrabbers.has(url)) return frameGrabbers.get(url);
+  const v = h("video", { src: url, preload: "auto", playsinline: true });
+  v.muted = true;
+  const queue = [];
+  let busy = false;
+  const next = () => {
+    if (busy || !queue.length) return;
+    const job = queue.shift();
+    if (!job.canvas.isConnected && performance.now() - job.at > 1500) { next(); return; }  // gone from the page
+    busy = true;
+    const done = () => {
+      v.removeEventListener("seeked", onSeek);
+      clearTimeout(timer);
+      busy = false; next();
+    };
+    const onSeek = () => {
+      try {
+        const cw = job.canvas.width, ch = job.canvas.height, vw = v.videoWidth || 16, vh = v.videoHeight || 9;
+        const ctx = job.canvas.getContext("2d");
+        const s = Math.max(cw / vw, ch / vh);
+        ctx.drawImage(v, (cw - vw * s) / 2, (ch - vh * s) / 2, vw * s, vh * s);
+        job.canvas.classList.add("ready");
+      } catch { /* leave it blank */ }
+      done();
+    };
+    const timer = setTimeout(done, 8000);
+    v.addEventListener("seeked", onSeek);
+    v.currentTime = Math.max(0.05, job.t);
+  };
+  const api = {
+    draw(t, canvas, urgent = false) {
+      const job = { t, canvas, at: performance.now() };
+      urgent ? queue.unshift(job) : queue.push(job);
+      setTimeout(() => (v.readyState >= 1 ? next() : v.addEventListener("loadedmetadata", next, { once: true })), 0);
+    },
+    clear() { queue.length = 0; },
+  };
+  frameGrabbers.set(url, api);
+  return api;
+}
+const frameCanvas = (cls = "clip-frame") => h("canvas", { class: cls, width: 320, height: 180 });
+
 async function footageSearch(q, kind) {
   const { data, error } = await sb.functions.invoke("studio", { body: { action: "search", q, kind, aspect: "9:16" } });
   if (error) throw error;
@@ -2305,6 +2351,63 @@ function clipCard(clip, n, src, words, links) {
     qIn.focus();
   }
 
+  // another moment of the long video for a scene: the moments around it (scene changes), or any second of the video
+  const grab = frameGrabber(links[src.proxy_path]);
+  const cuts = Array.isArray(src.scene_cuts) ? src.scene_cuts.map(Number).filter(Number.isFinite) : [];
+  const duration = Number(src.duration_s) || 0;
+  function momentPanel(s, holder) {
+    if (!grab) return toast("The preview isn't ready");
+    const len = s.kind === "narrator" ? sceneSeconds(s) : Math.max(0.5, s.end - s.start);
+    const choose = (t) => {
+      t = Math.round(Math.max(0, Math.min(t, Math.max(0, duration - len))) * 10) / 10;
+      s.start = t; s.end = Math.round((t + len) * 10) / 10;
+      s.thumb = null; s.footage = null;
+      holder.replaceChildren();
+      saveScenes();
+      toast(`Scene moved to ${tc(t)}`);
+    };
+    let around = 90;
+    const grid = h("div", { class: "clip-moments" });
+    const fill = () => {
+      const lo = Math.max(0, s.start - around), hi = Math.min(duration || s.start + around, s.start + around);
+      let ts = cuts.filter((c) => c >= lo && c <= hi).map((c) => c + 0.25);
+      if (ts.length < 8) for (let t = Math.ceil(lo / 5) * 5; t <= hi; t += 5) ts.push(t);  // few scene changes: every 5 seconds
+      ts = [...new Set(ts.map((t) => Math.round(t * 10) / 10))].sort((a, b) => a - b);
+      if (ts.length > 36) ts = ts.filter((_, k) => k % Math.ceil(ts.length / 36) === 0);
+      grab.clear();
+      grid.replaceChildren(...ts.map((t) => {
+        const cv = frameCanvas();
+        grab.draw(t, cv);
+        const said = textOf(t, t + Math.min(len, 6));
+        const near = Math.abs(t - s.start) < 1;
+        return h("button", { class: `clip-moment${near ? " on" : ""}`, type: "button", title: said || "(no speech)", onclick: () => choose(t) },
+          cv, h("span", { class: "mono clip-moment-t", text: tc(t) }), h("span", { class: "clip-moment-said", text: said || "(no speech)" }));
+      }));
+    };
+    // any second of the video
+    const big = frameCanvas("clip-frame big");
+    const at = h("span", { class: "mono", text: tc(s.start) });
+    const slider = h("input", { type: "range", min: 0, max: Math.max(1, Math.floor(duration)), step: 0.5, value: s.start, "aria-label": "Moment in the long video", class: "clip-scrub" });
+    const said = h("p", { class: "clip-words", style: "margin:0" });
+    let deb = null;
+    const showAt = () => { const t = Number(slider.value); at.textContent = tc(t); said.textContent = textOf(t, t + Math.min(len, 8)) || "(no speech)"; clearTimeout(deb); deb = setTimeout(() => grab.draw(t + 0.1, big, true), 120); };
+    slider.addEventListener("input", showAt);
+    holder.replaceChildren(h("div", { class: "clip-stock-panel" },
+      h("div", { class: "row", style: "justify-content:space-between" },
+        h("b", { class: "small", text: `Pick another moment for this scene (${len.toFixed(1)} s)` }),
+        h("div", { class: "row", style: "gap:6px" },
+          tiny("Wider", "Show moments further away", () => { around = Math.min(around * 2, duration || 1e9); fill(); }),
+          tiny("Close", "Close", () => { grab.clear(); holder.replaceChildren(); }))),
+      h("p", { class: "muted small", style: "margin:0", text: s.kind === "narrator" ? "The narrator speaks over the picture you pick." : "The scene plays the long video from the moment you pick, with its sound, for the same length." }),
+      grid,
+      h("div", { class: "clip-any" }, big,
+        h("div", { class: "clip-any-side" },
+          h("span", { class: "muted small", text: "Or any moment of the video:" }), slider,
+          h("div", { class: "row", style: "gap:8px" }, at, h("button", { class: "btn small primary", type: "button", text: "Use this moment", onclick: () => choose(Number(slider.value)) })),
+          said))));
+    fill(); showAt();
+  }
+
   function drawScenes() {
     setAi();
     totalEl.textContent = `≈ ${Math.round(total())} s`;
@@ -2314,7 +2417,8 @@ function clipCard(clip, n, src, words, links) {
       const stockThumb = s.footage?.thumb || s.footage?.preview;
       const picker = h("div");
       const thumb = h("button", { class: "clip-thumb", type: "button", "aria-label": `Play scene ${i + 1}`, onclick: () => playScene(i) },
-        stockThumb ? h("img", { src: stockThumb, alt: "", loading: "lazy" }) : s.thumb && links[s.thumb] ? h("img", { src: links[s.thumb], alt: "", loading: "lazy" }) : h("span", { class: "clip-thumb-t mono", text: tc(s.start) }),
+        stockThumb ? h("img", { src: stockThumb, alt: "", loading: "lazy" }) : s.thumb && links[s.thumb] ? h("img", { src: links[s.thumb], alt: "", loading: "lazy" })
+          : grab ? (() => { const cv = frameCanvas(); grab.draw(Number(s.start) + 0.3, cv); return [cv, h("span", { class: "clip-thumb-t mono", text: tc(s.start) })]; })() : h("span", { class: "clip-thumb-t mono", text: tc(s.start) }),
         h("span", { class: "review-play" }, icon("i-play")));
       const kindSel = h("select", { class: "field", "aria-label": "What is heard", style: "min-height:32px;width:auto", onchange: (e) => {
         s.kind = e.target.value;
@@ -2324,6 +2428,7 @@ function clipCard(clip, n, src, words, links) {
       const footageLine = h("div", { class: "row small", style: "gap:6px" },
         h("span", { class: "muted", text: "Picture:" }),
         s.footage?.url ? h("span", { text: `${s.footage.type === "image" ? "Photo" : "Clip"} from ${s.footage.source}${s.footage.author ? ` (${s.footage.author})` : ""}` }) : h("span", { text: `This video, from ${tc(s.start)}` }),
+        tiny("Change moment", "Pick another moment of the long video for this scene", () => momentPanel(s, picker)),
         tiny(s.footage?.url ? "Change" : "Search footage", "Search other footage for this scene", () => footagePanel(s, picker)),
         s.footage?.url ? tiny("Use this video", "Back to the long video's own footage", () => { s.footage = null; saveScenes(); }) : null,
         s.search && !s.footage?.url ? h("span", { class: "muted", text: `Idea: “${s.search}”` }) : null);

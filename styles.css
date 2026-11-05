@@ -763,3 +763,16 @@ video.review-player { background: #000; cursor: auto; object-fit: contain; }
 .clip-all { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .clip-voice { gap: 8px; align-items: center; }
 .clip-sees { margin: 0; font-size: 12.5px; color: var(--graphite); overflow-wrap: anywhere; }
+.clip-frame { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; background: #000; }
+.clip-thumb .clip-frame { height: 100%; }
+.clip-moments { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; max-height: 420px; overflow: auto; padding-right: 2px; }
+.clip-moment { display: flex; flex-direction: column; gap: 4px; padding: 0 0 6px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); color: inherit; text-align: start; cursor: pointer; font: inherit; }
+.clip-moment:hover, .clip-moment:focus-visible { border-color: var(--action); }
+.clip-moment.on { border-color: var(--signal); }
+.clip-moment-t { font-size: 11.5px; padding: 0 8px; color: var(--graphite); }
+.clip-moment-said { font-size: 12px; line-height: 1.35; padding: 0 8px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.clip-any { display: grid; grid-template-columns: minmax(160px, 260px) minmax(0, 1fr); gap: 12px; align-items: start; border-top: 1px solid var(--line); padding-top: 10px; }
+.clip-frame.big { border-radius: 8px; }
+.clip-any-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.clip-scrub { width: 100%; accent-color: var(--action); }
+@media (max-width: 560px) { .clip-any { grid-template-columns: minmax(0, 1fr); } }
