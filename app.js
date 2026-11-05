@@ -2221,17 +2221,18 @@ function clipCard(clip, n, src, words, links) {
     const n = emptyLines();
     aiBtn.textContent = n ? `✨ Write ${n} narrator line${n > 1 ? "s" : ""} with AI` : "✨ Rewrite narrator lines with AI";
   }
-  aiBtn.addEventListener("click", async () => {
+  const writeLines = async (btn) => {
     const overwrite = !emptyLines();
     if (overwrite && !confirm("Rewrite every narrator line with AI? The texts below are replaced.")) return;
     clearTimeout(saveT);
-    aiBtn.disabled = true; aiBtn.textContent = "Writing… (up to a minute the first time)";
+    for (const b of [aiBtn, btn]) if (b) { b.disabled = true; b.textContent = "Writing… (up to a minute the first time)"; }
     try {
       const r = await clipperCall({ action: "narrator_lines", clip_id: clip.id, scenes, language: langSel.value, voice: voiceSel.value, overwrite });
       toast(r.error ? `Lines written, but the voice didn't start: ${r.error}` : `${r.written} line${r.written > 1 ? "s" : ""} written. The voice is being prepared: about 1 minute`);
       render();
-    } catch (err) { toast(err.message); aiBtn.disabled = false; setAi(); }
-  });
+    } catch (err) { toast(err.message); aiBtn.disabled = false; setAi(); drawScenes(); }
+  };
+  aiBtn.addEventListener("click", () => writeLines(null));
   const makeVoices = async (btn) => {
     clearTimeout(saveT);
     if (btn) btn.disabled = true;
@@ -2244,7 +2245,13 @@ function clipCard(clip, n, src, words, links) {
   const voiceState = clip.voice_state === "working" ? h("p", { class: "muted small", style: "margin:0", text: "Preparing the narrator voice… it plays in the preview when it's ready." })
     : clip.voice_state === "failed" && clip.voice_error ? h("p", { class: "down small", style: "margin:0", text: `Narrator voice failed: ${clip.voice_error}` }) : null;
   function voiceLine(s) {
-    if (!(s.text || "").trim()) return h("div", { class: "row small clip-voice" }, h("span", { class: "muted", text: "Empty: “Write narrator lines with AI” fills it, or type it." }));
+    if (!(s.text || "").trim()) {
+      const n = emptyLines();
+      return h("div", { class: "row small clip-voice" },
+        h("button", { class: "btn small primary", type: "button", text: n > 1 ? `✨ Write the ${n} empty lines with AI` : "✨ Write this line with AI",
+          title: "The AI writes it from what the video says and shows around this scene, then the voice is made", onclick: (e) => writeLines(e.currentTarget) }),
+        h("span", { class: "muted", text: "or type it" }));
+    }
     const url = voiceUrl(s);
     if (url) return h("div", { class: "row small clip-voice" }, h("span", { class: "pill ok", text: "Voice ready" }), h("span", { class: "mono muted", text: `${Number(s.voice_duration || 0).toFixed(1)} s` }),
       tiny("▶ Listen", "Listen to this line", () => { const a = new Audio(url); a.play().catch(() => {}); }));
