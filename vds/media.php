@@ -25,7 +25,19 @@ function fail(int $code, string $message): void {
   exit;
 }
 
+// The dashboard uploads long videos straight from the browser (Long to Shorts): allow its origin.
+const DASHBOARD_ORIGINS = ['https://arifabdelilah1-crypto.github.io'];
+$origin = (string)($_SERVER['HTTP_ORIGIN'] ?? '');
+if (in_array($origin, DASHBOARD_ORIGINS, true)) {
+  header("Access-Control-Allow-Origin: $origin");
+  header('Vary: Origin');
+  header('Access-Control-Allow-Methods: GET, PUT, HEAD, OPTIONS');
+  header('Access-Control-Allow-Headers: Content-Type, Range');
+  header('Access-Control-Expose-Headers: X-Offset, Content-Length, Content-Range');
+  header('Access-Control-Max-Age: 86400');
+}
 $method = $_SERVER['REQUEST_METHOD'] ?? '';
+if ($method === 'OPTIONS') { http_response_code(204); exit; }
 $signedMethod = $method === 'HEAD' ? 'GET' : $method;
 if ($signedMethod !== 'GET' && $signedMethod !== 'PUT') fail(405, 'method not allowed');
 

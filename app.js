@@ -1853,6 +1853,241 @@ VIEWS.results = async () => {
 };
 
 // ==================================================================
+// Long to Shorts: a long video becomes 1-3 Shorts you review scene by scene
+// ==================================================================
+const CLIP_LIVE = ["uploading", "queued", "downloading", "transcribing", "finding"];
+const CLIP_STATUS = { uploading: ["info", "Uploading"], queued: ["info", "Starting"], downloading: ["info", "Getting the video"], transcribing: ["info", "Transcribing"],
+  finding: ["info", "Finding moments"], ready: ["ok", "Ready to review"], failed: ["crit", "Failed"] };
+const CROPS = [["face", "Follow face"], ["center", "Centre"], ["left", "Left"], ["right", "Right"], ["fit", "Whole frame"]];
+const CLIP_LENGTHS = [["20-35", "Short (20–35 s)"], ["30-50", "Medium (30–50 s)"], ["45-60", "Long (45–60 s)"], ["50-90", "Up to 90 s"]];
+const CLIP_LANGS = [["auto", "Detect language"], ["en", "English"], ["es", "Spanish"], ["fr", "French"], ["de", "German"], ["ar", "Arabic"], ["pt", "Portuguese"], ["it", "Italian"]];
+const tc = (t) => { t = Math.max(0, Number(t) || 0); const m = Math.floor(t / 60); return `${m}:${(t % 60).toFixed(1).padStart(4, "0")}`; };
+
+async function clipperCall(body) {
+  const { data, error } = await sb.functions.invoke("clipper", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+/** Re-render only when a status or progress changed, so edits on the page aren't thrown away. */
+function watchClipper(signature) {
+  let last = null;
+  state.timer = setInterval(async () => {
+    try { const now = await signature(); if (last !== null && now !== last) render(); last = now; } catch { /* next tick */ }
+  }, 7000);
+}
+
+/** Upload straight from the browser to the VDS, in 16 MB pieces, with the SHA-256 the VDS checks at the end. */
+async function uploadToServer(file, putUrl, onProgress) {
+  const { createSHA256 } = await import("https://cdn.jsdelivr.net/npm/hash-wasm@4.11.0/+esm");
+  const hasher = await createSHA256();
+  const CH = 16 * 1024 * 1024;
+  for (let o = 0; o < file.size; o += CH) hasher.update(new Uint8Array(await file.slice(o, o + CH).arrayBuffer()));
+  const sha = hasher.digest("hex");
+  let offset = 0, tries = 0;
+  while (offset < file.size || file.size === 0) {
+    const chunk = file.slice(offset, offset + CH);
+    const last = offset + chunk.size >= file.size;
+    const extra = new URLSearchParams({ offset: String(offset) });
+    if (offset === 0) extra.set("reset", "1");
+    if (last) { extra.set("final", "1"); extra.set("size", String(file.size)); extra.set("sha256", sha); }
+    let r;
+    try { r = await fetch(`${putUrl}&${extra}`, { method: "PUT", body: chunk }); }
+    catch { if (++tries > 4) throw new Error("Your server refused the upload from the browser. Ask for media.php to be updated on the server (see README), or paste a Google Drive / Dropbox link instead."); continue; }
+    if (r.status === 409) { offset = Number(r.headers.get("x-offset") || 0); continue; }
+    if (!r.ok) throw new Error(`Upload failed (${r.status}): ${(await r.text()).slice(0, 160)}`);
+    offset += chunk.size; tries = 0;
+    onProgress(Math.round((offset / file.size) * 100));
+    if (last) return;
+  }
+}
+
+VIEWS.clipper = async (route) => (route.id ? clipperSource(route.id) : clipperHome());
+
+async function clipperHome() {
+  const sources = await q(sb.from("clip_sources").select("id,title,status,progress,step,error,run_url,duration_s,created_at,settings").order("created_at", { ascending: false }).limit(50));
+  const counts = sources.length ? await q(sb.from("clips").select("source_id,status").in("source_id", sources.map((x) => x.id))) : [];
+  const link = h("input", { class: "field", id: "cl-link", type: "url", placeholder: "Google Drive, Dropbox or direct .mp4 link", autocomplete: "off" });
+  const title = h("input", { class: "field", id: "cl-title", placeholder: "e.g. Podcast #12 with Sara", maxlength: 120 });
+  const net = h("select", { class: "field", id: "cl-net" }, h("option", { value: "", text: "Choose later" }),
+    state.channels.map((c) => h("option", { value: c.id, selected: state.channel === c.id, text: c.title })));
+  let count = 3;
+  const countSeg = h("div", {});
+  const pickCount = (v) => { count = v; countSeg.replaceChildren(seg([[1, "1"], [2, "2"], [3, "3"]], count, pickCount, "How many Shorts")); };
+  pickCount(3);
+  const length = h("select", { class: "field", id: "cl-len" }, CLIP_LENGTHS.map(([v, t]) => h("option", { value: v, selected: v === "30-50", text: t })));
+  const lang = h("select", { class: "field", id: "cl-lang" }, CLIP_LANGS.map(([v, t]) => h("option", { value: v, text: t })));
+  const settings = () => { const [min_s, max_s] = length.value.split("-").map(Number); return { count, min_s, max_s, language: lang.value, channel_id: net.value || null }; };
+  const fld = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
+  const status = h("p", { class: "muted small", style: "margin:0", hidden: true });
+  const start = h("button", { class: "btn primary", type: "submit", text: "Find the Shorts" });
+  const fileIn = h("input", { type: "file", accept: "video/*", hidden: true, onchange: async () => {
+    const f = fileIn.files[0]; if (!f) return;
+    if (f.size > 5 * 1024 ** 3) return toast("Files up to 5 GB");
+    start.disabled = upBtn.disabled = true; status.hidden = false; status.textContent = "Preparing the upload…";
+    try {
+      const r = await clipperCall({ action: "upload_start", title: title.value.trim() || f.name.replace(/\.[^.]+$/, ""), settings: settings(), size: f.size });
+      await uploadToServer(f, r.put_url, (pct) => { status.textContent = `Uploading to your server: ${pct}%`; });
+      await clipperCall({ action: "uploaded", source_id: r.source_id });
+      go(`#/clipper/${r.source_id}`);
+    } catch (e) { toast(e.message); status.textContent = e.message; start.disabled = upBtn.disabled = false; }
+  } });
+  const upBtn = h("button", { class: "btn", type: "button", text: "Upload a file", onclick: () => fileIn.click() });
+  const form = h("form", { class: "card clip-form", onsubmit: async (e) => {
+    e.preventDefault();
+    if (!link.value.trim()) return toast("Paste a link to the video file, or upload it");
+    start.disabled = true;
+    try { const r = await clipperCall({ action: "start", title: title.value.trim(), source_url: link.value.trim(), settings: settings() }); go(`#/clipper/${r.source_id}`); }
+    catch (err) { toast(err.message); start.disabled = false; }
+  } },
+    h("h2", { text: "New long video" }),
+    h("div", { class: "form-grid" }, fld("cl-link", "Video link", link), fld("cl-title", "Name", title)),
+    h("div", { class: "form-grid" }, fld("cl-net", "For network", net), h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "How many Shorts" }), countSeg), fld("cl-len", "Length", length), fld("cl-lang", "Language spoken", lang)),
+    h("div", { class: "row" }, start, upBtn, fileIn, h("span", { class: "muted small", text: "Your own videos only. YouTube, TikTok and Twitch links aren't supported." })),
+    status);
+
+  const row = (x) => {
+    const [cls, label] = CLIP_STATUS[x.status] || ["info", x.status];
+    const n = counts.filter((c) => c.source_id === x.id && c.status !== "discarded").length;
+    const done = counts.filter((c) => c.source_id === x.id && c.status === "done").length;
+    return h("a", { class: "listrow link", href: `#/clipper/${x.id}`, style: "align-items:flex-start" },
+      h("span", { class: `pill ${cls}`, text: label }),
+      h("div", { style: "flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:4px" },
+        h("div", { style: "font-weight:500", text: x.title }),
+        h("div", { class: "muted small", text: [x.duration_s ? `${Math.round(x.duration_s / 60)} min` : null, n ? `${n} Short${n > 1 ? "s" : ""}${done ? `, ${done} rendered` : ""}` : null, channelById(x.settings?.channel_id)?.title, ago(x.created_at)].filter(Boolean).join(" · ") }),
+        CLIP_LIVE.includes(x.status) ? [bar(x.progress || 2, "var(--action)"), h("span", { class: "muted small", text: x.step || "" })] : null,
+        x.status === "failed" && x.error ? h("span", { class: "down small", text: x.error }) : null));
+  };
+  if (sources.some((x) => CLIP_LIVE.includes(x.status))) watchClipper(async () => JSON.stringify(await q(sb.from("clip_sources").select("status,progress").in("id", sources.filter((x) => CLIP_LIVE.includes(x.status)).map((x) => x.id)))));
+  return [pageHead("Long to Shorts", "Give it a long video: it transcribes it, finds the scenes and proposes the best Shorts. You review each scene, then render."),
+    form,
+    h("section", { class: "card" }, h("h2", { text: "Long videos" }), sources.length ? sources.map(row) : empty("Nothing yet. Add your first long video above."))];
+}
+
+async function clipperSource(id) {
+  const [src] = await q(sb.from("clip_sources").select("*").eq("id", id));
+  if (!src) return [pageHead("Long to Shorts"), empty("This long video was deleted.", h("a", { class: "btn", href: "#/clipper", text: "Back" }))];
+  const clips = await q(sb.from("clips").select("*").eq("source_id", id).neq("status", "discarded").order("idx"));
+  const links = src.proxy_path || clips.length ? (await clipperCall({ action: "links", source_id: id }).catch(() => ({ links: {} }))).links || {} : {};
+  const words = src.words || [];
+  const [cls, label] = CLIP_STATUS[src.status] || ["info", src.status];
+  const head = pageHead(src.title, [src.duration_s ? `${Math.round(src.duration_s / 60)} min` : null, src.language ? src.language.toUpperCase() : null, ago(src.created_at)].filter(Boolean).join(" · "),
+    h("a", { class: "btn ghost", href: "#/clipper", text: "← All long videos" }),
+    src.status === "failed" || src.status === "ready" ? h("button", { class: "btn", type: "button", text: src.status === "failed" ? "Try again" : "Find Shorts again", onclick: async (e) => {
+      if (src.status === "ready" && !confirm("Find new Shorts? The ones not rendered yet are replaced.")) return;
+      e.currentTarget.disabled = true;
+      try { await clipperCall({ action: "retry", source_id: id }); render(); } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
+    } }) : null);
+  watchClipper(async () => {
+    const [s] = await q(sb.from("clip_sources").select("status,progress,step").eq("id", id));
+    const c = await q(sb.from("clips").select("id,status").eq("source_id", id));
+    return JSON.stringify([s, c]);
+  });
+  if (src.status !== "ready") {
+    return [head, h("section", { class: "card" },
+      h("div", { class: "row" }, h("span", { class: `pill ${cls}`, text: label }), src.run_url ? h("a", { class: "small", href: src.run_url, target: "_blank", rel: "noopener", text: "Log" }) : null),
+      CLIP_LIVE.includes(src.status) ? [bar(src.progress || 2, "var(--action)", true), h("p", { class: "muted", text: src.step || "Working…" }),
+        h("p", { class: "muted small", text: "A 1-hour video takes about 30–60 minutes. You can leave this page: it carries on." })] : null,
+      src.status === "failed" ? h("pre", { class: "err", text: src.error || "Something went wrong." }) : null)];
+  }
+  if (!clips.length) return [head, empty("No Shorts left for this video.", null)];
+  return [head, ...clips.map((c, n) => clipCard(c, n, src, words, links))];
+}
+
+function clipCard(clip, n, src, words, links) {
+  let scenes = (clip.scenes || []).map((s) => ({ ...s }));
+  const proxy = links[src.proxy_path];
+  const player = h("video", { class: "clip-player", src: proxy || "", controls: true, playsinline: true, preload: "metadata", muted: false });
+  let stopAt = null, queueIdx = null;
+  player.addEventListener("timeupdate", () => {
+    if (stopAt === null || player.currentTime < stopAt) return;
+    if (queueIdx !== null && queueIdx + 1 < scenes.length) { queueIdx++; player.currentTime = scenes[queueIdx].start; stopAt = scenes[queueIdx].end; mark(queueIdx); return; }
+    player.pause(); stopAt = null; queueIdx = null; mark(-1);
+  });
+  const playRange = (a, b, idx = null) => { if (!proxy) return toast("The preview isn't ready"); queueIdx = idx; stopAt = b; player.currentTime = a; player.play().catch(() => {}); };
+  const total = () => scenes.reduce((a, s) => a + (s.end - s.start), 0);
+  const totalEl = h("span", { class: "mono" });
+  const list = h("ol", { class: "clip-scenes" });
+  const mark = (i) => [...list.children].forEach((li, k) => li.classList.toggle("on", k === i));
+  let saveT = null;
+  const save = (patch) => { clearTimeout(saveT); saveT = setTimeout(async () => { try { await q(sb.from("clips").update(patch).eq("id", clip.id)); } catch (e) { toast(`Not saved: ${e.message}`); } }, 400); };
+  const saveScenes = () => { save({ scenes }); drawScenes(); };
+  const textOf = (a, b) => words.filter((w) => w[0] >= a - 0.05 && w[0] < b).map((w) => w[2]).join(" ");
+  const nudge = (i, key, d) => {
+    const s = scenes[i];
+    const v = Math.round((s[key] + d) * 10) / 10;
+    if (key === "start" && (v < 0 || v > s.end - 0.5)) return;
+    if (key === "end" && (v < s.start + 0.5 || v > (src.duration_s || 1e9))) return;
+    s[key] = v; saveScenes();
+  };
+  const move = (i, d) => { const j = i + d; if (j < 0 || j >= scenes.length) return; [scenes[i], scenes[j]] = [scenes[j], scenes[i]]; saveScenes(); };
+  const tiny = (text, label, fn, extra = {}) => h("button", { class: "btn small ghost", type: "button", "aria-label": label, title: label, text, onclick: fn, ...extra });
+  function drawScenes() {
+    totalEl.textContent = `${Math.round(total())} s`;
+    totalEl.className = `mono ${total() > 60 ? "down" : ""}`;
+    list.replaceChildren(...scenes.map((s, i) => h("li", { class: "clip-scene" },
+      h("button", { class: "clip-thumb", type: "button", "aria-label": `Play scene ${i + 1}`, onclick: () => { playRange(s.start, s.end); mark(i); } },
+        s.thumb && links[s.thumb] ? h("img", { src: links[s.thumb], alt: "", loading: "lazy" }) : null, h("span", { class: "review-play" }, icon("i-play"))),
+      h("div", { class: "clip-scene-body" },
+        h("div", { class: "row small", style: "gap:8px" }, h("b", { text: `Scene ${i + 1}` }), h("span", { class: "mono muted", text: `${tc(s.start)} → ${tc(s.end)} · ${(s.end - s.start).toFixed(1)} s` })),
+        h("p", { class: "clip-words", text: textOf(s.start, s.end) || "(no speech)" }),
+        h("div", { class: "row clip-tools" },
+          h("span", { class: "muted small", text: "Start" }), tiny("−1s", "Start 1 s earlier", () => nudge(i, "start", -1)), tiny("+1s", "Start 1 s later", () => nudge(i, "start", 1)),
+          h("span", { class: "muted small", text: "End" }), tiny("−1s", "End 1 s earlier", () => nudge(i, "end", -1)), tiny("+1s", "End 1 s later", () => nudge(i, "end", 1)),
+          h("select", { class: "field", "aria-label": "Crop", style: "min-height:32px;width:auto", onchange: (e) => { s.crop = e.target.value; saveScenes(); } },
+            CROPS.map(([v, t]) => h("option", { value: v, selected: s.crop === v, text: t }))),
+          tiny("↑", "Move up", () => move(i, -1), { disabled: i === 0 }), tiny("↓", "Move down", () => move(i, 1), { disabled: i === scenes.length - 1 }),
+          tiny("✕", "Remove this scene", () => { scenes.splice(i, 1); saveScenes(); }))))));
+  }
+  drawScenes();
+
+  const inp = (id, label, value, key, attrs = {}) => {
+    const el = h(attrs.rows ? "textarea" : "input", { class: "field", id, value: value || "", ...attrs, oninput: (e) => save({ [key]: key === "tags" ? e.target.value.split(",").map((t) => t.trim()).filter(Boolean).slice(0, 15) : e.target.value }) });
+    if (attrs.rows) el.value = value || "";
+    return h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
+  };
+  const netSel = h("select", { class: "field", id: `cn-${clip.id}`, onchange: (e) => save({ channel_id: e.target.value || null }) },
+    h("option", { value: "", text: "Choose a network" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === clip.channel_id, text: c.title })));
+  const rendering = clip.status === "rendering";
+  const renderBtn = h("button", { class: "btn primary", type: "button", disabled: rendering, text: rendering ? "Rendering…" : clip.status === "done" ? "Render again" : "Render this Short", onclick: async (e) => {
+    clearTimeout(saveT);
+    if (!netSel.value) return toast("Pick the network this Short is for");
+    if (total() > 60 && !confirm(`This Short is ${Math.round(total())} s. YouTube Shorts work best under 60 s. Render anyway?`)) return;
+    e.currentTarget.disabled = true;
+    try {
+      await q(sb.from("clips").update({ scenes, channel_id: netSel.value }).eq("id", clip.id));
+      await clipperCall({ action: "render", clip_id: clip.id }); toast("Rendering: about 2–5 minutes"); render();
+    } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
+  } });
+  const result = clip.status === "done" && links[clip.output_path]
+    ? h("div", { class: "clip-result" }, h("video", { class: "clip-final", src: links[clip.output_path], poster: links[clip.thumb_path] || "", controls: true, playsinline: true, preload: "metadata" }),
+      h("div", { class: "row" }, h("a", { class: "btn small primary", href: "#/review", text: "Publish from Review" }), h("span", { class: "muted small", text: `${Math.round(clip.duration_s || 0)} s · rendered ${ago(clip.updated_at)}` })))
+    : null;
+  const statusPill = clip.status === "done" ? h("span", { class: "pill ok", text: "Rendered" }) : rendering ? h("span", { class: "pill info", text: "Rendering" })
+    : clip.status === "failed" ? h("span", { class: "pill crit", text: "Render failed" }) : null;
+  return h("section", { class: "card clip-card" },
+    h("div", { class: "card-head" }, h("div", { class: "row", style: "gap:10px" }, scorePill(clip.score), h("h2", { text: `Short ${n + 1}` }), statusPill),
+      h("div", { class: "row small" }, h("span", { class: "muted", text: "Length" }), totalEl)),
+    clip.reason ? h("p", { class: "muted", style: "margin:0", text: clip.reason }) : null,
+    clip.status === "failed" && clip.error ? h("pre", { class: "err", text: clip.error }) : null,
+    h("div", { class: "clip-layout" },
+      h("div", { class: "clip-side" }, player,
+        h("div", { class: "row" }, h("button", { class: "btn small", type: "button", text: "▶ Play the whole Short", onclick: () => { if (scenes.length) { playRange(scenes[0].start, scenes[0].end, 0); mark(0); } } }),
+          h("span", { class: "muted small", text: "Preview of the original. The render crops it to 9:16 with captions." })),
+        result),
+      h("div", { class: "clip-main" },
+        h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: `cn-${clip.id}`, text: "Network" }), netSel), inp(`ch-${clip.id}`, "Hook (on screen, first 3 s)", clip.hook, "hook", { maxlength: 60 })),
+        inp(`ct-${clip.id}`, "Title", clip.title, "title", { maxlength: 100 }),
+        inp(`cd-${clip.id}`, "Description", clip.description, "description", { rows: 3 }),
+        inp(`cg-${clip.id}`, "Tags (comma separated)", (clip.tags || []).join(", "), "tags"),
+        h("h3", { style: "margin:6px 0 0", text: "Scenes" }), list,
+        h("div", { class: "row" }, renderBtn,
+          h("button", { class: "btn ghost", type: "button", text: "Reset scenes", onclick: () => { scenes = (clip.ai_scenes || []).map((s) => ({ ...s })); saveScenes(); } }),
+          h("button", { class: "btn ghost", type: "button", text: "Discard this Short", onclick: async () => { if (!confirm("Discard this Short?")) return; await q(sb.from("clips").update({ status: "discarded" }).eq("id", clip.id)); render(); } })))));
+}
+
+// ==================================================================
 // Channels
 // ==================================================================
 // ==================================================================
