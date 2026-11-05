@@ -1988,11 +1988,36 @@ async function clipperSource(id) {
     return [head, h("section", { class: "card" },
       h("div", { class: "row" }, h("span", { class: `pill ${cls}`, text: label }), src.run_url ? h("a", { class: "small", href: src.run_url, target: "_blank", rel: "noopener", text: "Log" }) : null),
       CLIP_LIVE.includes(src.status) ? [bar(src.progress || 2, "var(--action)", true), h("p", { class: "muted", text: src.step || "Working…" }),
-        h("p", { class: "muted small", text: "A 1-hour video takes about 30–60 minutes. You can leave this page: it carries on." })] : null,
+        h("p", { class: "muted small", text: "A 30-minute video takes about 10 minutes, a 1-hour one about 20–30. You can leave this page: it carries on." })] : null,
       src.status === "failed" ? h("pre", { class: "err", text: src.error || "Something went wrong." }) : null)];
   }
   if (!clips.length) return [head, empty("No Shorts left for this video.", null)];
-  return [head, ...clips.map((c, n) => clipCard(c, n, src, words, links))];
+  const waiting = clips.filter((c) => c.status === "draft" || c.status === "failed");
+  const renderAll = waiting.length > 1 ? h("section", { class: "card clip-all" },
+    h("div", {}, h("b", { text: `${waiting.length} Shorts not rendered yet` }),
+      h("p", { class: "muted small", style: "margin:2px 0 0", text: "Check each one below, then render them together. Each takes about 2–6 minutes, at the same time." })),
+    h("button", { class: "btn primary", type: "button", text: `Render all ${waiting.length}`, onclick: async (e) => {
+      const btn = e.currentTarget;
+      const fresh = await q(sb.from("clips").select("id,idx,channel_id,scenes,status").in("id", waiting.map((c) => c.id)));
+      const ready = [], skipped = [];
+      for (const c of fresh.sort((a, b) => a.idx - b.idx)) {
+        const n = clips.findIndex((x) => x.id === c.id) + 1;
+        const sc = c.scenes || [];
+        if (!["draft", "failed"].includes(c.status)) continue;
+        if (!c.channel_id) skipped.push(`Short ${n}: pick a network`);
+        else if (!sc.length) skipped.push(`Short ${n}: no scenes`);
+        else if (sc.some((s) => s.kind === "narrator" && !(s.text || "").trim())) skipped.push(`Short ${n}: a narrator line is empty`);
+        else ready.push(c);
+      }
+      if (!ready.length) return toast(skipped.join(" · ") || "Nothing to render");
+      if (!confirm(`Render ${ready.length} Short${ready.length > 1 ? "s" : ""}?${skipped.length ? `\n\nNot rendered:\n${skipped.join("\n")}` : ""}`)) return;
+      btn.disabled = true;
+      const failed = [];
+      for (const c of ready) { try { await clipperCall({ action: "render", clip_id: c.id }); } catch (err) { failed.push(err.message); } }
+      toast(failed.length ? `Started ${ready.length - failed.length}, ${failed.length} failed: ${failed[0]}` : `Rendering ${ready.length} Short${ready.length > 1 ? "s" : ""}: about 2–6 minutes`);
+      render();
+    } })) : null;
+  return [head, renderAll, ...clips.map((c, n) => clipCard(c, n, src, words, links))];
 }
 
 const NARRATOR_WPS = 2.6;  // words per second, to estimate a narrator line before it's rendered
@@ -2006,27 +2031,178 @@ async function footageSearch(q, kind) {
   return data?.results || [];
 }
 
+// ---- 9:16 preview of a Short before rendering: crop, hook, word-by-word captions, narrator (browser voice), stock footage
+const CAP_ARABIC = /[؀-ۿݐ-ݿ]/;
+function captionGroups(timed) {
+  const groups = [];
+  for (const w of timed) {
+    const g = groups[groups.length - 1];
+    const len = g ? g.reduce((n, x) => n + x[2].length + 1, 0) : 0;
+    if (!g || g.length >= 3 || len + w[2].length > 18 || w[0] - g[g.length - 1][1] > 0.5 || /[.!?…،؟,]$/.test(g[g.length - 1][2])) groups.push([w]);
+    else g.push(w);
+  }
+  return groups;
+}
+function narratorWords(text, dur) {
+  const ws = (text || "").trim().split(/\s+/).filter(Boolean);
+  const chars = ws.reduce((n, w) => n + w.length + 1, 0) || 1;
+  const span = Math.max(0.5, dur - 0.4);
+  let t = 0;
+  return ws.map((w) => { const d = ((w.length + 1) / chars) * span; const out = [t, t + d, w]; t += d; return out; });
+}
+function browserVoice(lang) {
+  const all = window.speechSynthesis?.getVoices?.() || [];
+  return all.find((v) => v.lang?.toLowerCase().startsWith(lang) && /natural|neural|google|premium|enhanced/i.test(v.name)) || all.find((v) => v.lang?.toLowerCase().startsWith(lang)) || null;
+}
+
+function clipPreview({ getScenes, src, words, links, getHook, getLang, onScene }) {
+  const proxyUrl = links[src.proxy_path] || "";
+  const vid = h("video", { class: "cp-src", playsinline: true, preload: "auto", src: proxyUrl });
+  const stockV = h("video", { class: "cp-layer", playsinline: true, loop: true, hidden: true });
+  stockV.muted = true;
+  const stockI = h("img", { class: "cp-layer cp-photo", alt: "", hidden: true });
+  const bg = h("img", { class: "cp-bg", alt: "", hidden: true });
+  const hookEl = h("div", { class: "cp-hook", hidden: true });
+  const capEl = h("div", { class: "cp-cap" });
+  const big = h("button", { class: "cp-big", type: "button", "aria-label": "Play the preview" }, icon("i-play"));
+  const fill = h("div", { class: "cp-fill" });
+  const ticks = h("div", { class: "cp-ticks" });
+  const timeEl = h("span", { class: "mono small muted", text: "0:00" });
+  const toggle = h("button", { class: "btn small", type: "button", text: "▶ Play" });
+  const track = h("div", { class: "cp-track", role: "slider", "aria-label": "Position in the Short", tabindex: "0" }, ticks, fill);
+  const phone = h("div", { class: "cp-phone" }, bg, vid, stockV, stockI, hookEl, capEl, big);
+  let items = [], total = 0, i = -1, playing = false, single = false, clockStart = 0, raf = 0, words_ = [], groups = [];
+
+  const timeline = () => {
+    let t = 0;
+    items = getScenes().map((s) => {
+      const dur = s.kind === "narrator" ? sceneSeconds(s) : Math.max(0.3, s.end - s.start);
+      const it = { s, dur, t0: t }; t += dur; return it;
+    });
+    total = t;
+    ticks.replaceChildren(...items.slice(1).map((it) => h("span", { style: `left:${(it.t0 / (total || 1)) * 100}%` })));
+  };
+  const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, "0")}`;
+  const usesSource = (s) => !s.footage?.url || s.kind !== "narrator" || Number(s.under || 0) > 0;
+  const local = () => {
+    const it = items[i]; if (!it) return 0;
+    const wall = (performance.now() - clockStart) / 1000;
+    // follow the video's own clock (keeps captions on the words) unless it hasn't reached the scene yet or stalls
+    const own = vid.currentTime - it.s.start;
+    return !it.s.footage?.url && !vid.paused && vid.readyState >= 2 && own > -0.3 && Math.abs(own - wall) < 1.5 ? Math.max(0, own) : wall;
+  };
+  const stopMedia = () => { vid.pause(); stockV.pause(); try { speechSynthesis.cancel(); } catch { /* no speech */ } };
+
+  function show(k) {
+    const it = items[k]; if (!it) return;
+    const s = it.s, fo = s.footage?.url ? s.footage : null, narr = s.kind === "narrator";
+    i = k; onScene?.(k);
+    stopMedia();
+    phone.classList.toggle("fit", !fo && s.crop === "fit");
+    vid.dataset.crop = s.crop || "center";
+    vid.hidden = !!fo;
+    bg.hidden = !(!fo && s.crop === "fit" && s.thumb && links[s.thumb]);
+    if (!bg.hidden) bg.src = links[s.thumb];
+    stockV.hidden = !(fo && fo.type !== "image");
+    stockI.hidden = !(fo && fo.type === "image");
+    if (fo && fo.type !== "image") { if (stockV.dataset.u !== fo.preview) { stockV.src = fo.preview || fo.url; stockV.dataset.u = fo.preview; } stockV.currentTime = 0; stockV.play().catch(() => {}); }
+    if (fo && fo.type === "image") { stockI.src = fo.preview || fo.url; stockI.style.animation = "none"; void stockI.offsetWidth; stockI.style.animation = `cp-push ${it.dur}s linear forwards`; }
+    if (usesSource(s) && proxyUrl) {
+      vid.currentTime = s.start;
+      vid.muted = narr && !Number(s.under || 0);
+      vid.volume = narr ? Math.min(1, Number(s.under || 0) * 2) : 1;
+      vid.play().catch(() => {});
+    }
+    if (narr && (s.text || "").trim() && window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(s.text.trim());
+      const lang = getLang(); u.lang = lang; const v = browserVoice(lang); if (v) u.voice = v;
+      setTimeout(() => { if (playing && i === k) speechSynthesis.speak(u); }, 60);  // Chrome drops a line spoken right after cancel()
+    }
+    words_ = narr ? narratorWords(s.text, it.dur)
+      : words.filter((w) => w[0] >= s.start - 0.05 && w[0] < s.end).map((w) => [w[0] - s.start, Math.min(w[1], s.end) - s.start, w[2]]);
+    groups = captionGroups(words_);
+    clockStart = performance.now();
+  }
+
+  function paintCaption(t) {
+    const g = groups.find((gr, n) => t >= gr[0][0] - 0.02 && t < (groups[n + 1]?.[0][0] ?? gr[gr.length - 1][1] + 0.12));
+    if (!g) { capEl.replaceChildren(); return; }
+    const arabic = g.some((w) => CAP_ARABIC.test(w[2]));
+    capEl.dir = arabic ? "rtl" : "ltr";
+    capEl.classList.toggle("ar", arabic);
+    const on = g.findIndex((w, n) => t >= w[0] && t < (g[n + 1]?.[0] ?? 1e9));
+    capEl.replaceChildren(...g.map((w, n) => h("span", { class: n === on ? "on" : "", text: arabic ? w[2] : w[2].toUpperCase() })));
+  }
+
+  function tick() {
+    raf = 0;
+    if (!phone.isConnected) { stop(); return; }
+    if (!playing) return;
+    const it = items[i];
+    if (!it) { stop(); return; }
+    const t = local();
+    if (t >= it.dur) {
+      if (single || i + 1 >= items.length) { stop(true); return; }
+      show(i + 1);
+    } else {
+      paintCaption(t);
+      const g = it.t0 + Math.max(0, t);
+      const hook = (getHook() || "").trim();
+      hookEl.hidden = !(hook && g < 3.2);
+      if (!hookEl.hidden) { hookEl.textContent = CAP_ARABIC.test(hook) ? hook : hook.toUpperCase(); hookEl.dir = "auto"; }
+      fill.style.width = `${Math.min(100, (g / (total || 1)) * 100)}%`;
+      timeEl.textContent = `${fmt(g)} / ${fmt(total)}`;
+    }
+    raf = requestAnimationFrame(tick);
+  }
+  function play(k = 0, one = false) {
+    if (!proxyUrl) return toast("The preview isn't ready");
+    timeline();
+    if (!items.length) return;
+    if (clipPreview.active && clipPreview.active !== api) clipPreview.active.stop();
+    clipPreview.active = api;
+    single = one; playing = true;
+    phone.classList.add("playing"); toggle.textContent = "❚❚ Pause";
+    show(Math.max(0, Math.min(k, items.length - 1)));
+    if (!raf) raf = requestAnimationFrame(tick);
+  }
+  function stop(ended = false) {
+    playing = false; stopMedia();
+    if (raf) cancelAnimationFrame(raf); raf = 0;
+    phone.classList.remove("playing"); toggle.textContent = "▶ Play"; hookEl.hidden = true;
+    if (ended) { capEl.replaceChildren(); onScene?.(-1); i = -1; fill.style.width = "0%"; }
+  }
+  toggle.addEventListener("click", () => (playing ? stop() : play(i > 0 ? i : 0)));
+  big.addEventListener("click", () => (playing ? stop() : play(i > 0 ? i : 0)));
+  phone.addEventListener("click", (e) => { if (e.target === phone || e.target === vid || e.target.classList.contains("cp-layer")) playing ? stop() : play(i > 0 ? i : 0); });
+  const seekTo = (frac) => { timeline(); const t = frac * total; const k = items.findIndex((it) => t >= it.t0 && t < it.t0 + it.dur); play(k < 0 ? items.length - 1 : k); };
+  track.addEventListener("click", (e) => { const r = track.getBoundingClientRect(); seekTo((e.clientX - r.left) / r.width); });
+  track.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") { e.preventDefault(); play(Math.max(i, 0) + 1); } else if (e.key === "ArrowLeft") { e.preventDefault(); play(Math.max(i - 1, 0)); }
+  });
+  window.speechSynthesis?.getVoices?.();  // loads the voice list early
+  timeline();
+  timeEl.textContent = `0:00 / ${fmt(total)}`;
+  const el = h("div", { class: "cp" }, phone,
+    h("div", { class: "cp-bar" }, toggle, track, timeEl),
+    h("p", { class: "muted small", style: "margin:0", text: "Preview. The narrator uses your browser's voice and “Follow face” shows the centre: the render uses the chosen voice and finds the face." }));
+  const api = { el, play, stop, refresh: () => { timeline(); if (!playing) timeEl.textContent = `0:00 / ${fmt(total)}`; } };
+  return api;
+}
+
 function clipCard(clip, n, src, words, links) {
   let scenes = (clip.scenes || []).map((s) => ({ kind: "original", ...s }));
-  const proxy = links[src.proxy_path];
-  const player = h("video", { class: "clip-player", src: proxy || "", controls: true, playsinline: true, preload: "metadata" });
-  let stopAt = null, queueIdx = null;
-  player.addEventListener("timeupdate", () => {
-    if (stopAt === null || player.currentTime < stopAt) return;
-    if (queueIdx !== null && queueIdx + 1 < scenes.length) { queueIdx++; const s = scenes[queueIdx]; player.currentTime = s.start; stopAt = s.start + sceneSeconds(s); mark(queueIdx); return; }
-    player.pause(); stopAt = null; queueIdx = null; mark(-1);
-  });
-  const playScene = (i, chain = false) => {
-    if (!proxy) return toast("The preview isn't ready");
-    const s = scenes[i]; queueIdx = chain ? i : null; stopAt = s.start + sceneSeconds(s); player.currentTime = s.start; player.play().catch(() => {}); mark(i);
-  };
+  let hookIn = null, langSel = null;
+  const preview = clipPreview({ getScenes: () => scenes, src, words, links, getHook: () => hookIn?.value ?? clip.hook ?? "",
+    getLang: () => langSel?.value || (clip.narrator_lang || src.language || "en").slice(0, 2), onScene: (k) => mark(k) });
+  const playScene = (i, chain = false) => preview.play(i, !chain);
   const total = () => scenes.reduce((a, s) => a + sceneSeconds(s), 0);
   const totalEl = h("span", { class: "mono" });
   const list = h("ol", { class: "clip-scenes" });
   const mark = (i) => [...list.children].forEach((li, k) => li.classList.toggle("on", k === i));
   let saveT = null;
   const save = (patch) => { clearTimeout(saveT); saveT = setTimeout(async () => { try { await q(sb.from("clips").update(patch).eq("id", clip.id)); } catch (e) { toast(`Not saved: ${e.message}`); } }, 400); };
-  const saveScenes = (redraw = true) => { save({ scenes }); if (redraw) drawScenes(); else totalEl.textContent = `≈ ${Math.round(total())} s`; };
+  const saveScenes = (redraw = true) => { save({ scenes }); if (redraw) drawScenes(); else totalEl.textContent = `≈ ${Math.round(total())} s`; preview.refresh(); };
   const textOf = (a, b) => words.filter((w) => w[0] >= a - 0.05 && w[0] < b).map((w) => w[2]).join(" ");
   const nudge = (i, key, d) => {
     const s = scenes[i];
@@ -2121,7 +2297,7 @@ function clipCard(clip, n, src, words, links) {
 
   // narrator: brief, language, voice
   const defLang = (clip.narrator_lang || channelById(clip.channel_id)?.language || src.language || "en").slice(0, 2);
-  const langSel = h("select", { class: "field", id: `nl-${clip.id}` }, CLIP_LANGS.filter(([v]) => v !== "auto").map(([v, t]) => h("option", { value: v, selected: v === defLang, text: t })));
+  langSel = h("select", { class: "field", id: `nl-${clip.id}` }, CLIP_LANGS.filter(([v]) => v !== "auto").map(([v, t]) => h("option", { value: v, selected: v === defLang, text: t })));
   const voiceSel = h("select", { class: "field", id: `nv-${clip.id}` });
   const fillVoices = () => {
     const opts = edgeVoices(langSel.value);
@@ -2136,6 +2312,8 @@ function clipCard(clip, n, src, words, links) {
   brief.value = clip.brief || "";
   const hasNarrator = () => scenes.some((s) => s.kind === "narrator");
 
+  const hookField = inp(`ch-${clip.id}`, "Hook (on screen, first 3 s)", clip.hook, "hook", { maxlength: 60 });
+  hookIn = hookField.querySelector("input");
   const rendering = clip.status === "rendering";
   const doRender = async (btn) => {
     clearTimeout(saveT);
@@ -2182,10 +2360,7 @@ function clipCard(clip, n, src, words, links) {
     clip.reason ? h("p", { class: "muted", style: "margin:0", text: clip.reason }) : null,
     clip.status === "failed" && clip.error ? h("pre", { class: "err", text: clip.error }) : null,
     h("div", { class: "clip-layout" },
-      h("div", { class: "clip-side" }, player,
-        h("div", { class: "row" }, h("button", { class: "btn small", type: "button", text: "▶ Play the whole Short", onclick: () => { if (scenes.length) playScene(0, true); } }),
-          h("span", { class: "muted small", text: "Preview of the original pictures. Narrator lines and new footage are heard and seen in the render." })),
-        result),
+      h("div", { class: "clip-side" }, preview.el, result),
       h("div", { class: "clip-main" },
         h("div", { class: "clip-brief" },
           h("div", { class: "field-wrap" }, h("label", { for: `nb-${clip.id}`, text: "What do you want? (leave empty to keep the clip as it is)" }), brief),
@@ -2193,7 +2368,7 @@ function clipCard(clip, n, src, words, links) {
             h("div", { class: "field-wrap" }, h("label", { for: `nl-${clip.id}`, text: "Narrator language" }), langSel),
             h("div", { class: "field-wrap" }, h("label", { for: `nv-${clip.id}`, text: "Narrator voice" }), voiceSel)),
           h("div", { class: "row" }, goBtn, renderBtn)),
-        inp(`ch-${clip.id}`, "Hook (on screen, first 3 s)", clip.hook, "hook", { maxlength: 60 }),
+        hookField,
         inp(`ct-${clip.id}`, "Title", clip.title, "title", { maxlength: 100 }),
         inp(`cd-${clip.id}`, "Description", clip.description, "description", { rows: 3 }),
         inp(`cg-${clip.id}`, "Tags (comma separated)", (clip.tags || []).join(", "), "tags"),
