@@ -281,32 +281,212 @@ async function makeIdea({ title, niche_id, score, sources, channel_id }) {
 // ==================================================================
 // Home
 // ==================================================================
+// ---------- Home charts (SVG, no library) ----------
+const NET_COLORS = ["#FF7A1A", "#60A5FA", "#34D399", "#F472B6", "#FBBF24", "#A78BFA", "#22D3EE", "#F87171"];
+const netColor = (id) => NET_COLORS[Math.max(0, state.channels.findIndex((c) => c.id === id)) % NET_COLORS.length];
+const utcDay = (d) => d.toISOString().slice(0, 10);
+const dayLabel = (k) => new Date(`${k}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+const chartLabel = (attrs, text) => { const t = svg("text", { "font-size": "11", fill: "#A1A1AA", ...attrs }); t.textContent = text; return t; };
+function chartMax(v) { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)); return Math.ceil(v / p / (v / p > 5 ? 2 : 1)) * p * (v / p > 5 ? 2 : 1); }
+
+/** Lines over days, one per series, with a hover readout. series: [{name, color, values}] */
+function multiLine(labels, series, { label, unit = "" }) {
+  const narrow = window.innerWidth < 600;
+  const w = narrow ? 380 : 720, ht = narrow ? 230 : 240, pl = 40, pr = 12, pt = 12, pb = 26;
+  const max = chartMax(Math.max(1, ...series.flatMap((s) => s.values)));
+  const X = (i) => pl + (i / Math.max(labels.length - 1, 1)) * (w - pl - pr);
+  const Y = (v) => pt + (1 - v / max) * (ht - pt - pb);
+  const g = svg("svg", { viewBox: `0 0 ${w} ${ht}`, role: "img", "aria-label": label, class: "chart-svg" });
+  [0, 0.25, 0.5, 0.75, 1].forEach((f) => {
+    g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.06)" }));
+    g.append(chartLabel({ x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end" }, fmt(max * f)));
+  });
+  const ticks = Math.min(narrow ? 4 : 6, labels.length);
+  for (let k = 0; k < ticks; k++) {
+    const i = Math.round((k / Math.max(ticks - 1, 1)) * (labels.length - 1));
+    g.append(chartLabel({ x: X(i), y: ht - 8, "text-anchor": k === 0 ? "start" : k === ticks - 1 ? "end" : "middle" }, dayLabel(labels[i])));
+  }
+  for (const s of series) {
+    g.append(svg("polyline", { fill: "none", stroke: s.color, "stroke-width": series.length > 1 ? "2" : "2.5", "stroke-linejoin": "round", "stroke-linecap": "round",
+      points: s.values.map((v, i) => `${X(i)},${Y(v)}`).join(" ") }));
+  }
+  const guide = svg("line", { y1: pt, y2: ht - pb, stroke: "rgba(255,255,255,.35)", "stroke-dasharray": "3 3", visibility: "hidden" });
+  const dots = series.map((s) => svg("circle", { r: "4", fill: s.color, stroke: "#121316", "stroke-width": "2", visibility: "hidden" }));
+  g.append(guide, ...dots);
+  const tip = h("div", { class: "chart-tip", hidden: true });
+  const wrap = h("div", { class: "chart-wrap" }, g, tip);
+  const show = (ev) => {
+    const box = g.getBoundingClientRect();
+    const x = ((ev.clientX - box.left) / box.width) * w;
+    const i = Math.max(0, Math.min(labels.length - 1, Math.round(((x - pl) / (w - pl - pr)) * (labels.length - 1))));
+    guide.setAttribute("x1", X(i)); guide.setAttribute("x2", X(i)); guide.setAttribute("visibility", "visible");
+    dots.forEach((d, k) => { d.setAttribute("cx", X(i)); d.setAttribute("cy", Y(series[k].values[i])); d.setAttribute("visibility", "visible"); });
+    const rows = series.map((s) => ({ s, v: s.values[i] })).sort((a, b) => b.v - a.v);
+    tip.replaceChildren(h("div", { class: "tip-day", text: dayLabel(labels[i]) }),
+      ...rows.map(({ s, v }) => h("div", { class: "tip-row" }, h("span", { class: "dot", style: `background:${s.color}` }), h("span", { class: "tip-name", text: s.name }), h("b", { text: `${fmt(v)}${unit}` }))));
+    tip.hidden = false;
+    const left = (X(i) / w) * box.width;
+    tip.style.left = `${Math.min(Math.max(left, 70), box.width - 70)}px`;
+  };
+  const hide = () => { tip.hidden = true; guide.setAttribute("visibility", "hidden"); dots.forEach((d) => d.setAttribute("visibility", "hidden")); };
+  g.addEventListener("pointermove", show); g.addEventListener("pointerdown", show); g.addEventListener("pointerleave", hide);
+  return wrap;
+}
+
+/** Horizontal bars. items: [{label, value, color, note}] */
+function hBars(items, fmtV = fmt) {
+  const max = Math.max(1, ...items.map((i) => i.value));
+  return h("div", { class: "hbars" }, items.map((i) => h("div", { class: "hbar" },
+    h("div", { class: "hbar-label" }, i.color ? h("span", { class: "dot", style: `background:${i.color}` }) : null, h("span", { text: i.label })),
+    h("div", { class: "hbar-track" }, h("div", { style: `width:${Math.max((i.value / max) * 100, i.value ? 2 : 0)}%;background:${i.color || "var(--ink)"}` })),
+    h("div", { class: "hbar-val mono", text: fmtV(i.value) }, i.note ? h("span", { class: "muted small", text: ` ${i.note}` }) : null))));
+}
+
+/** Stacked columns per week. weeks: [{label, parts: [{color, value, name}]}] */
+function stackedCols(weeks, label) {
+  const narrow = window.innerWidth < 600;
+  const w = narrow ? 380 : 720, ht = narrow ? 200 : 200, pl = 28, pr = 8, pt = 20, pb = 26;
+  const max = chartMax(Math.max(1, ...weeks.map((x) => x.parts.reduce((a, p) => a + p.value, 0))));
+  const bw = (w - pl - pr) / weeks.length;
+  const Y = (v) => pt + (1 - v / max) * (ht - pt - pb);
+  const g = svg("svg", { viewBox: `0 0 ${w} ${ht}`, role: "img", "aria-label": label, class: "chart-svg" });
+  [0, 0.5, 1].forEach((f) => {
+    g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.06)" }));
+    g.append(chartLabel({ x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end" }, String(Math.round(max * f))));
+  });
+  weeks.forEach((wk, i) => {
+    let base = 0;
+    const x = pl + i * bw + bw * 0.18, cw = bw * 0.64;
+    const total = wk.parts.reduce((a, p) => a + p.value, 0);
+    for (const p of wk.parts.filter((p) => p.value)) {
+      const r = svg("rect", { x, width: cw, y: Y(base + p.value), height: Math.max(Y(base) - Y(base + p.value) - 1, 1), rx: "2", fill: p.color });
+      const t = svg("title"); t.textContent = `${wk.label}: ${p.name} ${p.value}`; r.append(t);
+      g.append(r); base += p.value;
+    }
+    if (total) g.append(chartLabel({ x: x + cw / 2, y: Y(total) - 4, "text-anchor": "middle", fill: "#FAFAFA" }, String(total)));
+    if (weeks.length <= (narrow ? 5 : 8) || i % 2 === 0) g.append(chartLabel({ x: x + cw / 2, y: ht - 8, "text-anchor": "middle" }, wk.label));
+  });
+  return g;
+}
+
+const HOME_METRICS = { views: ["Views", (d) => Number(d.views || 0), ""], watch: ["Watch hours", (d) => Number(d.watch_minutes || 0) / 60, " h"],
+  subs: ["Net subscribers", (d) => Number(d.subs_gained || 0) - Number(d.subs_lost || 0), ""], shorts: ["Shorts views", (d) => Number(d.shorts_views || 0), ""] };
+
 VIEWS.home = async () => {
   const days = state.period;
-  const [rows, daily, alerts, ideas, snaps, vids] = await Promise.all([
+  const net = state.channel;
+  const one = net !== "all";
+  const since = new Date(Date.now() - days * 864e5);
+  const sinceIso = since.toISOString();
+  const pick = (p) => (one ? p.eq("channel_id", net) : p);
+  const [allRows, dailyRows, alerts, ideas, snaps, vids, stages, renders, queue] = await Promise.all([
     networkOverview(days),
-    q(sb.rpc("portfolio_daily", { p_days: days })),
+    q(pick(sb.from("channel_daily_stats").select("channel_id,day,views,watch_minutes,subs_gained,subs_lost,shorts_views")).gte("day", utcDay(since)).order("day").limit(5000)),
     q(sb.from("alerts").select("*").is("resolved_at", null).order("severity").order("created_at", { ascending: false }).limit(8)),
-    q(sb.from("ideas").select("*").in("stage", ["new", "shortlisted"]).order("score", { ascending: false, nullsFirst: false }).limit(5)),
+    q(pick(sb.from("ideas").select("*")).in("stage", ["new", "shortlisted"]).order("score", { ascending: false, nullsFirst: false }).limit(5)),
     q(sb.from("channel_snapshots").select("channel_id,total_views,captured_at").order("captured_at", { ascending: false }).limit(300)),
-    q(sb.from("v_own_video_latest").select("channel_id,views,likes,published_at")),
+    q(sb.from("v_own_video_latest").select("youtube_video_id,channel_id,title,is_short,views,likes,vs_baseline,published_at")),
+    q(pick(sb.from("ideas").select("stage,channel_id")).limit(5000)),
+    q(pick(sb.from("render_jobs").select("status,channel_id,created_at")).gte("created_at", sinceIso).limit(5000)),
+    q(pick(sb.from("publish_queue").select("status,channel_id,slot_at,updated_at")).neq("status", "cancelled").limit(5000)),
   ]);
+  const rows = one ? allRows.filter((r) => r.channel_id === net) : allRows;
   const live = liveCounts(snaps, vids);
   const sum = (k) => rows.reduce((a, r) => a + Number(r[k] || 0), 0);
   const connected = rows.some((r) => r.connected);
-  const kpi = (label, value, d, series) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
-    h("div", { class: "foot" }, d, series ? spark(series) : null));
+  const metric = HOME_METRICS[state.homeMetric] ? state.homeMetric : "views";
+  const [mLabel, mValue, mUnit] = HOME_METRICS[metric];
+
+  // days axis: from the start of the period to the last day YouTube Analytics has (about 2 days behind)
+  const lastDay = dailyRows.length ? dailyRows[dailyRows.length - 1].day : utcDay(new Date(Date.now() - 2 * 864e5));
+  const labels = [];
+  for (let t = Date.parse(`${utcDay(since)}T00:00:00Z`); utcDay(new Date(t)) <= lastDay; t += 864e5) labels.push(utcDay(new Date(t)));
+  const byChannel = {};
+  for (const d of dailyRows) ((byChannel[d.channel_id] ||= {})[d.day] = mValue(d));
+  const nets = (one ? [net] : rows.map((r) => r.channel_id)).filter((id) => channelById(id));
+  const series = nets.map((id) => ({ name: channelById(id).title, color: netColor(id), values: labels.map((k) => byChannel[id]?.[k] || 0) }));
+  const totals = labels.map((_, i) => series.reduce((a, s) => a + s.values[i], 0));
+  const lineSeries = state.homeSplit === "total" || one ? [{ name: one ? series[0]?.name || "Total" : "All networks", color: one ? netColor(net) : "#FAFAFA", values: totals }] : series;
+
+  const kpi = (label, value, d, spk) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }),
+    h("div", { class: "foot" }, d, spk ? spark(spk) : null));
   const na = h("span", { class: "flat", text: "connect YouTube" });
+  const dailyOf = (fn) => labels.map((k) => dailyRows.filter((d) => d.day === k).reduce((a, d) => a + fn(d), 0));
+
+  // published videos per week, stacked by network
+  const nWeeks = Math.min(13, Math.max(4, Math.ceil(days / 7)));
+  const weekStart = (t) => { const d = new Date(t); d.setUTCHours(0, 0, 0, 0); d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); return d.getTime(); };
+  const thisWeek = weekStart(Date.now());
+  const myVids = vids.filter((v) => !one || v.channel_id === net);
+  const weeks = [...Array(nWeeks)].map((_, i) => {
+    const ws = thisWeek - (nWeeks - 1 - i) * 7 * 864e5;
+    const inWeek = myVids.filter((v) => v.published_at && weekStart(Date.parse(v.published_at)) === ws);
+    return { label: dayLabel(utcDay(new Date(ws))), parts: nets.map((id) => ({ name: channelById(id).title, color: netColor(id), value: inWeek.filter((v) => v.channel_id === id).length })) };
+  });
+
+  // views by network for the period
+  const netBars = rows.map((r) => ({ label: r.title, value: Number(r.views || 0), color: netColor(r.channel_id),
+    note: r.views_prev ? `${r.views >= r.views_prev ? "+" : ""}${Math.round(((r.views - r.views_prev) / r.views_prev) * 100)}%` : "" })).sort((a, b) => b.value - a.value);
+
+  // pipeline
+  const stageOrder = [["new", "New ideas"], ["shortlisted", "Shortlisted"], ["assigned", "Assigned"], ["scripted", "Scripted"], ["produced", "Video made"], ["scheduled", "Scheduled"], ["published", "Published"]];
+  const stageCount = (st) => stages.filter((x) => x.stage === st).length;
+  const pipeBars = stageOrder.filter(([st]) => stageCount(st) || ["new", "scheduled", "published"].includes(st))
+    .map(([st, lbl]) => ({ label: lbl, value: stageCount(st), color: st === "published" ? "var(--preview)" : st === "scheduled" ? "var(--signal)" : "var(--action)" }));
+  const rDone = renders.filter((r) => r.status === "done").length, rFailed = renders.filter((r) => r.status === "failed").length;
+  const upcoming = queue.filter((r) => ["queued", "uploading", "scheduled"].includes(r.status) && (!r.slot_at || Date.parse(r.slot_at) > Date.now()));
+  const nextWeekSlots = upcoming.filter((r) => !r.slot_at || Date.parse(r.slot_at) < Date.now() + 7 * 864e5).length;
+
+  // top videos published in the period
+  const top = myVids.filter((v) => v.published_at && Date.parse(v.published_at) >= since.getTime()).sort((a, b) => Number(b.views || 0) - Number(a.views || 0)).slice(0, 6);
+
+  const lastSync = rows.map((r) => channelById(r.channel_id)?.stats_synced_at).filter(Boolean).sort().pop();
+  const netSelect = h("select", { class: "field", "aria-label": "Network", style: "min-height:36px;width:auto", onchange: (e) => setChannel(e.target.value) },
+    h("option", { value: "all", selected: !one, text: "All networks" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === net, text: c.title })));
+  const refreshBtn = h("button", { class: "btn", type: "button", title: lastSync ? `Last refresh ${when(lastSync)}` : "", text: "Refresh", onclick: (e) => refreshChannel(one ? net : null, e.currentTarget) });
 
   return [
-    pageHead("Home", `${rows.length} channels · last ${days} days`,
-      seg([[7, "7d"], [28, "28d"], [90, "90d"]], days, (v) => { state.period = v; render(); }, "Period")),
+    pageHead("Home", `${one ? channelById(net)?.title : `${rows.length} networks`} · last ${days} days · updated ${lastSync ? ago(lastSync) : "—"}`,
+      netSelect, seg([[7, "7d"], [28, "28d"], [90, "90d"]], days, (v) => { state.period = v; render(); }, "Period"), refreshBtn),
     h("section", { class: "kpis" },
-      kpi("Views", fmt(sum("views")), connected ? delta(sum("views"), sum("views_prev")) : na, daily.map((d) => d.views)),
-      kpi("Watch hours", fmt(sum("watch_hours")), connected ? delta(sum("watch_hours"), sum("watch_hours_prev")) : na, daily.map((d) => d.watch_hours)),
-      kpi("Net subscribers", (sum("subs_net") >= 0 ? "+" : "") + fmt(sum("subs_net")), connected ? delta(sum("subs_net"), sum("subs_net_prev")) : na),
-      kpi("Videos published", fmt(sum("uploads")), h("span", { class: "flat", text: `last ${days} days` }))),
-    h("p", { class: "muted small note-lag", text: "Views, watch hours and subscribers above come from YouTube Analytics, about 2 days behind. Each channel below shows its live counts from the last refresh." }),
+      kpi("Views", fmt(sum("views")), connected ? delta(sum("views"), sum("views_prev")) : na, dailyOf(HOME_METRICS.views[1])),
+      kpi("Watch hours", fmt(sum("watch_hours")), connected ? delta(sum("watch_hours"), sum("watch_hours_prev")) : na, dailyOf(HOME_METRICS.watch[1])),
+      kpi("Net subscribers", (sum("subs_net") >= 0 ? "+" : "") + fmt(sum("subs_net")), connected ? delta(sum("subs_net"), sum("subs_net_prev")) : na, dailyOf(HOME_METRICS.subs[1])),
+      kpi("Videos published", fmt(sum("uploads")), h("span", { class: "flat", text: `last ${days} days` })),
+      kpi("Coming up", fmt(upcoming.length), h("span", { class: nextWeekSlots ? "flat" : "down", text: nextWeekSlots ? `${nextWeekSlots} in the next 7 days` : "nothing in the next 7 days" }))),
+
+    h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", { text: `${mLabel} per day` }),
+        h("div", { class: "row" },
+          one ? null : seg([["split", "By network"], ["total", "Total"]], state.homeSplit === "total" ? "total" : "split", (v) => { state.homeSplit = v; render(); }, "Split"),
+          seg(Object.entries(HOME_METRICS).map(([k, [l]]) => [k, l]), metric, (v) => { state.homeMetric = v; render(); }, "Metric"))),
+      labels.length > 1 && dailyRows.length ? multiLine(labels, lineSeries, { label: `${mLabel} per day`, unit: mUnit })
+        : empty(connected ? "No daily numbers yet for this period." : "Connect YouTube on a network to see daily numbers."),
+      lineSeries.length > 1 ? h("div", { class: "legend" }, lineSeries.map((s) => h("span", { class: "legend-item" }, h("span", { class: "dot", style: `background:${s.color}` }), s.name))) : null,
+      h("p", { class: "muted small", style: "margin:6px 0 0", text: "From YouTube Analytics, about 2 days behind." })),
+
+    h("div", { class: "cols" },
+      h("section", { class: "card grow3" }, h("div", { class: "card-head" }, h("h2", { text: "Videos published per week" }), h("a", { href: "#/results", class: "small", text: "Results" })),
+        stackedCols(weeks, "Videos published per week"),
+        !one && nets.length > 1 ? h("div", { class: "legend" }, nets.map((id) => h("span", { class: "legend-item" }, h("span", { class: "dot", style: `background:${netColor(id)}` }), channelById(id).title))) : null),
+      one ? null : h("section", { class: "card grow2" }, h("div", { class: "card-head" }, h("h2", { text: `Views by network, ${days} d` })),
+        netBars.some((b) => b.value) ? hBars(netBars) : empty("No views in this period yet."))),
+
+    h("div", { class: "cols" },
+      h("section", { class: "card grow2" }, h("div", { class: "card-head" }, h("h2", { text: "Pipeline" }), h("a", { href: "#/ideas", class: "small", text: "Ideas" })),
+        hBars(pipeBars),
+        h("div", { class: "row small muted", style: "margin-top:10px;gap:14px" },
+          h("span", { text: `Renders, ${days} d: ${rDone} done` }), rFailed ? h("span", { class: "down", text: `${rFailed} failed` }) : null,
+          h("a", { href: "#/automation", text: `${upcoming.length} in the publishing queue` }))),
+      h("section", { class: "card grow3" }, h("div", { class: "card-head" }, h("h2", { text: `Top videos, last ${days} d` }), h("a", { href: "#/results", class: "small", text: "All results" })),
+        top.length ? top.map((v) => h("a", { class: "listrow link", href: youtubeLink(v), target: "_blank", rel: "noopener" },
+          h("span", { class: "dot", style: `background:${netColor(v.channel_id)}` }),
+          h("div", { style: "flex:1 1 220px;min-width:0" }, h("div", { style: "font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap", text: v.title }),
+            h("div", { class: "muted small", text: `${channelById(v.channel_id)?.title || ""} · ${v.is_short ? "Short" : "Video"} · ${ago(v.published_at)}` })),
+          h("div", { class: "num" }, h("div", { class: "mono", text: fmt(v.views) }),
+            v.vs_baseline ? h("div", { class: `small ${v.vs_baseline >= 1 ? "up" : "down"}`, text: `${Number(v.vs_baseline).toFixed(1)}× usual` }) : null)))
+          : empty("No videos published in this period."))),
+
     h("div", { class: "card-head" }, h("h2", { text: "Networks" }), h("a", { href: "#/channels", class: "small", text: "Manage channels" })),
     rows.length ? h("section", { class: "monitors", "aria-label": "Networks" }, rows.map((r) => monitor(r, live[r.channel_id], days)))
       : empty("No networks yet.", h("a", { class: "btn primary", href: "#/channels", text: "Create a network" })),
