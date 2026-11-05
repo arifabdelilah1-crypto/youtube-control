@@ -201,7 +201,15 @@ def transcribe(src: Path, sid: str, duration: float, language: str | None) -> tu
     from faster_whisper import WhisperModel
     wav = WORK / "audio.wav"
     run(["ffmpeg", "-y", "-v", "error", "-i", str(src), "-vn", "-ac", "1", "-ar", "16000", str(wav)])
-    model_name = "small" if duration <= 50 * 60 else "base"
+    if not language:  # find the language on the first minute first: the model size depends on it
+        head = WORK / "head.wav"
+        run(["ffmpeg", "-y", "-v", "error", "-ss", str(min(60, duration / 4)), "-t", "45", "-i", str(wav), str(head)])
+        _, probe_info = WhisperModel("base", device="cpu", compute_type="int8").transcribe(str(head), beam_size=1)
+        language = probe_info.language if probe_info.language_probability > 0.5 else None
+        log(f"Language: {probe_info.language} ({probe_info.language_probability:.0%})")
+    # bigger models hear accents and dialects (Darija, Gulf, Latin American Spanish) much better; they're slower on the free machine
+    hard = (language or "") in ("ar",)
+    model_name = ("medium" if duration <= (35 if hard else 15) * 60 else "small" if duration <= 60 * 60 else "base")
     log(f"Transcribing {duration / 60:.0f} min with whisper {model_name}")
     model = WhisperModel(model_name, device="cpu", compute_type="int8", cpu_threads=os.cpu_count() or 4)
     segments, info = model.transcribe(str(wav), language=language, word_timestamps=True, vad_filter=True, beam_size=1,
@@ -324,7 +332,7 @@ def analyze(sid: str) -> None:
     set_source(sid, words=words, scene_cuts=cuts, step="Choosing the best moments")
 
     transcript = "\n".join(f"[{s:.1f}-{e:.1f}] {t}" for s, e, t in lines)
-    shorts = call_clipper({"action": "pick", "source_id": sid, "transcript": transcript, "duration": info["duration"],
+    shorts = call_clipper({"action": "pick", "source_id": sid, "title": src.get("title"), "transcript": transcript, "duration": info["duration"],
                            "language": detected, "settings": settings, "scenes": cuts})["shorts"]
 
     set_source(sid, step="Preparing the scenes")
@@ -334,11 +342,26 @@ def analyze(sid: str) -> None:
     rows = []
     for n, s in enumerate(shorts):
         scenes = []
+        spans: list[tuple[float, float]] = []
         for seg in s["segments"]:
             snapped = snap(seg, words, cuts, info["duration"])
             if not snapped:
                 continue
-            for a, b in split_scenes(*snapped, cuts):
+            a, b = snapped
+            for pa, pb in spans:  # never play the same second twice: trim what overlaps a span already taken
+                if a < pb and b > pa:
+                    if a >= pa:
+                        a = pb
+                    elif b <= pb:
+                        b = pa
+            if b - a < 1.5:
+                continue
+            if spans and abs(a - spans[-1][1]) < 0.05:  # touching the previous span: one continuous span
+                spans[-1] = (spans[-1][0], b)
+            else:
+                spans.append((a, b))
+        for span in spans:
+            for a, b in split_scenes(*span, cuts):
                 mid = (a + b) / 2
                 img = frame_at(proxy, mid)
                 crop = "center"
@@ -390,23 +413,16 @@ def ass_escape(s: str) -> str:
     return s.replace("\\", "").replace("{", "(").replace("}", ")").replace("\n", " ")
 
 
-def captions_ass(clip: dict, scenes: list[dict], words: list) -> str:
-    timed = []  # words on the Short's own timeline
-    offset = 0.0
-    for sc in scenes:
-        a, b = sc["start"], sc["end"]
-        for w in words:
-            if w[0] >= a - 0.05 and w[1] <= b + 0.15 and w[0] < b:
-                timed.append([offset + w[0] - a, min(offset + w[1] - a, offset + b - a), w[2], None, id(sc)])
-        offset += b - a
-    arabic = any(ARABIC.search(w[2]) for w in timed[:40])
+def captions_ass(clip: dict, timed: list) -> str:
+    """timed: [[start, end, word, scene index], ...] on the Short's own timeline."""
+    arabic = any(ARABIC.search(w[2]) for w in timed[:40]) or (clip.get("narrator_lang") == "ar")
     font = "Noto Sans Arabic" if arabic else "Montserrat"
     groups: list[list] = []
     for w in timed:
         g = groups[-1] if groups else None
         text_len = sum(len(x[2]) + 1 for x in g) if g else 0
-        new = (not g or len(g) >= 3 or text_len + len(w[2]) > 18 or w[0] - g[-1][1] > 0.5 or g[-1][4] != w[4]
-               or re.search(r"[.!?…،؟]$", g[-1][2]))
+        new = (not g or len(g) >= 3 or text_len + len(w[2]) > 18 or w[0] - g[-1][1] > 0.5 or g[-1][3] != w[3]
+               or re.search(r"[.!?…،؟,]$", g[-1][2]))
         if new:
             groups.append([w])
         else:
@@ -434,7 +450,7 @@ def captions_ass(clip: dict, scenes: list[dict], words: list) -> str:
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text", *events, ""])
 
 
-def crop_x(original: Path, sc: dict, w: int, h: int, cw: int) -> int:
+def crop_x(original: Path, sc: dict, w: int, h: int, cw: int, start: float, dur: float) -> int:
     if sc["crop"] == "left":
         return 0
     if sc["crop"] == "right":
@@ -443,10 +459,9 @@ def crop_x(original: Path, sc: dict, w: int, h: int, cw: int) -> int:
     if sc["crop"] != "face":
         return centre
     xs = []
-    dur = sc["end"] - sc["start"]
-    for k in range(min(12, max(3, int(dur / 0.5)))):
-        t = sc["start"] + dur * (k + 0.5) / min(12, max(3, int(dur / 0.5)))
-        img = frame_at(original, t, 640)
+    n = min(12, max(3, int(dur / 0.5)))
+    for k in range(n):
+        img = frame_at(original, start + dur * (k + 0.5) / n, 640)
         if img is None:
             continue
         found = faces_in(img)
@@ -456,53 +471,176 @@ def crop_x(original: Path, sc: dict, w: int, h: int, cw: int) -> int:
     if not xs:
         return centre
     xs.sort()
-    cx = xs[len(xs) // 2]
-    return int(min(max(cx - cw / 2, 0), w - cw))
+    return int(min(max(xs[len(xs) // 2] - cw / 2, 0), w - cw))
 
 
-def render_piece(original: Path, sc: dict, info: dict, out: Path) -> float:
-    w, h = info["width"], info["height"]
-    dur = round(sc["end"] - sc["start"], 3)
-    if sc["crop"] == "fit" or w / h <= OUT_W / OUT_H + 0.02:
-        vf = (f"[0:v]split=2[a][b];[a]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},boxblur=28:2,eq=brightness=-0.08[bg];"
-              f"[b]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,fps=30,format=yuv420p[v]")
-    else:
+# ---- narrator voice (Microsoft Edge TTS, like the Studio's voice job)
+VOICE_RE = re.compile(r"^([a-z]{2,3}-[A-Z]{2}-[A-Za-z]+Neural)(-(Male|Female))?$")
+DEFAULT_VOICES = {"en": "en-US-AndrewNeural", "ar": "ar-MA-JamalNeural", "es": "es-ES-AlvaroNeural", "fr": "fr-FR-HenriNeural", "de": "de-DE-ConradNeural"}
+
+
+def speak(text: str, voice: str, rate: float, dest: Path) -> list:
+    """Writes the MP3 and returns [[start, end, word], ...] in seconds."""
+    import asyncio
+    import edge_tts
+    pct = max(-50, min(100, round((float(rate or 1) - 1) * 100)))
+
+    async def go():
+        last = None
+        for attempt in range(4):
+            try:
+                comm = edge_tts.Communicate(text, voice, rate=f"{pct:+d}%", boundary="WordBoundary")
+                audio, words = bytearray(), []
+                async for chunk in comm.stream():
+                    if chunk["type"] == "audio":
+                        audio.extend(chunk["data"])
+                    elif chunk["type"] == "WordBoundary":
+                        st = chunk["offset"] / 1e7
+                        words.append([round(st, 3), round(st + chunk["duration"] / 1e7, 3), chunk["text"]])
+                if not audio:
+                    raise RuntimeError("no audio returned")
+                dest.write_bytes(bytes(audio))
+                return words
+            except Exception as e:  # noqa: BLE001 - Edge TTS drops connections now and then
+                last = e
+                await asyncio.sleep(2 * (attempt + 1))
+        raise RuntimeError(f"The narrator voice failed: {last}")
+    return asyncio.run(go())
+
+
+def fetch_footage(fo: dict, i: int) -> Path:
+    url = fo.get("url") or ""
+    if not url.startswith("https://"):
+        raise RuntimeError(f"Scene {i + 1}: the footage link is broken. Pick it again.")
+    ext = ".jpg" if fo.get("type") == "image" else ".mp4"
+    dest = WORK / f"stock-{i:02d}{ext}"
+    stream_to(url, dest)
+    return dest
+
+
+def visual_filter(label: str, sc: dict, info: dict | None, original: Path | None, start: float, dur: float) -> str:
+    """A filter turning input `label` into 1080x1920, 30 fps, called [v]."""
+    tail = f"setsar=1,fps=30,format=yuv420p,trim=duration={dur:.3f},setpts=PTS-STARTPTS[v]"
+    w, h = (info or {}).get("width", 0), (info or {}).get("height", 1)
+    if info and sc["crop"] != "fit" and w / h > OUT_W / OUT_H + 0.02:
         cw = int(h * OUT_W / OUT_H) // 2 * 2
-        x = crop_x(original, sc, w, h, cw)
-        vf = f"[0:v]crop={cw}:{h}:{x}:0,scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1,fps=30,format=yuv420p[v]"
-    af = f"[0:a]aresample=48000,afade=t=in:st=0:d=0.03,afade=t=out:st={max(dur - 0.05, 0):.3f}:d=0.05[a]"
-    run(["ffmpeg", "-y", "-v", "error", "-ss", f"{sc['start']:.3f}", "-t", f"{dur:.3f}", "-i", str(original), "-filter_complex", f"{vf};{af}",
-         "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-c:a", "aac", "-b:a", "160k", "-ac", "2", str(out)])
-    return dur
+        x = crop_x(original, sc, w, h, cw, start, dur)
+        return f"[{label}]crop={cw}:{h}:{x}:0,scale={OUT_W}:{OUT_H}:flags=lanczos,{tail}"
+    if info is None and sc.get("_stock_type") != "image":  # stock clips fill the frame
+        return f"[{label}]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},{tail}"
+    if sc.get("_stock_type") == "image":  # a slow push-in on photos
+        frames = max(int(dur * 30), 1)
+        return (f"[{label}]scale={OUT_W * 2}:{OUT_H * 2}:force_original_aspect_ratio=increase,crop={OUT_W * 2}:{OUT_H * 2},"
+                f"zoompan=z='min(1+0.10*on/{frames},1.10)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={OUT_W}x{OUT_H}:fps=30,{tail}")
+    return (f"[{label}]split=2[a][b];[a]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,crop={OUT_W}:{OUT_H},boxblur=28:2,eq=brightness=-0.08[bg];"
+            f"[b]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=(W-w)/2:(H-h)/2,{tail}")
+
+
+def render_scene(i: int, sc: dict, original: Path, info: dict, clip: dict, out: Path) -> tuple[float, list]:
+    """Renders one scene to `out`; returns (seconds, caption words on the scene's own timeline)."""
+    narrator = sc.get("kind") == "narrator" and (sc.get("text") or "").strip()
+    words_here: list = []
+    if narrator:
+        voice_mp3 = WORK / f"voice-{i:02d}.mp3"
+        lang = (clip.get("narrator_lang") or "en")[:2]
+        m = VOICE_RE.match(clip.get("voice") or "")
+        voice = m.group(1) if m else DEFAULT_VOICES.get(lang, DEFAULT_VOICES["en"])
+        words_here = speak(sc["text"].strip(), voice, clip.get("voice_rate") or 1.0, voice_mp3)
+        dur = round(probe_audio(voice_mp3) + 0.25, 3)
+    else:
+        dur = round(sc["end"] - sc["start"], 3)
+    start = sc["start"]
+    if narrator:  # the picture runs as long as the voice: keep it inside the long video
+        start = max(0.0, min(start, info["duration"] - dur))
+    args = ["ffmpeg", "-y", "-v", "error"]
+    fo = sc.get("footage") if isinstance(sc.get("footage"), dict) and sc["footage"].get("url") else None
+    inputs, filters = 0, []
+    need_source_audio = not narrator or float(sc.get("under") or 0) > 0
+    if fo:
+        stock = fetch_footage(fo, i)
+        sc["_stock_type"] = "image" if fo.get("type") == "image" else "video"
+        args += (["-i", str(stock)] if sc["_stock_type"] == "image" else ["-stream_loop", "-1", "-t", f"{dur + 0.5:.3f}", "-i", str(stock)])
+        filters.append(visual_filter("0:v", sc, None, None, start, dur))
+        inputs = 1
+        if need_source_audio:
+            args += ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(original)]
+            src_a = f"{inputs}:a"
+            inputs += 1
+    else:
+        args += ["-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", str(original)]
+        filters.append(visual_filter("0:v", sc, info, original, start, dur))
+        src_a = "0:a"
+        inputs = 1
+    fade = f"afade=t=in:st=0:d=0.03,afade=t=out:st={max(dur - 0.06, 0):.3f}:d=0.06"
+    if narrator:
+        args += ["-i", str(voice_mp3)]
+        v_a = f"{inputs}:a"
+        if need_source_audio:
+            vol = min(max(float(sc.get("under") or 0), 0), 0.4)
+            filters.append(f"[{src_a}]aresample=48000,volume={vol:.2f}[bed];[{v_a}]aresample=48000,apad[vo];[vo][bed]amix=inputs=2:duration=first:normalize=0,"
+                           f"atrim=duration={dur:.3f},{fade}[a]")
+        else:
+            filters.append(f"[{v_a}]aresample=48000,apad,atrim=duration={dur:.3f},{fade}[a]")
+    else:
+        filters.append(f"[{src_a}]aresample=48000,apad,atrim=duration={dur:.3f},{fade}[a]")
+    run(args + ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-preset", "veryfast", "-crf", "19",
+                "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-ac", "2", str(out)])
+    return dur, words_here
+
+
+def probe_audio(path: Path) -> float:
+    return float(run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)]).strip() or 0)
+
+
+def credits_of(scenes: list[dict]) -> str:
+    lines = []
+    for sc in scenes:
+        fo = sc.get("footage") if isinstance(sc.get("footage"), dict) else None
+        if fo and fo.get("url"):
+            who = fo.get("author") or fo.get("source") or "stock"
+            lic = f", {fo['license']}" if fo.get("license") else ""
+            line = f"{who}{lic} via {str(fo.get('source') or 'stock').capitalize()}"
+            if line not in lines:
+                lines.append(line)
+    return ("\n\nFootage: " + "; ".join(lines)) if lines else ""
 
 
 def render(cid: str) -> None:
     clip = db.select("clips", {"id": f"eq.{cid}", "select": "*"})[0]
     src = db.select("clip_sources", {"id": f"eq.{clip['source_id']}", "select": "*"})[0]
     db.update("clips", {"id": f"eq.{cid}"}, {"status": "rendering", "error": None, "run_url": RUN_URL})
-    scenes = [s for s in clip["scenes"] if float(s["end"]) - float(s["start"]) >= 0.3]
+    scenes = []
+    for s in clip["scenes"]:
+        s["start"], s["end"] = float(s.get("start") or 0), float(s.get("end") or 0)
+        s["crop"] = s.get("crop") if s.get("crop") in ("face", "center", "left", "right", "fit") else "center"
+        if (s.get("kind") == "narrator" and (s.get("text") or "").strip()) or s["end"] - s["start"] >= 0.3:
+            scenes.append(s)
     if not scenes:
         raise RuntimeError("This Short has no scenes left.")
-    for s in scenes:
-        s["start"], s["end"] = float(s["start"]), float(s["end"])
-        s["crop"] = s.get("crop") if s.get("crop") in ("face", "center", "left", "right", "fit") else "center"
     log("Getting the long video")
     original = WORK / "original.mp4"
     vds_download(src["file_path"][4:], original)
     info = probe(original)
-    pieces = []
+    pieces, timed, offset = [], [], 0.0
+    src_words = src.get("words") or []
     for i, sc in enumerate(scenes):
         out = WORK / f"piece-{i:02d}.mp4"
-        render_piece(original, sc, info, out)
+        dur, vo_words = render_scene(i, sc, original, info, clip, out)
+        if sc.get("kind") == "narrator":
+            timed += [[offset + w[0], min(offset + w[1], offset + dur), w[2], i] for w in vo_words]
+        else:
+            a, b = sc["start"], sc["end"]
+            timed += [[offset + w[0] - a, min(offset + w[1] - a, offset + dur), w[2], i] for w in src_words if w[0] >= a - 0.05 and w[1] <= b + 0.15 and w[0] < b]
+        offset += dur
         pieces.append(out)
-        log(f"Scene {i + 1}/{len(scenes)} cut")
+        log(f"Scene {i + 1}/{len(scenes)} done ({sc.get('kind') or 'original'}, {dur:.1f} s)")
     listing = WORK / "pieces.txt"
     listing.write_text("".join(f"file '{p.name}'\n" for p in pieces))
     joined = WORK / "joined.mp4"
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", str(listing), "-c", "copy", str(joined)])
     setup_fonts()
     subs = WORK / "subs.ass"
-    subs.write_text(captions_ass(clip, scenes, src.get("words") or []), encoding="utf-8")
+    subs.write_text(captions_ass(clip, timed), encoding="utf-8")
     final = WORK / "short.mp4"
     # relative names: the ass filter's own option syntax trips over full paths
     run(["ffmpeg", "-y", "-v", "error", "-i", joined.name, "-vf", f"ass={subs.name}:fontsdir={FONTS.name}", "-c:v", "libx264", "-preset", "veryfast",
@@ -515,14 +653,15 @@ def render(cid: str) -> None:
     vds_upload(thumb, thumb_path)
 
     channel = db.select("channels", {"id": f"eq.{clip['channel_id']}", "select": "id,niche_id"})[0] if clip.get("channel_id") else {}
-    fields = {"title": clip.get("title") or src["title"], "video_title": clip.get("title") or src["title"], "video_description": clip.get("description") or "",
+    description = (clip.get("description") or "") + credits_of(scenes)
+    fields = {"title": clip.get("title") or src["title"], "video_title": clip.get("title") or src["title"], "video_description": description[:4900],
               "video_tags": clip.get("tags") or [], "channel_id": clip.get("channel_id"), "niche_id": channel.get("niche_id"), "stage": "produced"}
     if clip.get("idea_id"):
         db.update("ideas", {"id": f"eq.{clip['idea_id']}"}, fields)
         idea_id = clip["idea_id"]
     else:
         idea_id = db.insert("ideas", {**fields, "sources": {"clipper": {"source_id": src["id"], "clip_id": cid}},
-                                      "ai": {"aspect": "9:16", "language": src.get("language") or "en"}})[0]["id"]
+                                      "ai": {"aspect": "9:16", "language": clip.get("narrator_lang") or src.get("language") or "en"}})[0]["id"]
     job = db.insert("render_jobs", {"idea_id": idea_id, "channel_id": clip.get("channel_id"), "status": "done", "output_path": f"vds:videos/{cid}.mp4",
                                     "duration_s": round(duration, 2), "started_at": now_iso(), "finished_at": now_iso(), "run_url": RUN_URL,
                                     "params": {"title": fields["title"], "aspect": "9:16", "source": "clipper", "clip_id": cid}})[0]

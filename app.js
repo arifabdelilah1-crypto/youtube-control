@@ -1995,50 +1995,119 @@ async function clipperSource(id) {
   return [head, ...clips.map((c, n) => clipCard(c, n, src, words, links))];
 }
 
+const NARRATOR_WPS = 2.6;  // words per second, to estimate a narrator line before it's rendered
+const sceneSeconds = (s) => (s.kind === "narrator" ? Math.max(1.5, (s.text || "").trim().split(/\s+/).filter(Boolean).length / NARRATOR_WPS + 0.4) : Math.max(0, s.end - s.start));
+const edgeVoices = (lang) => (VOICES[lang] || VOICES.en).filter(([v]) => !v.startsWith("supertonic"));
+
+async function footageSearch(q, kind) {
+  const { data, error } = await sb.functions.invoke("studio", { body: { action: "search", q, kind, aspect: "9:16" } });
+  if (error) throw error;
+  if (data?.error) throw new Error(data.error);
+  return data?.results || [];
+}
+
 function clipCard(clip, n, src, words, links) {
-  let scenes = (clip.scenes || []).map((s) => ({ ...s }));
+  let scenes = (clip.scenes || []).map((s) => ({ kind: "original", ...s }));
   const proxy = links[src.proxy_path];
-  const player = h("video", { class: "clip-player", src: proxy || "", controls: true, playsinline: true, preload: "metadata", muted: false });
+  const player = h("video", { class: "clip-player", src: proxy || "", controls: true, playsinline: true, preload: "metadata" });
   let stopAt = null, queueIdx = null;
   player.addEventListener("timeupdate", () => {
     if (stopAt === null || player.currentTime < stopAt) return;
-    if (queueIdx !== null && queueIdx + 1 < scenes.length) { queueIdx++; player.currentTime = scenes[queueIdx].start; stopAt = scenes[queueIdx].end; mark(queueIdx); return; }
+    if (queueIdx !== null && queueIdx + 1 < scenes.length) { queueIdx++; const s = scenes[queueIdx]; player.currentTime = s.start; stopAt = s.start + sceneSeconds(s); mark(queueIdx); return; }
     player.pause(); stopAt = null; queueIdx = null; mark(-1);
   });
-  const playRange = (a, b, idx = null) => { if (!proxy) return toast("The preview isn't ready"); queueIdx = idx; stopAt = b; player.currentTime = a; player.play().catch(() => {}); };
-  const total = () => scenes.reduce((a, s) => a + (s.end - s.start), 0);
+  const playScene = (i, chain = false) => {
+    if (!proxy) return toast("The preview isn't ready");
+    const s = scenes[i]; queueIdx = chain ? i : null; stopAt = s.start + sceneSeconds(s); player.currentTime = s.start; player.play().catch(() => {}); mark(i);
+  };
+  const total = () => scenes.reduce((a, s) => a + sceneSeconds(s), 0);
   const totalEl = h("span", { class: "mono" });
   const list = h("ol", { class: "clip-scenes" });
   const mark = (i) => [...list.children].forEach((li, k) => li.classList.toggle("on", k === i));
   let saveT = null;
   const save = (patch) => { clearTimeout(saveT); saveT = setTimeout(async () => { try { await q(sb.from("clips").update(patch).eq("id", clip.id)); } catch (e) { toast(`Not saved: ${e.message}`); } }, 400); };
-  const saveScenes = () => { save({ scenes }); drawScenes(); };
+  const saveScenes = (redraw = true) => { save({ scenes }); if (redraw) drawScenes(); else totalEl.textContent = `≈ ${Math.round(total())} s`; };
   const textOf = (a, b) => words.filter((w) => w[0] >= a - 0.05 && w[0] < b).map((w) => w[2]).join(" ");
   const nudge = (i, key, d) => {
     const s = scenes[i];
     const v = Math.round((s[key] + d) * 10) / 10;
-    if (key === "start" && (v < 0 || v > s.end - 0.5)) return;
+    if (key === "start" && (v < 0 || (s.kind !== "narrator" && v > s.end - 0.5))) return;
     if (key === "end" && (v < s.start + 0.5 || v > (src.duration_s || 1e9))) return;
+    if (key === "start" && s.kind === "narrator") s.end = Math.round((v + sceneSeconds(s)) * 10) / 10;
     s[key] = v; saveScenes();
   };
   const move = (i, d) => { const j = i + d; if (j < 0 || j >= scenes.length) return; [scenes[i], scenes[j]] = [scenes[j], scenes[i]]; saveScenes(); };
   const tiny = (text, label, fn, extra = {}) => h("button", { class: "btn small ghost", type: "button", "aria-label": label, title: label, text, onclick: fn, ...extra });
+  const addNarrator = (i) => {
+    const prev = scenes[i];
+    scenes.splice(i + 1, 0, { kind: "narrator", text: "", start: prev ? (prev.kind === "narrator" ? prev.start : prev.end) : 0, end: 0, under: 0, crop: prev?.crop || "center", thumb: prev?.thumb || null, footage: null });
+    saveScenes();
+    list.children[i + 1]?.querySelector("textarea")?.focus();
+  };
+
+  // footage picker: the long video's own footage by default, or a stock clip / photo
+  function footagePanel(s, holder) {
+    const qIn = h("input", { class: "field", type: "search", placeholder: "Search footage in English, e.g. sports car night", value: s.search || "", style: "flex:1 1 200px" });
+    const kindSel = h("select", { class: "field", style: "width:auto", "aria-label": "Footage type" }, [["video", "Videos"], ["image", "Photos"], ["both", "Both"]].map(([v, t]) => h("option", { value: v, text: t })));
+    const grid = h("div", { class: "clip-stock" });
+    const go2 = async () => {
+      if (!qIn.value.trim()) return;
+      grid.replaceChildren(h("span", { class: "muted small", text: "Searching…" }));
+      try {
+        const res = await footageSearch(qIn.value.trim(), kindSel.value);
+        grid.replaceChildren(...(res.length ? res.slice(0, 18).map((c) => h("button", { class: "clip-stock-item", type: "button", title: `${c.source}${c.author ? ` · ${c.author}` : ""}`, onclick: () => {
+          s.footage = { type: c.type, url: c.url, preview: c.preview, thumb: c.thumb, source: c.source, id: c.id, duration: c.duration, author: c.author, license: c.license, page: c.page };
+          s.search = qIn.value.trim(); saveScenes();
+        } }, h("img", { src: c.thumb || c.preview, alt: c.tags || "", loading: "lazy" }), c.type === "video" ? h("span", { class: "clip-stock-badge", text: c.duration ? `${Math.round(c.duration)} s` : "video" }) : null))
+          : [h("span", { class: "muted small", text: "Nothing found. Try other words." })]));
+      } catch (e) { grid.replaceChildren(h("span", { class: "down small", text: e.message })); }
+    };
+    holder.replaceChildren(h("div", { class: "clip-stock-panel" },
+      h("form", { class: "row", onsubmit: (e) => { e.preventDefault(); go2(); } }, qIn, kindSel, h("button", { class: "btn small", type: "submit", text: "Search" }),
+        tiny("Close", "Close the search", () => holder.replaceChildren())), grid));
+    if (qIn.value) go2();
+    qIn.focus();
+  }
+
   function drawScenes() {
-    totalEl.textContent = `${Math.round(total())} s`;
+    totalEl.textContent = `≈ ${Math.round(total())} s`;
     totalEl.className = `mono ${total() > 60 ? "down" : ""}`;
-    list.replaceChildren(...scenes.map((s, i) => h("li", { class: "clip-scene" },
-      h("button", { class: "clip-thumb", type: "button", "aria-label": `Play scene ${i + 1}`, onclick: () => { playRange(s.start, s.end); mark(i); } },
-        s.thumb && links[s.thumb] ? h("img", { src: links[s.thumb], alt: "", loading: "lazy" }) : null, h("span", { class: "review-play" }, icon("i-play"))),
-      h("div", { class: "clip-scene-body" },
-        h("div", { class: "row small", style: "gap:8px" }, h("b", { text: `Scene ${i + 1}` }), h("span", { class: "mono muted", text: `${tc(s.start)} → ${tc(s.end)} · ${(s.end - s.start).toFixed(1)} s` })),
-        h("p", { class: "clip-words", text: textOf(s.start, s.end) || "(no speech)" }),
-        h("div", { class: "row clip-tools" },
-          h("span", { class: "muted small", text: "Start" }), tiny("−1s", "Start 1 s earlier", () => nudge(i, "start", -1)), tiny("+1s", "Start 1 s later", () => nudge(i, "start", 1)),
-          h("span", { class: "muted small", text: "End" }), tiny("−1s", "End 1 s earlier", () => nudge(i, "end", -1)), tiny("+1s", "End 1 s later", () => nudge(i, "end", 1)),
-          h("select", { class: "field", "aria-label": "Crop", style: "min-height:32px;width:auto", onchange: (e) => { s.crop = e.target.value; saveScenes(); } },
-            CROPS.map(([v, t]) => h("option", { value: v, selected: s.crop === v, text: t }))),
-          tiny("↑", "Move up", () => move(i, -1), { disabled: i === 0 }), tiny("↓", "Move down", () => move(i, 1), { disabled: i === scenes.length - 1 }),
-          tiny("✕", "Remove this scene", () => { scenes.splice(i, 1); saveScenes(); }))))));
+    list.replaceChildren(...scenes.map((s, i) => {
+      const narr = s.kind === "narrator";
+      const stockThumb = s.footage?.thumb || s.footage?.preview;
+      const picker = h("div");
+      const thumb = h("button", { class: "clip-thumb", type: "button", "aria-label": `Play scene ${i + 1}`, onclick: () => playScene(i) },
+        stockThumb ? h("img", { src: stockThumb, alt: "", loading: "lazy" }) : s.thumb && links[s.thumb] ? h("img", { src: links[s.thumb], alt: "", loading: "lazy" }) : h("span", { class: "clip-thumb-t mono", text: tc(s.start) }),
+        h("span", { class: "review-play" }, icon("i-play")));
+      const kindSel = h("select", { class: "field", "aria-label": "What is heard", style: "min-height:32px;width:auto", onchange: (e) => {
+        s.kind = e.target.value;
+        if (s.kind === "narrator") { s.text = s.text || ""; s.under = s.under ?? 0; } else if (s.end - s.start < 1) s.end = Math.round((s.start + 5) * 10) / 10;
+        saveScenes();
+      } }, [["original", "Original sound"], ["narrator", "Narrator"]].map(([v, t]) => h("option", { value: v, selected: (s.kind || "original") === v, text: t })));
+      const footageLine = h("div", { class: "row small", style: "gap:6px" },
+        h("span", { class: "muted", text: "Picture:" }),
+        s.footage?.url ? h("span", { text: `${s.footage.type === "image" ? "Photo" : "Clip"} from ${s.footage.source}${s.footage.author ? ` (${s.footage.author})` : ""}` }) : h("span", { text: `This video, from ${tc(s.start)}` }),
+        tiny(s.footage?.url ? "Change" : "Search footage", "Search other footage for this scene", () => footagePanel(s, picker)),
+        s.footage?.url ? tiny("Use this video", "Back to the long video's own footage", () => { s.footage = null; saveScenes(); }) : null,
+        s.search && !s.footage?.url ? h("span", { class: "muted", text: `Idea: “${s.search}”` }) : null);
+      return h("li", { class: `clip-scene${narr ? " narr" : ""}` }, thumb,
+        h("div", { class: "clip-scene-body" },
+          h("div", { class: "row small", style: "gap:8px" }, h("b", { text: `Scene ${i + 1}` }), kindSel,
+            h("span", { class: "mono muted", text: narr ? `≈ ${sceneSeconds(s).toFixed(1)} s, as long as the voice` : `${tc(s.start)} → ${tc(s.end)} · ${(s.end - s.start).toFixed(1)} s` })),
+          narr ? h("textarea", { class: "field clip-vo", rows: 2, maxlength: 400, placeholder: "What the narrator says", value: s.text || "", oninput: (e) => { s.text = e.target.value; saveScenes(false); } })
+            : h("p", { class: "clip-words", text: textOf(s.start, s.end) || "(no speech)" }),
+          footageLine, picker,
+          h("div", { class: "row clip-tools" },
+            h("span", { class: "muted small", text: narr ? "Picture start" : "Start" }), tiny("−1s", "1 s earlier", () => nudge(i, "start", -1)), tiny("+1s", "1 s later", () => nudge(i, "start", 1)),
+            narr ? null : [h("span", { class: "muted small", text: "End" }), tiny("−1s", "End 1 s earlier", () => nudge(i, "end", -1)), tiny("+1s", "End 1 s later", () => nudge(i, "end", 1))],
+            h("select", { class: "field", "aria-label": "Crop", style: "min-height:32px;width:auto", onchange: (e) => { s.crop = e.target.value; saveScenes(); } },
+              CROPS.map(([v, t]) => h("option", { value: v, selected: s.crop === v, text: t }))),
+            narr ? h("select", { class: "field", "aria-label": "Original sound under the voice", style: "min-height:32px;width:auto", onchange: (e) => { s.under = Number(e.target.value); saveScenes(); } },
+              [[0, "Video sound off"], [0.12, "Video sound low"], [0.25, "Video sound medium"]].map(([v, t]) => h("option", { value: v, selected: Number(s.under || 0) === v, text: t }))) : null,
+            tiny("↑", "Move up", () => move(i, -1), { disabled: i === 0 }), tiny("↓", "Move down", () => move(i, 1), { disabled: i === scenes.length - 1 }),
+            tiny("✕", "Remove this scene", () => { scenes.splice(i, 1); saveScenes(); }),
+            tiny("+ Narrator line", "Add a narrator line after this scene", () => addNarrator(i)))));
+    }));
   }
   drawScenes();
 
@@ -2049,17 +2118,58 @@ function clipCard(clip, n, src, words, links) {
   };
   const netSel = h("select", { class: "field", id: `cn-${clip.id}`, onchange: (e) => save({ channel_id: e.target.value || null }) },
     h("option", { value: "", text: "Choose a network" }), state.channels.map((c) => h("option", { value: c.id, selected: c.id === clip.channel_id, text: c.title })));
+
+  // narrator: brief, language, voice
+  const defLang = (clip.narrator_lang || channelById(clip.channel_id)?.language || src.language || "en").slice(0, 2);
+  const langSel = h("select", { class: "field", id: `nl-${clip.id}` }, CLIP_LANGS.filter(([v]) => v !== "auto").map(([v, t]) => h("option", { value: v, selected: v === defLang, text: t })));
+  const voiceSel = h("select", { class: "field", id: `nv-${clip.id}` });
+  const fillVoices = () => {
+    const opts = edgeVoices(langSel.value);
+    const want = clip.voice && opts.some(([v]) => v === clip.voice) ? clip.voice : opts[0]?.[0];
+    voiceSel.replaceChildren(...opts.map(([v, t]) => h("option", { value: v, selected: v === want, text: t })));
+  };
+  fillVoices();
+  langSel.addEventListener("change", () => { fillVoices(); save({ narrator_lang: langSel.value, voice: voiceSel.value }); });
+  voiceSel.addEventListener("change", () => save({ voice: voiceSel.value }));
+  const brief = h("textarea", { class: "field", id: `nb-${clip.id}`, rows: 3, maxlength: 2000, value: clip.brief || "",
+    placeholder: "Optional. E.g. “Our narrator opens: do you remember when Speed raced Usain Bolt? Then Speed's own reaction, then the narrator explains the result and asks who would win.”" });
+  brief.value = clip.brief || "";
+  const hasNarrator = () => scenes.some((s) => s.kind === "narrator");
+
   const rendering = clip.status === "rendering";
-  const renderBtn = h("button", { class: "btn primary", type: "button", disabled: rendering, text: rendering ? "Rendering…" : clip.status === "done" ? "Render again" : "Render this Short", onclick: async (e) => {
+  const doRender = async (btn) => {
     clearTimeout(saveT);
     if (!netSel.value) return toast("Pick the network this Short is for");
-    if (total() > 60 && !confirm(`This Short is ${Math.round(total())} s. YouTube Shorts work best under 60 s. Render anyway?`)) return;
-    e.currentTarget.disabled = true;
+    if (scenes.some((s) => s.kind === "narrator" && !(s.text || "").trim())) return toast("A narrator scene has no text: write it or remove the scene");
+    if (total() > 60 && !confirm(`This Short is about ${Math.round(total())} s. YouTube Shorts work best under 60 s. Render anyway?`)) return;
+    btn.disabled = true;
     try {
-      await q(sb.from("clips").update({ scenes, channel_id: netSel.value }).eq("id", clip.id));
-      await clipperCall({ action: "render", clip_id: clip.id }); toast("Rendering: about 2–5 minutes"); render();
-    } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
-  } });
+      await q(sb.from("clips").update({ scenes, channel_id: netSel.value, voice: voiceSel.value, narrator_lang: langSel.value, brief: brief.value.trim() || null }).eq("id", clip.id));
+      await clipperCall({ action: "render", clip_id: clip.id }); toast("Rendering: about 2–6 minutes"); render();
+    } catch (err) { toast(err.message); btn.disabled = false; }
+  };
+  const goBtn = h("button", { class: "btn primary", type: "button", disabled: rendering });
+  const willWrite = () => !!brief.value.trim() && brief.value.trim() !== (clip.brief || "").trim();
+  const setGo = () => {
+    goBtn.textContent = rendering ? "Rendering…" : willWrite() ? "Write it with the narrator" : clip.status === "done" ? "Render again" : "Render this Short";
+    if (typeof renderBtn !== "undefined") renderBtn.hidden = !willWrite();
+  };
+  brief.addEventListener("input", setGo); setGo();
+  goBtn.addEventListener("click", async () => {
+    const text = brief.value.trim();
+    if (text && text !== (clip.brief || "").trim()) {
+      if (hasNarrator() && !confirm("Write a new version? The scenes below are replaced.")) return;
+      goBtn.disabled = true; goBtn.textContent = "Writing… (about 20 s)";
+      try {
+        await q(sb.from("clips").update({ channel_id: netSel.value || null }).eq("id", clip.id));
+        await clipperCall({ action: "narrate", clip_id: clip.id, brief: text, language: langSel.value, voice: voiceSel.value });
+        toast("Done: check the scenes, then render"); render();
+      } catch (err) { toast(err.message); goBtn.disabled = false; setGo(); }
+      return;
+    }
+    doRender(goBtn);
+  });
+  var renderBtn = h("button", { class: "btn", type: "button", disabled: rendering, hidden: !willWrite(), text: "Render as it is", title: "Render the scenes below without writing a new version", onclick: (e) => doRender(e.currentTarget) });
   const result = clip.status === "done" && links[clip.output_path]
     ? h("div", { class: "clip-result" }, h("video", { class: "clip-final", src: links[clip.output_path], poster: links[clip.thumb_path] || "", controls: true, playsinline: true, preload: "metadata" }),
       h("div", { class: "row" }, h("a", { class: "btn small primary", href: "#/review", text: "Publish from Review" }), h("span", { class: "muted small", text: `${Math.round(clip.duration_s || 0)} s · rendered ${ago(clip.updated_at)}` })))
@@ -2073,17 +2183,25 @@ function clipCard(clip, n, src, words, links) {
     clip.status === "failed" && clip.error ? h("pre", { class: "err", text: clip.error }) : null,
     h("div", { class: "clip-layout" },
       h("div", { class: "clip-side" }, player,
-        h("div", { class: "row" }, h("button", { class: "btn small", type: "button", text: "▶ Play the whole Short", onclick: () => { if (scenes.length) { playRange(scenes[0].start, scenes[0].end, 0); mark(0); } } }),
-          h("span", { class: "muted small", text: "Preview of the original. The render crops it to 9:16 with captions." })),
+        h("div", { class: "row" }, h("button", { class: "btn small", type: "button", text: "▶ Play the whole Short", onclick: () => { if (scenes.length) playScene(0, true); } }),
+          h("span", { class: "muted small", text: "Preview of the original pictures. Narrator lines and new footage are heard and seen in the render." })),
         result),
       h("div", { class: "clip-main" },
-        h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: `cn-${clip.id}`, text: "Network" }), netSel), inp(`ch-${clip.id}`, "Hook (on screen, first 3 s)", clip.hook, "hook", { maxlength: 60 })),
+        h("div", { class: "clip-brief" },
+          h("div", { class: "field-wrap" }, h("label", { for: `nb-${clip.id}`, text: "What do you want? (leave empty to keep the clip as it is)" }), brief),
+          h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: `cn-${clip.id}`, text: "Network" }), netSel),
+            h("div", { class: "field-wrap" }, h("label", { for: `nl-${clip.id}`, text: "Narrator language" }), langSel),
+            h("div", { class: "field-wrap" }, h("label", { for: `nv-${clip.id}`, text: "Narrator voice" }), voiceSel)),
+          h("div", { class: "row" }, goBtn, renderBtn)),
+        inp(`ch-${clip.id}`, "Hook (on screen, first 3 s)", clip.hook, "hook", { maxlength: 60 }),
         inp(`ct-${clip.id}`, "Title", clip.title, "title", { maxlength: 100 }),
         inp(`cd-${clip.id}`, "Description", clip.description, "description", { rows: 3 }),
         inp(`cg-${clip.id}`, "Tags (comma separated)", (clip.tags || []).join(", "), "tags"),
-        h("h3", { style: "margin:6px 0 0", text: "Scenes" }), list,
-        h("div", { class: "row" }, renderBtn,
-          h("button", { class: "btn ghost", type: "button", text: "Reset scenes", onclick: () => { scenes = (clip.ai_scenes || []).map((s) => ({ ...s })); saveScenes(); } }),
+        h("div", { class: "row", style: "justify-content:space-between" }, h("h3", { style: "margin:6px 0 0", text: "Scenes" }),
+          tiny("+ Narrator line at the start", "Add a narrator line before the first scene", () => { scenes.unshift({ kind: "narrator", text: "", start: scenes[0]?.start || 0, end: 0, under: 0, crop: scenes[0]?.crop || "center", thumb: scenes[0]?.thumb || null, footage: null }); saveScenes(); list.children[0]?.querySelector("textarea")?.focus(); })),
+        list,
+        h("div", { class: "row" },
+          h("button", { class: "btn ghost", type: "button", text: "Back to the AI's clip", title: "The scenes as first found, without narrator", onclick: () => { if (!confirm("Go back to the original clip? Narrator lines are removed.")) return; scenes = (clip.ai_scenes || []).map((s) => ({ kind: "original", ...s })); saveScenes(); } }),
           h("button", { class: "btn ghost", type: "button", text: "Discard this Short", onclick: async () => { if (!confirm("Discard this Short?")) return; await q(sb.from("clips").update({ status: "discarded" }).eq("id", clip.id)); render(); } })))));
 }
 

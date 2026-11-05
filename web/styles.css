@@ -724,3 +724,13 @@ video.review-player { background: #000; cursor: auto; object-fit: contain; }
 .clip-tools .btn.small { min-width: 38px; padding: 0 8px; }
 @media (max-width: 900px) { .clip-layout { grid-template-columns: minmax(0, 1fr); } .clip-side { position: static; } }
 @media (max-width: 520px) { .clip-scene { grid-template-columns: minmax(0, 1fr); } .clip-thumb { width: 100%; } }
+.clip-brief { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-2); }
+.clip-scene.narr { border-color: rgba(167, 139, 250, .45); background: linear-gradient(0deg, var(--signal-soft), var(--signal-soft)), var(--panel-2); }
+.clip-vo { min-height: 56px; font-size: 14px; }
+.clip-thumb-t { position: absolute; inset: auto 6px 6px auto; font-size: 11px; color: var(--graphite); }
+.clip-stock-panel { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+.clip-stock { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.clip-stock-item { position: relative; padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; aspect-ratio: 9 / 16; background: #000; cursor: pointer; }
+.clip-stock-item:hover, .clip-stock-item:focus-visible { border-color: var(--action); }
+.clip-stock-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.clip-stock-badge { position: absolute; left: 4px; bottom: 4px; font-size: 10.5px; background: rgba(0, 0, 0, .7); color: #fff; padding: 1px 5px; border-radius: 6px; }
