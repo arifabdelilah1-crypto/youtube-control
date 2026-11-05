@@ -1970,6 +1970,11 @@ async function clipperSource(id) {
   if (!src) return [pageHead("Long to Shorts"), empty("This long video was deleted.", h("a", { class: "btn", href: "#/clipper", text: "Back" }))];
   const clips = await q(sb.from("clips").select("*").eq("source_id", id).neq("status", "discarded").order("idx"));
   const links = src.proxy_path || clips.length ? (await clipperCall({ action: "links", source_id: id }).catch(() => ({ links: {} }))).links || {} : {};
+  const voicePaths = [...new Set(clips.flatMap((c) => (c.scenes || []).map((s) => s.voice_path).filter(Boolean)))];
+  if (voicePaths.length) {
+    const { data } = await sb.storage.from("renders").createSignedUrls(voicePaths, 6 * 3600);
+    for (const x of data || []) if (x.signedUrl) links[`renders:${x.path}`] = x.signedUrl;
+  }
   const words = src.words || [];
   const [cls, label] = CLIP_STATUS[src.status] || ["info", src.status];
   const head = pageHead(src.title, [src.duration_s ? `${Math.round(src.duration_s / 60)} min` : null, src.language ? src.language.toUpperCase() : null, ago(src.created_at)].filter(Boolean).join(" · "),
@@ -1981,7 +1986,7 @@ async function clipperSource(id) {
     } }) : null);
   watchClipper(async () => {
     const [s] = await q(sb.from("clip_sources").select("status,progress,step").eq("id", id));
-    const c = await q(sb.from("clips").select("id,status").eq("source_id", id));
+    const c = await q(sb.from("clips").select("id,status,voice_state").eq("source_id", id));
     return JSON.stringify([s, c]);
   });
   if (src.status !== "ready") {
@@ -2021,7 +2026,8 @@ async function clipperSource(id) {
 }
 
 const NARRATOR_WPS = 2.6;  // words per second, to estimate a narrator line before it's rendered
-const sceneSeconds = (s) => (s.kind === "narrator" ? Math.max(1.5, (s.text || "").trim().split(/\s+/).filter(Boolean).length / NARRATOR_WPS + 0.4) : Math.max(0, s.end - s.start));
+const voiceFits = (s) => !!s.voice_path && s.voice_text === (s.text || "").trim();
+const sceneSeconds = (s) => (s.kind === "narrator" ? (voiceFits(s) && s.voice_duration ? Number(s.voice_duration) + 0.25 : Math.max(1.5, (s.text || "").trim().split(/\s+/).filter(Boolean).length / NARRATOR_WPS + 0.4)) : Math.max(0, s.end - s.start));
 const edgeVoices = (lang) => (VOICES[lang] || VOICES.en).filter(([v]) => !v.startsWith("supertonic"));
 
 async function footageSearch(q, kind) {
@@ -2055,7 +2061,8 @@ function browserVoice(lang) {
   return all.find((v) => v.lang?.toLowerCase().startsWith(lang) && /natural|neural|google|premium|enhanced/i.test(v.name)) || all.find((v) => v.lang?.toLowerCase().startsWith(lang)) || null;
 }
 
-function clipPreview({ getScenes, src, words, links, getHook, getLang, onScene }) {
+function clipPreview({ getScenes, src, words, links, getHook, getLang, getVoice, onScene }) {
+  const vo = new Audio();
   const proxyUrl = links[src.proxy_path] || "";
   const vid = h("video", { class: "cp-src", playsinline: true, preload: "auto", src: proxyUrl });
   const stockV = h("video", { class: "cp-layer", playsinline: true, loop: true, hidden: true });
@@ -2091,7 +2098,7 @@ function clipPreview({ getScenes, src, words, links, getHook, getLang, onScene }
     const own = vid.currentTime - it.s.start;
     return !it.s.footage?.url && !vid.paused && vid.readyState >= 2 && own > -0.3 && Math.abs(own - wall) < 1.5 ? Math.max(0, own) : wall;
   };
-  const stopMedia = () => { vid.pause(); stockV.pause(); try { speechSynthesis.cancel(); } catch { /* no speech */ } };
+  const stopMedia = () => { vid.pause(); stockV.pause(); vo.pause(); try { speechSynthesis.cancel(); } catch { /* no speech */ } };
 
   function show(k) {
     const it = items[k]; if (!it) return;
@@ -2113,12 +2120,14 @@ function clipPreview({ getScenes, src, words, links, getHook, getLang, onScene }
       vid.volume = narr ? Math.min(1, Number(s.under || 0) * 2) : 1;
       vid.play().catch(() => {});
     }
-    if (narr && (s.text || "").trim() && window.speechSynthesis) {
+    const real = narr ? getVoice?.(s) : null;
+    if (real) { vo.src = real.url; vo.currentTime = 0; vo.play().catch(() => {}); }
+    else if (narr && (s.text || "").trim() && window.speechSynthesis) {
       const u = new SpeechSynthesisUtterance(s.text.trim());
       const lang = getLang(); u.lang = lang; const v = browserVoice(lang); if (v) u.voice = v;
       setTimeout(() => { if (playing && i === k) speechSynthesis.speak(u); }, 60);  // Chrome drops a line spoken right after cancel()
     }
-    words_ = narr ? narratorWords(s.text, it.dur)
+    words_ = narr ? (real?.words?.length ? real.words.map((w) => [Number(w[0]), Number(w[1]), String(w[2])]) : narratorWords(s.text, it.dur))
       : words.filter((w) => w[0] >= s.start - 0.05 && w[0] < s.end).map((w) => [w[0] - s.start, Math.min(w[1], s.end) - s.start, w[2]]);
     groups = captionGroups(words_);
     clockStart = performance.now();
@@ -2185,24 +2194,68 @@ function clipPreview({ getScenes, src, words, links, getHook, getLang, onScene }
   timeEl.textContent = `0:00 / ${fmt(total)}`;
   const el = h("div", { class: "cp" }, phone,
     h("div", { class: "cp-bar" }, toggle, track, timeEl),
-    h("p", { class: "muted small", style: "margin:0", text: "Preview. The narrator uses your browser's voice and “Follow face” shows the centre: the render uses the chosen voice and finds the face." }));
+    h("p", { class: "muted small", style: "margin:0", text: "Preview. Narrator lines with a ready voice play that voice; the others use your browser's voice. “Follow face” shows the centre here: the render finds the face." }));
   const api = { el, play, stop, refresh: () => { timeline(); if (!playing) timeEl.textContent = `0:00 / ${fmt(total)}`; } };
   return api;
 }
 
 function clipCard(clip, n, src, words, links) {
   let scenes = (clip.scenes || []).map((s) => ({ kind: "original", ...s }));
-  let hookIn = null, langSel = null;
+  let hookIn = null, langSel = null, voiceSel = null;
+  const memory = src.memory?.scenes || {};
+  const voiceUrl = (s) => (voiceFits(s) && s.voice_name === (voiceSel?.value || clip.voice) ? links[`renders:${s.voice_path}`] || null : null);
   const preview = clipPreview({ getScenes: () => scenes, src, words, links, getHook: () => hookIn?.value ?? clip.hook ?? "",
-    getLang: () => langSel?.value || (clip.narrator_lang || src.language || "en").slice(0, 2), onScene: (k) => mark(k) });
+    getLang: () => langSel?.value || (clip.narrator_lang || src.language || "en").slice(0, 2), onScene: (k) => mark(k),
+    getVoice: (s) => (voiceUrl(s) ? { url: voiceUrl(s), words: s.voice_words || [] } : null) });
   const playScene = (i, chain = false) => preview.play(i, !chain);
   const total = () => scenes.reduce((a, s) => a + sceneSeconds(s), 0);
   const totalEl = h("span", { class: "mono" });
   const list = h("ol", { class: "clip-scenes" });
+  // narrator help: write the empty lines with AI from the video's memory, then the real voice is prepared
+  const aiBtn = h("button", { class: "btn small primary", type: "button" });
+  const narrScenes = () => scenes.filter((s) => s.kind === "narrator");
+  const emptyLines = () => narrScenes().filter((s) => !(s.text || "").trim()).length;
+  function setAi() {
+    aiBtn.hidden = !narrScenes().length;
+    if (aiBtn.disabled) return;
+    const n = emptyLines();
+    aiBtn.textContent = n ? `✨ Write ${n} narrator line${n > 1 ? "s" : ""} with AI` : "✨ Rewrite narrator lines with AI";
+  }
+  aiBtn.addEventListener("click", async () => {
+    const overwrite = !emptyLines();
+    if (overwrite && !confirm("Rewrite every narrator line with AI? The texts below are replaced.")) return;
+    clearTimeout(saveT);
+    aiBtn.disabled = true; aiBtn.textContent = "Writing… (up to a minute the first time)";
+    try {
+      const r = await clipperCall({ action: "narrator_lines", clip_id: clip.id, scenes, language: langSel.value, voice: voiceSel.value, overwrite });
+      toast(r.error ? `Lines written, but the voice didn't start: ${r.error}` : `${r.written} line${r.written > 1 ? "s" : ""} written. The voice is being prepared: about 1 minute`);
+      render();
+    } catch (err) { toast(err.message); aiBtn.disabled = false; setAi(); }
+  });
+  const makeVoices = async (btn) => {
+    clearTimeout(saveT);
+    if (btn) btn.disabled = true;
+    try {
+      await q(sb.from("clips").update({ scenes, voice: voiceSel.value, narrator_lang: langSel.value }).eq("id", clip.id));
+      await clipperCall({ action: "voice", clip_id: clip.id });
+      toast("Preparing the voice: about 1 minute"); render();
+    } catch (err) { toast(err.message); if (btn) btn.disabled = false; }
+  };
+  const voiceState = clip.voice_state === "working" ? h("p", { class: "muted small", style: "margin:0", text: "Preparing the narrator voice… it plays in the preview when it's ready." })
+    : clip.voice_state === "failed" && clip.voice_error ? h("p", { class: "down small", style: "margin:0", text: `Narrator voice failed: ${clip.voice_error}` }) : null;
+  function voiceLine(s) {
+    if (!(s.text || "").trim()) return h("div", { class: "row small clip-voice" }, h("span", { class: "muted", text: "Empty: “Write narrator lines with AI” fills it, or type it." }));
+    const url = voiceUrl(s);
+    if (url) return h("div", { class: "row small clip-voice" }, h("span", { class: "pill ok", text: "Voice ready" }), h("span", { class: "mono muted", text: `${Number(s.voice_duration || 0).toFixed(1)} s` }),
+      tiny("▶ Listen", "Listen to this line", () => { const a = new Audio(url); a.play().catch(() => {}); }));
+    if (clip.voice_state === "working") return h("div", { class: "row small clip-voice" }, h("span", { class: "pill info", text: "Preparing the voice…" }));
+    return h("div", { class: "row small clip-voice" }, h("span", { class: "muted", text: s.voice_path ? "The text or voice changed since the voice was made." : "No voice for this line yet." }),
+      tiny("Make the voice", "Prepare the narrator voice for every line", (e) => makeVoices(e.currentTarget)));
+  }
   const mark = (i) => [...list.children].forEach((li, k) => li.classList.toggle("on", k === i));
   let saveT = null;
   const save = (patch) => { clearTimeout(saveT); saveT = setTimeout(async () => { try { await q(sb.from("clips").update(patch).eq("id", clip.id)); } catch (e) { toast(`Not saved: ${e.message}`); } }, 400); };
-  const saveScenes = (redraw = true) => { save({ scenes }); if (redraw) drawScenes(); else totalEl.textContent = `≈ ${Math.round(total())} s`; preview.refresh(); };
+  const saveScenes = (redraw = true) => { save({ scenes }); if (redraw) drawScenes(); else totalEl.textContent = `≈ ${Math.round(total())} s`; preview.refresh(); setAi(); };
   const textOf = (a, b) => words.filter((w) => w[0] >= a - 0.05 && w[0] < b).map((w) => w[2]).join(" ");
   const nudge = (i, key, d) => {
     const s = scenes[i];
@@ -2246,6 +2299,7 @@ function clipCard(clip, n, src, words, links) {
   }
 
   function drawScenes() {
+    setAi();
     totalEl.textContent = `≈ ${Math.round(total())} s`;
     totalEl.className = `mono ${total() > 60 ? "down" : ""}`;
     list.replaceChildren(...scenes.map((s, i) => {
@@ -2270,8 +2324,9 @@ function clipCard(clip, n, src, words, links) {
         h("div", { class: "clip-scene-body" },
           h("div", { class: "row small", style: "gap:8px" }, h("b", { text: `Scene ${i + 1}` }), kindSel,
             h("span", { class: "mono muted", text: narr ? `≈ ${sceneSeconds(s).toFixed(1)} s, as long as the voice` : `${tc(s.start)} → ${tc(s.end)} · ${(s.end - s.start).toFixed(1)} s` })),
-          narr ? h("textarea", { class: "field clip-vo", rows: 2, maxlength: 400, placeholder: "What the narrator says", value: s.text || "", oninput: (e) => { s.text = e.target.value; saveScenes(false); } })
+          narr ? [h("textarea", { class: "field clip-vo", rows: 2, maxlength: 400, placeholder: "What the narrator says", value: s.text || "", oninput: (e) => { s.text = e.target.value; saveScenes(false); }, onchange: () => drawScenes() }), voiceLine(s)]
             : h("p", { class: "clip-words", text: textOf(s.start, s.end) || "(no speech)" }),
+          !s.footage?.url && memory[s.thumb]?.sees ? h("p", { class: "clip-sees", text: `Seen: ${memory[s.thumb].sees}` }) : null,
           footageLine, picker,
           h("div", { class: "row clip-tools" },
             h("span", { class: "muted small", text: narr ? "Picture start" : "Start" }), tiny("−1s", "1 s earlier", () => nudge(i, "start", -1)), tiny("+1s", "1 s later", () => nudge(i, "start", 1)),
@@ -2298,7 +2353,7 @@ function clipCard(clip, n, src, words, links) {
   // narrator: brief, language, voice
   const defLang = (clip.narrator_lang || channelById(clip.channel_id)?.language || src.language || "en").slice(0, 2);
   langSel = h("select", { class: "field", id: `nl-${clip.id}` }, CLIP_LANGS.filter(([v]) => v !== "auto").map(([v, t]) => h("option", { value: v, selected: v === defLang, text: t })));
-  const voiceSel = h("select", { class: "field", id: `nv-${clip.id}` });
+  voiceSel = h("select", { class: "field", id: `nv-${clip.id}` });
   const fillVoices = () => {
     const opts = edgeVoices(langSel.value);
     const want = clip.voice && opts.some(([v]) => v === clip.voice) ? clip.voice : opts[0]?.[0];
@@ -2372,8 +2427,9 @@ function clipCard(clip, n, src, words, links) {
         inp(`ct-${clip.id}`, "Title", clip.title, "title", { maxlength: 100 }),
         inp(`cd-${clip.id}`, "Description", clip.description, "description", { rows: 3 }),
         inp(`cg-${clip.id}`, "Tags (comma separated)", (clip.tags || []).join(", "), "tags"),
-        h("div", { class: "row", style: "justify-content:space-between" }, h("h3", { style: "margin:6px 0 0", text: "Scenes" }),
+        h("div", { class: "row", style: "justify-content:space-between" }, h("h3", { style: "margin:6px 0 0", text: "Scenes" }), aiBtn,
           tiny("+ Narrator line at the start", "Add a narrator line before the first scene", () => { scenes.unshift({ kind: "narrator", text: "", start: scenes[0]?.start || 0, end: 0, under: 0, crop: scenes[0]?.crop || "center", thumb: scenes[0]?.thumb || null, footage: null }); saveScenes(); list.children[0]?.querySelector("textarea")?.focus(); })),
+        voiceState,
         list,
         h("div", { class: "row" },
           h("button", { class: "btn ghost", type: "button", text: "Back to the AI's clip", title: "The scenes as first found, without narrator", onclick: () => { if (!confirm("Go back to the original clip? Narrator lines are removed.")) return; scenes = (clip.ai_scenes || []).map((s) => ({ kind: "original", ...s })); saveScenes(); } }),

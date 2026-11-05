@@ -4,6 +4,9 @@
         get the video (browser upload on the VDS, or a Google Drive / Dropbox / direct file link), keep it on the VDS with a
         360p preview, transcribe it with faster-whisper (word times), find the scene changes, ask DeepSeek (clipper
         function, "pick") for 1-3 Shorts, snap them to words and scenes, and save them as clips with one frame per scene.
+    python collectors/clipper.py voice <clips.id>
+        speak every narrator line of a Short with its voice (Edge TTS), put each MP3 in the 'renders' bucket
+        (clipvoice/<clip id>/...) with its word times, so the Clipper page plays the real voice before the final render.
     python collectors/clipper.py render <clips.id>
         cut the reviewed scenes from the original, crop each to 9:16 (face, centre, left, right, or the whole frame on a
         blurred background), join them, burn word-by-word captions and the hook, put the Short on the VDS, and file it as an
@@ -508,6 +511,76 @@ def speak(text: str, voice: str, rate: float, dest: Path) -> list:
     return asyncio.run(go())
 
 
+# ---- narrator voice prepared before the final render (the Clipper page plays it; render() reuses it)
+SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+EDGE_KBPS = 48  # Edge TTS gives 24 kHz, 48 kbit/s mono MP3: its length follows from its size
+
+
+def storage_upload(path: str, data: bytes) -> None:
+    err = ""
+    for attempt in range(4):
+        try:
+            r = requests.post(f"{SUPABASE_URL}/storage/v1/object/renders/{path}", data=data, timeout=(20, 120),
+                              headers={"Authorization": f"Bearer {SERVICE_KEY}", "apikey": SERVICE_KEY, "Content-Type": "audio/mpeg", "x-upsert": "true"})
+            if r.status_code < 400:
+                return
+            err = f"{r.status_code}: {r.text[:200]}"
+        except requests.RequestException as e:
+            err = str(e)
+        time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"Voice upload failed: {err}")
+
+
+def storage_download(path: str, dest: Path) -> None:
+    r = requests.get(f"{SUPABASE_URL}/storage/v1/object/renders/{path}", timeout=120, headers={"Authorization": f"Bearer {SERVICE_KEY}", "apikey": SERVICE_KEY})
+    if r.status_code >= 400:
+        raise RuntimeError(f"voice download failed ({r.status_code})")
+    dest.write_bytes(r.content)
+
+
+def voice_of(clip: dict) -> tuple[str, str]:
+    """(the voice as saved on the clip, the Edge TTS voice name)"""
+    lang = (clip.get("narrator_lang") or "en")[:2]
+    m = VOICE_RE.match(clip.get("voice") or "")
+    name = m.group(1) if m else DEFAULT_VOICES.get(lang, DEFAULT_VOICES["en"])
+    return clip.get("voice") or name, name
+
+
+def prepared(sc: dict, clip: dict) -> bool:
+    saved, _ = voice_of(clip)
+    return bool(sc.get("voice_path")) and sc.get("voice_text") == (sc.get("text") or "").strip() and sc.get("voice_name") == saved \
+        and float(sc.get("voice_rate") or 1) == float(clip.get("voice_rate") or 1)
+
+
+def voice(cid: str) -> None:
+    clip = db.select("clips", {"id": f"eq.{cid}", "select": "*"})[0]
+    saved, name = voice_of(clip)
+    rate = clip.get("voice_rate") or 1.0
+    db.update("clips", {"id": f"eq.{cid}"}, {"voice_state": "working", "voice_error": None})
+    made: dict[str, dict] = {}
+    for i, sc in enumerate(clip.get("scenes") or []):
+        text = (sc.get("text") or "").strip()
+        if sc.get("kind") != "narrator" or not text or prepared(sc, clip) or text in made:
+            continue
+        mp3 = WORK / f"voice-{i:02d}.mp3"
+        words = speak(text, name, rate, mp3)
+        data = mp3.read_bytes()
+        duration = round(max(len(data) * 8 / (EDGE_KBPS * 1000), words[-1][1] if words else 0), 3)
+        path = f"clipvoice/{cid}/{hashlib.sha1(f'{saved}|{rate}|{text}'.encode()).hexdigest()[:16]}.mp3"
+        storage_upload(path, data)
+        made[text] = {"voice_path": path, "voice_text": text, "voice_name": saved, "voice_rate": rate, "voice_duration": duration, "voice_words": words}
+        log(f"Line {i + 1}: {duration:.1f} s")
+    # the page may have changed the scenes meanwhile: put the voices on the lines that still say the same thing
+    latest = db.select("clips", {"id": f"eq.{cid}", "select": "scenes,voice"})[0]
+    scenes = latest.get("scenes") or []
+    for sc in scenes:
+        v = made.get((sc.get("text") or "").strip()) if sc.get("kind") == "narrator" else None
+        if v and (latest.get("voice") or saved) == saved:
+            sc.update(v)
+    db.update("clips", {"id": f"eq.{cid}"}, {"scenes": scenes, "voice_state": "ready", "voice_error": None})
+    log(f"Done: {len(made)} narrator line{'s' if len(made) != 1 else ''} spoken")
+
+
 def fetch_footage(fo: dict, i: int) -> Path:
     url = fo.get("url") or ""
     if not url.startswith("https://"):
@@ -542,10 +615,15 @@ def render_scene(i: int, sc: dict, original: Path, info: dict, clip: dict, out: 
     words_here: list = []
     if narrator:
         voice_mp3 = WORK / f"voice-{i:02d}.mp3"
-        lang = (clip.get("narrator_lang") or "en")[:2]
-        m = VOICE_RE.match(clip.get("voice") or "")
-        voice = m.group(1) if m else DEFAULT_VOICES.get(lang, DEFAULT_VOICES["en"])
-        words_here = speak(sc["text"].strip(), voice, clip.get("voice_rate") or 1.0, voice_mp3)
+        words_here = []
+        if prepared(sc, clip):  # the voice heard on the Clipper page
+            try:
+                storage_download(sc["voice_path"], voice_mp3)
+                words_here = sc.get("voice_words") or []
+            except Exception as e:  # noqa: BLE001 - speak it again instead
+                log(f"Scene {i + 1}: prepared voice unavailable ({e}), speaking it again")
+        if not words_here:
+            words_here = speak(sc["text"].strip(), voice_of(clip)[1], clip.get("voice_rate") or 1.0, voice_mp3)
         dur = round(probe_audio(voice_mp3) + 0.25, 3)
     else:
         dur = round(sc["end"] - sc["start"], 3)
@@ -673,12 +751,12 @@ def render(cid: str) -> None:
 def main() -> int:
     require_env("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "MEDIA_URL", "MEDIA_SECRET")
     mode, rid = (sys.argv[1:3] + ["", ""])[:2]
-    if mode not in ("analyze", "render") or not re.fullmatch(r"[0-9a-f-]{36}", rid):
-        sys.exit("usage: clipper.py analyze|render <id>")
+    if mode not in ("analyze", "render", "voice") or not re.fullmatch(r"[0-9a-f-]{36}", rid):
+        sys.exit("usage: clipper.py analyze|render|voice <id>")
     shutil.rmtree(WORK, ignore_errors=True)
     WORK.mkdir(parents=True)
     try:
-        analyze(rid) if mode == "analyze" else render(rid)
+        {"analyze": analyze, "render": render, "voice": voice}[mode](rid)
         return 0
     except Exception as e:  # noqa: BLE001 - every failure is shown on the page
         traceback.print_exc()
@@ -686,6 +764,8 @@ def main() -> int:
         msg = msg[:1500]
         if mode == "analyze":
             set_source(rid, status="failed", error=msg)
+        elif mode == "voice":
+            db.update("clips", {"id": f"eq.{rid}"}, {"voice_state": "failed", "voice_error": msg})
         else:
             db.update("clips", {"id": f"eq.{rid}"}, {"status": "failed", "error": msg})
         return 1

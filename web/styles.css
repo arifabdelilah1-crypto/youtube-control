@@ -761,3 +761,5 @@ video.review-player { background: #000; cursor: auto; object-fit: contain; }
 .cp-ticks span { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--console); z-index: 1; }
 .cp-track:focus-visible { outline: 2px solid var(--action); outline-offset: 2px; }
 .clip-all { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.clip-voice { gap: 8px; align-items: center; }
+.clip-sees { margin: 0; font-size: 12.5px; color: var(--graphite); overflow-wrap: anywhere; }
