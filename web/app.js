@@ -2249,7 +2249,7 @@ function clipCard(clip, n, src, words, links) {
   let scenes = (clip.scenes || []).map((s) => ({ kind: "original", ...s }));
   let hookIn = null, langSel = null, voiceSel = null;
   const memory = src.memory?.scenes || {};
-  const voiceUrl = (s) => (voiceFits(s) && s.voice_name === (voiceSel?.value || clip.voice) ? links[`renders:${s.voice_path}`] || null : null);
+  const voiceUrl = (s) => (voiceFits(s) && s.voice_name === (voiceSel?.value || clip.voice) && Number(s.voice_rate || 1) === Number(clip.voice_rate || 1) ? links[`renders:${s.voice_path}`] || null : null);
   const preview = clipPreview({ getScenes: () => scenes, src, words, links, getHook: () => hookIn?.value ?? clip.hook ?? "",
     getLang: () => langSel?.value || (clip.narrator_lang || src.language || "en").slice(0, 2), onScene: (k) => mark(k),
     getVoice: (s) => (voiceUrl(s) ? { url: voiceUrl(s), words: s.voice_words || [] } : null) });
@@ -2283,7 +2283,7 @@ function clipCard(clip, n, src, words, links) {
     clearTimeout(saveT);
     if (btn) btn.disabled = true;
     try {
-      await q(sb.from("clips").update({ scenes, voice: voiceSel.value, narrator_lang: langSel.value }).eq("id", clip.id));
+      await q(sb.from("clips").update({ scenes, voice: voiceSel.value, narrator_lang: langSel.value, voice_rate: Number(clip.voice_rate || 1) }).eq("id", clip.id));
       await clipperCall({ action: "voice", clip_id: clip.id });
       toast("Preparing the voice: about 1 minute"); render();
     } catch (err) { toast(err.message); if (btn) btn.disabled = false; }
@@ -2408,48 +2408,100 @@ function clipCard(clip, n, src, words, links) {
     fill(); showAt();
   }
 
+
+  // the narrator's voice: pick it by ear, set its speed, remake the lines when it changes
+  const voiceList = h("div", { class: "clip-voices", role: "radiogroup", "aria-label": "Narrator voice" });
+  const rateIn = h("input", { type: "range", min: 0.8, max: 1.25, step: 0.05, value: 1, class: "clip-scrub", "aria-label": "Voice speed" });
+  const rateOut = h("span", { class: "mono small", text: "1.00×" });
+  const voiceNote = h("div", { class: "row small", style: "gap:8px" });
+  const curRate = () => Number(rateIn.value) || 1;
+  rateIn.addEventListener("input", () => { rateOut.textContent = `${curRate().toFixed(2)}×`; });
+  rateIn.addEventListener("change", () => { clip.voice_rate = curRate(); save({ voice_rate: curRate() }); drawScenes(); });
+  function paintVoices() {
+    if (!voiceSel) return;
+    const lang = langSel.value;
+    voiceList.replaceChildren(...[...voiceSel.options].map((o) => {
+      const on = o.value === voiceSel.value;
+      const [name, ...rest] = o.textContent.split(" · ");
+      return h("div", { class: `clip-voice-opt${on ? " on" : ""}` },
+        h("button", { class: "clip-voice-pick", type: "button", role: "radio", "aria-checked": String(on), onclick: () => { voiceSel.value = o.value; voiceSel.dispatchEvent(new Event("change")); } },
+          h("span", { class: "clip-voice-name", text: name }), rest.length ? h("span", { class: "muted small", text: rest.join(" · ") }) : null),
+        h("button", { class: "clip-ibtn", type: "button", "aria-label": `Listen to ${name}`, title: `Listen to ${name}`, text: "▶",
+          onclick: async (e) => { const b = e.currentTarget; const on2 = await playSample(sampleUrl(lang, o.value, "natural")); b.textContent = on2 ? "■" : "▶"; } }));
+    }));
+  }
+  function paintVoiceNote() {
+    if (!voiceSel) return;
+    const spoken = narrScenes().filter((s) => (s.text || "").trim());
+    const stale = spoken.filter((s) => !(voiceFits(s) && s.voice_name === voiceSel.value && Number(s.voice_rate || 1) === curRate()));
+    voiceNote.replaceChildren(...(spoken.length && stale.length && clip.voice_state !== "working"
+      ? [h("span", { class: "muted", text: `${stale.length} line${stale.length > 1 ? "s" : ""} not spoken with this voice yet.` }),
+        h("button", { class: "btn small primary", type: "button", text: "Make the voice", onclick: (e) => makeVoices(e.currentTarget) })]
+      : []));
+  }
+  const voiceCard = h("div", { class: "clip-voice-card", hidden: true },
+    h("div", { class: "row", style: "justify-content:space-between;gap:10px" }, h("b", { text: "Narrator voice" }),
+      h("div", { class: "row small", style: "gap:8px" }, h("span", { class: "muted", text: "Speed" }), rateIn, rateOut)),
+    voiceList, voiceNote);
+
   function drawScenes() {
     setAi();
     totalEl.textContent = `≈ ${Math.round(total())} s`;
     totalEl.className = `mono ${total() > 60 ? "down" : ""}`;
+    voiceCard.hidden = !narrScenes().length;
+    paintVoiceNote();
     list.replaceChildren(...scenes.map((s, i) => {
       const narr = s.kind === "narrator";
       const stockThumb = s.footage?.thumb || s.footage?.preview;
       const picker = h("div");
-      const thumb = h("button", { class: "clip-thumb", type: "button", "aria-label": `Play scene ${i + 1}`, onclick: () => playScene(i) },
+      const thumb = h("button", { class: "clip-thumb", type: "button", "aria-label": `Play scene ${i + 1}`, title: "Play this scene", onclick: () => playScene(i) },
         stockThumb ? h("img", { src: stockThumb, alt: "", loading: "lazy" }) : s.thumb && links[s.thumb] ? h("img", { src: links[s.thumb], alt: "", loading: "lazy" })
-          : grab ? (() => { const cv = frameCanvas(); grab.draw(Number(s.start) + 0.3, cv); return [cv, h("span", { class: "clip-thumb-t mono", text: tc(s.start) })]; })() : h("span", { class: "clip-thumb-t mono", text: tc(s.start) }),
+          : grab ? (() => { const cv = frameCanvas(); grab.draw(Number(s.start) + 0.3, cv); return cv; })() : null,
+        h("span", { class: "clip-thumb-t mono", text: tc(s.start) }),
         h("span", { class: "review-play" }, icon("i-play")));
-      const kindSel = h("select", { class: "field", "aria-label": "What is heard", style: "min-height:32px;width:auto", onchange: (e) => {
-        s.kind = e.target.value;
-        if (s.kind === "narrator") { s.text = s.text || ""; s.under = s.under ?? 0; } else if (s.end - s.start < 1) s.end = Math.round((s.start + 5) * 10) / 10;
+      const setKind = (k) => {
+        if ((s.kind || "original") === k) return;
+        s.kind = k;
+        if (k === "narrator") { s.text = s.text || ""; s.under = s.under ?? 0; } else if (s.end - s.start < 1) s.end = Math.round((s.start + 5) * 10) / 10;
         saveScenes();
-      } }, [["original", "Original sound"], ["narrator", "Narrator"]].map(([v, t]) => h("option", { value: v, selected: (s.kind || "original") === v, text: t })));
-      const footageLine = h("div", { class: "row small", style: "gap:6px" },
-        h("span", { class: "muted", text: "Picture:" }),
-        s.footage?.url ? h("span", { text: `${s.footage.type === "image" ? "Photo" : "Clip"} from ${s.footage.source}${s.footage.author ? ` (${s.footage.author})` : ""}` }) : h("span", { text: `This video, from ${tc(s.start)}` }),
-        tiny("Change moment", "Pick another moment of the long video for this scene", () => momentPanel(s, picker)),
-        tiny(s.footage?.url ? "Change" : "Search footage", "Search other footage for this scene", () => footagePanel(s, picker)),
-        s.footage?.url ? tiny("Use this video", "Back to the long video's own footage", () => { s.footage = null; saveScenes(); }) : null,
-        s.search && !s.footage?.url ? h("span", { class: "muted", text: `Idea: “${s.search}”` }) : null);
+        if (k === "narrator") list.children[i]?.querySelector("textarea")?.focus();
+      };
+      const kindSeg = h("div", { class: "seg clip-kind", role: "group", "aria-label": "What is heard in this scene" },
+        [["original", "Original sound"], ["narrator", "Narrator"]].map(([k, t]) => h("button", { type: "button", "aria-pressed": String((s.kind || "original") === k), text: t, onclick: () => setKind(k) })));
+      const iconBtn = (text, label, fn, extra = {}) => h("button", { class: "clip-ibtn", type: "button", "aria-label": label, title: label, text, onclick: fn, ...extra });
+      const timeCtl = (key, label) => h("div", { class: "clip-time" },
+        h("span", { class: "clip-ctl-label", text: label }),
+        iconBtn("−", `${label} 0.5 s earlier`, () => nudge(i, key, -0.5)),
+        h("span", { class: "mono", text: tc(s[key]) }),
+        iconBtn("+", `${label} 0.5 s later`, () => nudge(i, key, 0.5)));
+      const group = (label, ...kids) => h("div", { class: `clip-group${label === "Picture" || label === "Timing" ? " wide" : ""}` }, h("span", { class: "clip-group-label", text: label }), h("div", { class: "clip-group-body" }, ...kids));
+      const pictureText = s.footage?.url ? `${s.footage.type === "image" ? "Photo" : "Clip"} from ${s.footage.source}${s.footage.author ? ` (${s.footage.author})` : ""}` : `The long video at ${tc(s.start)}`;
       return h("li", { class: `clip-scene${narr ? " narr" : ""}` }, thumb,
         h("div", { class: "clip-scene-body" },
-          h("div", { class: "row small", style: "gap:8px" }, h("b", { text: `Scene ${i + 1}` }), kindSel,
-            h("span", { class: "mono muted", text: narr ? `≈ ${sceneSeconds(s).toFixed(1)} s, as long as the voice` : `${tc(s.start)} → ${tc(s.end)} · ${(s.end - s.start).toFixed(1)} s` })),
+          h("div", { class: "clip-scene-head" },
+            h("b", { text: `Scene ${i + 1}` }), kindSeg,
+            h("span", { class: "mono muted small clip-dur", text: narr ? `≈ ${sceneSeconds(s).toFixed(1)} s (the voice)` : `${(s.end - s.start).toFixed(1)} s` }),
+            h("div", { class: "clip-scene-actions" },
+              iconBtn("↑", "Move up", () => move(i, -1), { disabled: i === 0 }),
+              iconBtn("↓", "Move down", () => move(i, 1), { disabled: i === scenes.length - 1 }),
+              iconBtn("+ Narrator", "Add a narrator line after this scene", () => addNarrator(i), { class: "clip-ibtn wide" }),
+              iconBtn("✕", "Remove this scene", () => { if (confirm(`Remove scene ${i + 1}?`)) { scenes.splice(i, 1); saveScenes(); } }, { class: "clip-ibtn danger" }))),
           narr ? [h("textarea", { class: "field clip-vo", rows: 2, maxlength: 400, placeholder: "What the narrator says", value: s.text || "", oninput: (e) => { s.text = e.target.value; saveScenes(false); }, onchange: () => drawScenes() }), voiceLine(s)]
             : h("p", { class: "clip-words", text: textOf(s.start, s.end) || "(no speech)" }),
           !s.footage?.url && memory[s.thumb]?.sees ? h("p", { class: "clip-sees", text: `Seen: ${memory[s.thumb].sees}` }) : null,
-          footageLine, picker,
-          h("div", { class: "row clip-tools" },
-            h("span", { class: "muted small", text: narr ? "Picture start" : "Start" }), tiny("−1s", "1 s earlier", () => nudge(i, "start", -1)), tiny("+1s", "1 s later", () => nudge(i, "start", 1)),
-            narr ? null : [h("span", { class: "muted small", text: "End" }), tiny("−1s", "End 1 s earlier", () => nudge(i, "end", -1)), tiny("+1s", "End 1 s later", () => nudge(i, "end", 1))],
-            h("select", { class: "field", "aria-label": "Crop", style: "min-height:32px;width:auto", onchange: (e) => { s.crop = e.target.value; saveScenes(); } },
-              CROPS.map(([v, t]) => h("option", { value: v, selected: s.crop === v, text: t }))),
-            narr ? h("select", { class: "field", "aria-label": "Original sound under the voice", style: "min-height:32px;width:auto", onchange: (e) => { s.under = Number(e.target.value); saveScenes(); } },
-              [[0, "Video sound off"], [0.12, "Video sound low"], [0.25, "Video sound medium"]].map(([v, t]) => h("option", { value: v, selected: Number(s.under || 0) === v, text: t }))) : null,
-            tiny("↑", "Move up", () => move(i, -1), { disabled: i === 0 }), tiny("↓", "Move down", () => move(i, 1), { disabled: i === scenes.length - 1 }),
-            tiny("✕", "Remove this scene", () => { scenes.splice(i, 1); saveScenes(); }),
-            tiny("+ Narrator line", "Add a narrator line after this scene", () => addNarrator(i)))));
+          h("div", { class: "clip-groups" },
+            group(narr ? "Picture from" : "Timing", narr ? timeCtl("start", "From") : [timeCtl("start", "Start"), timeCtl("end", "End")]),
+            group("Picture", h("span", { class: "small clip-pic", text: pictureText }),
+              h("div", { class: "row", style: "gap:4px" },
+                tiny("Change moment", "Pick another moment of the long video for this scene", () => momentPanel(s, picker)),
+                tiny(s.footage?.url ? "Other footage" : "Stock footage", "Search stock clips and photos for this scene", () => footagePanel(s, picker)),
+                s.footage?.url ? tiny("Use the video", "Back to the long video's own picture", () => { s.footage = null; saveScenes(); }) : null),
+              s.search && !s.footage?.url ? h("span", { class: "muted small", text: `Idea: “${s.search}”` }) : null),
+            group("Framing", h("select", { class: "field clip-sel", "aria-label": "Framing", onchange: (e) => { s.crop = e.target.value; saveScenes(); } },
+              CROPS.map(([v, t]) => h("option", { value: v, selected: s.crop === v, text: t })))),
+            narr ? group("Video sound", h("select", { class: "field clip-sel", "aria-label": "Video sound under the voice", onchange: (e) => { s.under = Number(e.target.value); saveScenes(); } },
+              [[0, "Off"], [0.12, "Low"], [0.25, "Medium"]].map(([v, t]) => h("option", { value: v, selected: Number(s.under || 0) === v, text: t })))) : null),
+          picker));
     }));
   }
   drawScenes();
@@ -2465,15 +2517,19 @@ function clipCard(clip, n, src, words, links) {
   // narrator: brief, language, voice
   const defLang = (clip.narrator_lang || channelById(clip.channel_id)?.language || src.language || "en").slice(0, 2);
   langSel = h("select", { class: "field", id: `nl-${clip.id}` }, CLIP_LANGS.filter(([v]) => v !== "auto").map(([v, t]) => h("option", { value: v, selected: v === defLang, text: t })));
-  voiceSel = h("select", { class: "field", id: `nv-${clip.id}` });
+  voiceSel = h("select", { class: "field", id: `nv-${clip.id}`, hidden: true });
   const fillVoices = () => {
     const opts = edgeVoices(langSel.value);
     const want = clip.voice && opts.some(([v]) => v === clip.voice) ? clip.voice : opts[0]?.[0];
     voiceSel.replaceChildren(...opts.map(([v, t]) => h("option", { value: v, selected: v === want, text: t })));
   };
   fillVoices();
-  langSel.addEventListener("change", () => { fillVoices(); save({ narrator_lang: langSel.value, voice: voiceSel.value }); });
-  voiceSel.addEventListener("change", () => save({ voice: voiceSel.value }));
+  langSel.addEventListener("change", () => { fillVoices(); save({ narrator_lang: langSel.value, voice: voiceSel.value }); paintVoices(); drawScenes(); });
+  voiceSel.addEventListener("change", () => { save({ voice: voiceSel.value }); paintVoices(); drawScenes(); });
+  paintVoices();
+  rateIn.value = String(Number(clip.voice_rate || 1));
+  rateOut.textContent = `${Number(rateIn.value).toFixed(2)}×`;
+  paintVoiceNote();
   const brief = h("textarea", { class: "field", id: `nb-${clip.id}`, rows: 3, maxlength: 2000, value: clip.brief || "",
     placeholder: "Optional. E.g. “Our narrator opens: do you remember when Speed raced Usain Bolt? Then Speed's own reaction, then the narrator explains the result and asks who would win.”" });
   brief.value = clip.brief || "";
@@ -2532,8 +2588,7 @@ function clipCard(clip, n, src, words, links) {
         h("div", { class: "clip-brief" },
           h("div", { class: "field-wrap" }, h("label", { for: `nb-${clip.id}`, text: "What do you want? (leave empty to keep the clip as it is)" }), brief),
           h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: `cn-${clip.id}`, text: "Network" }), netSel),
-            h("div", { class: "field-wrap" }, h("label", { for: `nl-${clip.id}`, text: "Narrator language" }), langSel),
-            h("div", { class: "field-wrap" }, h("label", { for: `nv-${clip.id}`, text: "Narrator voice" }), voiceSel)),
+            h("div", { class: "field-wrap" }, h("label", { for: `nl-${clip.id}`, text: "Narrator language" }), langSel)),
           h("div", { class: "row" }, goBtn, renderBtn)),
         hookField,
         inp(`ct-${clip.id}`, "Title", clip.title, "title", { maxlength: 100 }),
@@ -2541,6 +2596,7 @@ function clipCard(clip, n, src, words, links) {
         inp(`cg-${clip.id}`, "Tags (comma separated)", (clip.tags || []).join(", "), "tags"),
         h("div", { class: "row", style: "justify-content:space-between" }, h("h3", { style: "margin:6px 0 0", text: "Scenes" }), aiBtn,
           tiny("+ Narrator line at the start", "Add a narrator line before the first scene", () => { scenes.unshift({ kind: "narrator", text: "", start: scenes[0]?.start || 0, end: 0, under: 0, crop: scenes[0]?.crop || "center", thumb: scenes[0]?.thumb || null, footage: null }); saveScenes(); list.children[0]?.querySelector("textarea")?.focus(); })),
+        voiceCard,
         voiceState,
         list,
         h("div", { class: "row" },

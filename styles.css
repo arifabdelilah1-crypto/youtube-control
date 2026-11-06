@@ -706,7 +706,7 @@ video.review-player { background: #000; cursor: auto; object-fit: contain; }
 /* ---- Long to Shorts ---- */
 .clip-form { display: flex; flex-direction: column; gap: 14px; }
 .clip-card { display: flex; flex-direction: column; gap: 12px; }
-.clip-layout { display: grid; grid-template-columns: minmax(260px, 420px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.clip-layout { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .clip-side { position: sticky; top: 76px; display: flex; flex-direction: column; gap: 10px; }
 .clip-player { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 12px; }
 .clip-result { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); padding-top: 10px; }
@@ -776,3 +776,36 @@ video.review-player { background: #000; cursor: auto; object-fit: contain; }
 .clip-any-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .clip-scrub { width: 100%; accent-color: var(--action); }
 @media (max-width: 560px) { .clip-any { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---- Long to Shorts: scene cards and narrator voice ---- */
+.clip-scene { grid-template-columns: 148px minmax(0, 1fr); gap: 14px; padding: 12px; }
+.clip-thumb { width: 148px; }
+.clip-thumb .clip-thumb-t { inset: auto auto 6px 6px; background: rgba(0, 0, 0, .65); color: #fff; padding: 1px 6px; border-radius: 6px; }
+.clip-scene-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.clip-kind button { min-height: 30px; padding: 0 12px; font-size: 13px; }
+.clip-dur { margin-right: auto; }
+.clip-scene-actions { display: flex; gap: 4px; margin-left: auto; }
+.clip-ibtn { min-width: 30px; height: 30px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; display: inline-grid; place-items: center; }
+.clip-ibtn:hover:not(:disabled) { border-color: var(--action); color: var(--action); }
+.clip-ibtn:disabled { opacity: .35; cursor: default; }
+.clip-ibtn.wide { padding: 0 10px; }
+.clip-ibtn.danger:hover:not(:disabled) { border-color: var(--crit); color: var(--crit); }
+.clip-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.clip-group.wide { grid-column: span 2; }
+@media (max-width: 640px) { .clip-group.wide { grid-column: auto; } }
+.clip-group { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; justify-content: flex-start; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); min-width: 0; }
+.clip-group-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); }
+.clip-group-body { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.clip-time { display: inline-flex; align-items: center; gap: 6px; }
+.clip-time .mono { min-width: 52px; text-align: center; font-size: 13px; }
+.clip-ctl-label { font-size: 12.5px; color: var(--graphite); }
+.clip-pic { color: var(--graphite); }
+.clip-sel { min-height: 30px; width: auto; padding-block: 2px; }
+.clip-voice-card { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid rgba(167, 139, 250, .45); border-radius: 12px; background: linear-gradient(0deg, var(--signal-soft), var(--signal-soft)), var(--panel-2); }
+.clip-voice-card .clip-scrub { width: 120px; }
+.clip-voices { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 6px; }
+.clip-voice-opt { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.clip-voice-opt.on { border-color: var(--signal); box-shadow: inset 0 0 0 1px var(--signal); }
+.clip-voice-pick { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 4px 10px; border: 0; background: none; color: inherit; font: inherit; text-align: start; cursor: pointer; }
+.clip-voice-name { font-size: 13.5px; font-weight: 500; }
+@media (max-width: 520px) { .clip-scene { grid-template-columns: minmax(0, 1fr); } .clip-thumb { width: 100%; } .clip-scene-actions { margin-left: 0; } }
