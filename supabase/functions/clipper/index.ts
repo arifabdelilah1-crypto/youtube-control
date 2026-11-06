@@ -246,7 +246,7 @@ async function narrate(body: any) {
   let ideaId = clip.idea_id;
   if (ideaId) await db.from("ideas").update(ideaFields).eq("id", ideaId);
   else {
-    const { data: idea } = await db.from("ideas").insert({ ...ideaFields, sources: { clipper: { source_id: clip.source_id, clip_id: clip.id } }, ai: { aspect: "9:16", language } }).select("id").single();
+    const { data: idea } = await db.from("ideas").insert({ ...ideaFields, sources: [{ type: "clipper", source_id: clip.source_id, clip_id: clip.id }], ai: { aspect: "9:16", language } }).select("id").single();
     ideaId = idea?.id ?? null;
   }
   const patch = { scenes, title, description, tags, hook, brief, voice, narrator_lang: language, idea_id: ideaId, status: clip.status === "rendering" ? "rendering" : "draft" };

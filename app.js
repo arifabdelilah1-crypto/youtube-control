@@ -578,7 +578,7 @@ VIEWS.research = async (route) => {
   if (tab === "rising") {
     const trends = scope.global ? [] : await q(sb.from("ideas").select("id,title,video_title,sources,created_at").eq("niche_id", scope.niche.id).filter("sources", "cs", JSON.stringify([{ type: "trend" }])).neq("stage", "archived").order("created_at", { ascending: false }).limit(18));
     out.push(h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "Trending now" }), h("span", { class: "muted small", text: "Google Trends, what fits this niche" })),
-      trends.length ? h("div", { class: "grid-cards" }, trends.map((i) => { const t = i.sources.find((x) => x.type === "trend");
+      trends.length ? h("div", { class: "grid-cards" }, trends.map((i) => { const t = srcList(i).find((x) => x.type === "trend");
         return h("a", { class: "tile", href: `#/studio/${i.id}` },
           h("div", { style: "flex:1;min-width:0" }, h("div", { dir: "auto", style: "font-weight:500", text: i.video_title || i.title }), h("div", { class: "muted small", dir: "auto", text: `${t.ref} · ${t.geo}` })),
           h("span", { class: "muted small", text: t.traffic })); }))
@@ -772,7 +772,7 @@ async function aiCall(body) {
 }
 /** Runs the missing steps for an idea. onStep(label) reports progress. Returns the fresh idea row. */
 async function generateScript(idea, { channel_id, language, angle, aspect, length, draft } = {}, onStep = () => {}) {
-  const isOutlier = (idea.sources || []).some((s) => s.type === "outlier");
+  const isOutlier = srcList(idea).some((s) => s.type === "outlier");
   if (isOutlier && !idea.source_video) { onStep("Reading the outlier…"); await aiCall({ action: "capture", idea_id: idea.id }); }
   if (isOutlier && !idea.blueprint) { onStep("Studying its format…"); await aiCall({ action: "blueprint", idea_id: idea.id }); }
   onStep(draft ? "Improving the script…" : "Writing the script…");
@@ -796,7 +796,9 @@ const IDEA_TABS = [["all", "All", null], ["make", "To make", ["new", "saved", "d
 const RUN_STEPS = { script: "Writing the script", review: "Reviewing the script", scenes: "Building the scenes", clips: "Choosing the clips", voice: "Recording the voice",
   music: "Finding the music", sounds: "Adding sound effects", thumbnail: "Making the thumbnail", render: "Rendering the video", check: "Final checks" };
 const ideasUi = { tab: "all", q: "", sort: "score", source: "", selected: new Set(), open: new Set(), fresh: new Set() };
-const ideaSource = (i) => (i.sources || []).find((x) => ["trend", "outlier", "manual", "keyword"].includes(x.type))?.type || "other";
+/** An idea's sources: always a list, even if a row was saved in another shape. */
+const srcList = (i) => (Array.isArray(i?.sources) ? i.sources : []);
+const ideaSource = (i) => srcList(i).find((x) => ["trend", "outlier", "manual", "keyword"].includes(x.type))?.type || "other";
 const isActiveRun = (r) => r && ["queued", "running"].includes(r.status);
 const runTitle = (r) => r.ideas?.video_title || r.ideas?.title || "Your video";
 const isEmptyDraft = (i) => !i.script?.trim() && /^untitled/i.test(i.title || "");
@@ -982,7 +984,7 @@ VIEWS.ideas = async () => {
     const ch = channelById(i.channel_id);
     const language = i.ai?.language || project?.language || ch?.video_style?.language || ch?.language;
     const aspect = project?.aspect || i.ai?.aspect;
-    const trend = (i.sources || []).find((x) => x.type === "trend");
+    const trend = srcList(i).find((x) => x.type === "trend");
     const check = h("input", { type: "checkbox", checked: ideasUi.selected.has(i.id), disabled: st === "working", "aria-label": `Select “${i.video_title || i.title}”`, onchange: (e) => { if (e.target.checked) ideasUi.selected.add(i.id); else ideasUi.selected.delete(i.id); paintBulk(); } });
     const studio = h("a", { class: "btn small ghost", href: `#/studio/${i.id}`, text: i.script?.trim() ? "Edit script" : "Write it myself" });
     const genBtn = (text, primary = true) => h("button", { class: `btn small${primary ? " primary" : " ghost"}`, type: "button", text, onclick: () => generate([i]) });
@@ -1004,9 +1006,9 @@ VIEWS.ideas = async () => {
         h("a", { class: "title", dir: "auto", href: `#/studio/${i.id}`, text: i.video_title || i.title }),
         h("div", { class: "idea-meta muted small" },
           h("span", { text: ch?.title || "No network yet" }), language ? h("span", { text: language.toUpperCase() }) : null, aspect ? h("span", { text: aspect }) : null,
-          (i.sources || []).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null,
+          srcList(i).some((x) => x.type === "outlier") ? h("span", { class: "pill short", title: "Saved from an outlier video", text: "Outlier" }) : null,
           trend ? h("span", { class: "pill short", title: trend.why || "Trending on Google", text: `Trend ${trend.geo} ${trend.traffic}` }) : null,
-          (i.sources || []).some((x) => x.type === "translation") ? h("span", { class: "pill short", text: "Translated" }) : null,
+          srcList(i).some((x) => x.type === "translation") ? h("span", { class: "pill short", text: "Translated" }) : null,
           trend?.news?.[0]?.url ? h("a", { href: trend.news[0].url, target: "_blank", rel: "noopener", text: "News" }) : null,
           i.source_video?.url ? h("a", { href: i.source_video.url, target: "_blank", rel: "noopener", text: "Source" }) : null,
           h("span", { text: ago(i.created_at) })),
@@ -1308,7 +1310,7 @@ function studioAiPanel(idea, f, buildBtn, save) {
   const src = idea.source_video;
   const bp = idea.blueprint;
   const ai = idea.ai;
-  const isOutlier = (idea.sources || []).some((x) => x.type === "outlier");
+  const isOutlier = srcList(idea).some((x) => x.type === "outlier");
   const angle = h("input", { id: "ai-angle", class: "field", dir: "auto", placeholder: "Optional: your twist, e.g. “make it about Real Madrid instead of Barça”" });
   const transcript = h("textarea", { id: "ai-transcript", class: "field", rows: "4", dir: "auto", value: idea.transcript || "",
     placeholder: "Optional: on YouTube open the video → ··· → Show transcript, copy it and paste it here. The AI then copies the structure more precisely.",

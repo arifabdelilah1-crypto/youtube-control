@@ -738,7 +738,7 @@ def render(cid: str) -> None:
         db.update("ideas", {"id": f"eq.{clip['idea_id']}"}, fields)
         idea_id = clip["idea_id"]
     else:
-        idea_id = db.insert("ideas", {**fields, "sources": {"clipper": {"source_id": src["id"], "clip_id": cid}},
+        idea_id = db.insert("ideas", {**fields, "sources": [{"type": "clipper", "source_id": src["id"], "clip_id": cid}],
                                       "ai": {"aspect": "9:16", "language": clip.get("narrator_lang") or src.get("language") or "en"}})[0]["id"]
     job = db.insert("render_jobs", {"idea_id": idea_id, "channel_id": clip.get("channel_id"), "status": "done", "output_path": f"vds:videos/{cid}.mp4",
                                     "duration_s": round(duration, 2), "started_at": now_iso(), "finished_at": now_iso(), "run_url": RUN_URL,
