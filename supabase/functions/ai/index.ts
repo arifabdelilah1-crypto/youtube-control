@@ -255,6 +255,7 @@ Deno.serve(async (req) => {
         }
         if (body.action === "check_clips") {
           const items = (Array.isArray(body.items) ? body.items : []).filter((x: any) => /^https:\/\//.test(x?.url || "")).slice(0, 10);
+          if (!items.length) return json({ checks: [] });
           const seen = (await Promise.all(items.map(async (x: any) => ({ x, url: await imageData(x.url) })))).filter((m) => m.url);
           if (!seen.length) return json({ checks: [], seen: 0 });
           const out = await deepseek(db, ideaId, "clip_check", CHECK_CLIPS_SYSTEM, `Subject of the video: ${clean(body.subject, 300)}`, null,

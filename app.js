@@ -2977,6 +2977,189 @@ function prettySource(k) {
 }
 
 // ==================================================================
+// Trending: Google Trends' "Trending now", with the same filters, turned into ideas for a network
+// ==================================================================
+// Google's categories on the "Trending now" page (same numbers as the site's category filter)
+const TREND_CATEGORIES = [[1, "Autos and Vehicles"], [2, "Beauty and Fashion"], [3, "Business and Finance"], [20, "Climate"], [4, "Entertainment"],
+  [5, "Food and Drink"], [6, "Games"], [7, "Health"], [8, "Hobbies and Leisure"], [9, "Jobs and Education"], [10, "Law and Government"],
+  [11, "Other"], [13, "Pets and Animals"], [14, "Politics"], [15, "Science"], [16, "Shopping"], [17, "Sports"], [18, "Technology"],
+  [19, "Travel and Transportation"]];
+const TREND_PERIODS = [[4, "Past 4 hours"], [24, "Past 24 hours"], [48, "Past 48 hours"], [168, "Past 7 days"]];
+const trendUi = { cache: {}, news: {}, selected: new Map(), focus: null };
+
+async function trendingCall(body) {
+  const { data, error } = await sb.functions.invoke("trending", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+const trendVolume = (v) => (v >= 1e6 ? `${Math.floor(v / 1e6)}M+` : v >= 1e3 ? `${Math.floor(v / 1e3)}K+` : `${v}+`);
+const trendKey = (t) => `${t.geo}|${t.title}`;
+function trendLasted(t) {
+  const s = (t.ended || Date.now() / 1000) - t.started;
+  return s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : s < 86400 * 2 ? `${Math.round(s / 3600)} hrs` : `${Math.round(s / 86400)} days`;
+}
+
+VIEWS.trending = async (route) => {
+  const p = route.params;
+  const ch = state.channels.find((c) => c.id === state.channel);
+  const firstMarket = (ch?.markets || []).find((m) => m !== "GLOBAL");
+  const f = {
+    geo: (p.get("geo") || firstMarket || "US").toUpperCase(),
+    hours: Number(p.get("hours")) || 24,
+    cat: Number(p.get("cat")) || 0,
+    status: p.get("status") || "all",
+    sort: p.get("sort") || "relevance",
+    q: p.get("q") || "",
+    page: 0, per: 50,
+  };
+  const key = `${f.geo}|${f.hours}`;
+  let data = trendUi.cache[key];
+  if (!data || Date.now() - data.at > 5 * 60_000) {
+    data = { ...(await trendingCall({ action: "list", geo: f.geo, hours: f.hours })), at: Date.now() };
+    trendUi.cache[key] = data;
+  }
+  const rows = data.rows || [];
+  const keep = (changes) => {  // filters that don't need Google again: just repaint, and keep them in the address
+    Object.assign(f, changes, { page: changes.page ?? 0 });
+    const qs = new URLSearchParams(Object.entries({ geo: f.geo, hours: f.hours, cat: f.cat || "", status: f.status === "all" ? "" : f.status, sort: f.sort === "relevance" ? "" : f.sort, q: f.q })
+      .filter(([, v]) => v !== "" && v !== null));
+    history.replaceState(null, "", `#/trending?${qs}`);
+    paint();
+  };
+  const reload = (changes) => {  // a new country or period: a new list from Google
+    trendUi.selected.clear(); trendUi.focus = null;
+    const n = { ...f, ...changes };
+    go(link("trending", { geo: n.geo, hours: n.hours, cat: n.cat || "", status: n.status === "all" ? "" : n.status, sort: n.sort === "relevance" ? "" : n.sort, q: n.q }));
+  };
+
+  const countries = [...new Set(["US", ...state.niches.flatMap((n) => n.markets || []), ...MARKETS.map(([k]) => k)])].filter((m) => m !== "GLOBAL");
+  const sel = (label, value, options, onChange) => {
+    const s = h("select", { class: "field tr-filter", "aria-label": label, onchange: (e) => onChange(e.target.value) },
+      options.map(([v, t]) => h("option", { value: v, text: t, selected: String(v) === String(value) })));
+    return s;
+  };
+  const search = h("input", { class: "field tr-filter", type: "search", placeholder: "Search trends", "aria-label": "Search trends", value: f.q,
+    oninput: (e) => keep({ q: e.target.value }) });
+  const filters = h("section", { class: "card tr-filters" },
+    sel("Country", f.geo, countries.map((m) => [m, marketName(m)]), (v) => reload({ geo: v })),
+    sel("Period", f.hours, TREND_PERIODS, (v) => reload({ hours: v })),
+    sel("Category", f.cat, [[0, "All categories"], ...TREND_CATEGORIES], (v) => keep({ cat: Number(v) })),
+    sel("Trend status", f.status, [["all", "All trends"], ["active", "Active trends"]], (v) => keep({ status: v })),
+    sel("Sort", f.sort, [["relevance", "By relevance"], ["title", "By title"], ["volume", "By search volume"], ["recency", "By recency"]], (v) => keep({ sort: v })),
+    search);
+
+  const tableBox = h("div", { class: "card tr-list" });
+  const panel = h("aside", { class: "card tr-panel", "aria-live": "polite" });
+  const bulk = h("div", { class: "tr-bulk", hidden: true });
+
+  const visible = () => {
+    let out = rows.filter((t) => (!f.cat || t.categories.includes(f.cat)) && (f.status === "all" || t.active));
+    if (f.q.trim()) { const s = f.q.trim().toLowerCase(); out = out.filter((t) => t.title.toLowerCase().includes(s) || t.related.some((r) => r.toLowerCase().includes(s))); }
+    if (f.sort === "title") out = [...out].sort((a, b) => a.title.localeCompare(b.title));
+    if (f.sort === "volume") out = [...out].sort((a, b) => b.volume - a.volume || b.growth - a.growth);
+    if (f.sort === "recency") out = [...out].sort((a, b) => b.started - a.started);
+    return out;
+  };
+
+  function paintBulk() {
+    const n = trendUi.selected.size;
+    bulk.hidden = !n;
+    if (!n) return;
+    const netSel = h("select", { class: "field", "aria-label": "Network for the ideas" },
+      state.channels.map((c) => h("option", { value: c.id, text: c.title, selected: c.id === state.channel })));
+    const add = h("button", { class: "btn primary small", type: "button", text: `Add ${n} as idea${n === 1 ? "" : "s"}`, onclick: async () => {
+      add.disabled = true; add.textContent = "Adding… (reading the news)";
+      try {
+        const r = await trendingCall({ action: "assign", channel_id: netSel.value, trends: [...trendUi.selected.values()] });
+        const net = state.channels.find((c) => c.id === netSel.value)?.title || "the network";
+        toast(`${r.added} idea${r.added === 1 ? "" : "s"} added to ${net}${r.skipped ? ` · ${r.skipped} already there` : ""}`);
+        trendUi.selected.clear(); paint();
+      } catch (e) { toast(e.message); add.disabled = false; add.textContent = `Add ${n} as idea${n === 1 ? "" : "s"}`; }
+    } });
+    bulk.replaceChildren(h("span", { class: "tr-bulk-n", text: `${n} selected` }),
+      h("label", { class: "sr", text: "Network" }), state.channels.length ? netSel : h("span", { class: "muted small", text: "Add a network first" }),
+      state.channels.length ? add : null,
+      h("button", { class: "btn ghost small", type: "button", text: "Clear", onclick: () => { trendUi.selected.clear(); paint(); } }));
+  }
+
+  async function paintPanel() {
+    const t = rows.find((x) => trendKey(x) === trendUi.focus);
+    if (!t) {
+      panel.replaceChildren(h("h2", { text: "Trend breakdown" }), h("p", { class: "muted small", text: "Click a trend to see every search people make around it, and the news behind it." }));
+      return;
+    }
+    const copy = h("button", { class: "btn ghost small", type: "button", text: "Copy", "aria-label": "Copy the trend breakdown", onclick: async () => {
+      try { await navigator.clipboard.writeText([t.title, ...t.related].join("\n")); toast("Breakdown copied"); } catch { toast("Copy isn't allowed here"); }
+    } });
+    const newsBox = h("div", { class: "tr-news" }, h("p", { class: "muted small", text: "Reading the news…" }));
+    const picked = trendUi.selected.has(trendKey(t));
+    panel.replaceChildren(
+      h("div", { class: "tr-panel-head" }, h("h2", { text: t.title }),
+        h("button", { class: "btn ghost small", type: "button", "aria-label": "Close", text: "×", onclick: () => { trendUi.focus = null; paint(); } })),
+      h("div", { class: "tr-stats" },
+        h("div", {}, h("strong", { text: trendVolume(t.volume) }), h("span", { class: "muted small", text: "searches" })),
+        h("div", {}, h("strong", { text: `↑ ${fmt(t.growth)}%` }), h("span", { class: "muted small", text: "growth" })),
+        h("div", {}, h("strong", { text: ago(new Date(t.started * 1000).toISOString()) }), h("span", { class: "muted small", text: t.active ? "started · active" : `lasted ${trendLasted(t)}` }))),
+      h("div", { class: "row", style: "gap:6px" }, t.categories.map((c) => h("span", { class: "pill short", text: (TREND_CATEGORIES.find(([k]) => k === c) || [c, "Other"])[1] }))),
+      h("button", { class: `btn small ${picked ? "" : "primary"}`, type: "button", text: picked ? "✓ Selected" : "Select for an idea",
+        onclick: () => { picked ? trendUi.selected.delete(trendKey(t)) : trendUi.selected.set(trendKey(t), t); paint(); } }),
+      h("div", { class: "tr-panel-head" }, h("h3", { text: `Trend breakdown · ${t.related.length}` }), copy),
+      t.related.length ? h("div", { class: "tr-breakdown" }, t.related.map((r) => h("button", { type: "button", class: "tr-q", text: r, title: "Search this in the list",
+        onclick: () => { search.value = r; keep({ q: r }); } })))
+        : h("p", { class: "muted small", text: "Google lists no related searches for this one." }),
+      h("h3", { text: "In the news" }), newsBox,
+      h("a", { class: "small", target: "_blank", rel: "noopener", href: `https://trends.google.com/trends/explore?${new URLSearchParams({ q: t.title, geo: t.geo, date: f.hours <= 24 ? "now 1-d" : "now 7-d" })}`, text: "Open on Google Trends ↗" }));
+    const nk = trendKey(t);
+    trendUi.news[nk] ||= trendingCall({ action: "news", title: t.title, geo: t.geo, lang: t.lang }).then((r) => r.news || [], () => { delete trendUi.news[nk]; return null; });
+    const items = await trendUi.news[nk];
+    if (trendUi.focus !== nk || !newsBox.isConnected) return;
+    newsBox.replaceChildren(...(items === null ? [h("p", { class: "muted small", text: "The news couldn't be read right now." })]
+      : items.length ? items.map((n) => h("a", { class: "tr-news-item", href: n.url, target: "_blank", rel: "noopener noreferrer" },
+        h("span", { text: n.title }), h("span", { class: "muted small", text: [n.date ? ago(n.date) : "", n.source].filter(Boolean).join(" · ") })))
+      : [h("p", { class: "muted small", text: "No recent news found for this search." })]));
+  }
+
+  function paint() {
+    const list = visible();
+    const pages = Math.max(1, Math.ceil(list.length / f.per));
+    f.page = Math.min(f.page, pages - 1);
+    const slice = list.slice(f.page * f.per, (f.page + 1) * f.per);
+    const allOn = slice.length && slice.every((t) => trendUi.selected.has(trendKey(t)));
+    const head = h("tr", {},
+      h("th", { class: "tr-check" }, h("input", { type: "checkbox", "aria-label": "Select every trend on this page", checked: !!allOn,
+        onchange: (e) => { slice.forEach((t) => (e.target.checked ? trendUi.selected.set(trendKey(t), t) : trendUi.selected.delete(trendKey(t)))); paint(); } })),
+      h("th", { text: `Trends · ${data.fetched_at ? when(data.fetched_at) : ""}` }), h("th", { text: "Search volume" }), h("th", { text: "Started" }), h("th", { text: "Trend breakdown" }));
+    const body = slice.map((t) => {
+      const k = trendKey(t);
+      const open = () => { trendUi.focus = k; paint(); if (matchMedia("(max-width: 1100px)").matches) panel.scrollIntoView({ behavior: "smooth", block: "start" }); };
+      return h("tr", { class: `clickable${trendUi.focus === k ? " on" : ""}`, tabindex: "0", onclick: open, onkeydown: (e) => e.key === "Enter" && e.target === e.currentTarget && open() },
+        h("td", { class: "tr-check", onclick: (e) => e.stopPropagation() }, h("input", { type: "checkbox", "aria-label": `Select ${t.title}`, checked: trendUi.selected.has(k),
+          onchange: (e) => { e.target.checked ? trendUi.selected.set(k, t) : trendUi.selected.delete(k); paint(); } })),
+        h("td", { class: "tr-title", text: t.title }),
+        h("td", {}, h("div", { class: "tr-vol", text: trendVolume(t.volume) }), h("div", { class: "muted small", text: `↑ ${fmt(t.growth)}%` })),
+        h("td", {}, h("div", { text: ago(new Date(t.started * 1000).toISOString()) }),
+          t.active ? h("span", { class: "pill ok", text: "Active" }) : h("span", { class: "pill short", text: `Lasted ${trendLasted(t)}` })),
+        h("td", { class: "tr-mini" }, t.related.slice(0, 2).map((r) => h("span", { class: "tr-q", text: r })),
+          t.related.length > 2 ? h("span", { class: "muted small", text: `+ ${t.related.length - 2} more` }) : null));
+    });
+    tableBox.replaceChildren(...[
+      list.length ? h("div", { class: "tablebox" }, h("table", { class: "tr-table" }, h("thead", {}, head), h("tbody", {}, body)))
+        : empty(rows.length ? "No trend matches these filters." : "Google lists no trends for this country and period."),
+      list.length > f.per ? h("div", { class: "tr-pager" },
+        h("span", { class: "muted small", text: `${f.page * f.per + 1}–${Math.min(list.length, (f.page + 1) * f.per)} of ${list.length}` }),
+        h("button", { class: "btn ghost small", type: "button", text: "‹ Previous", disabled: f.page === 0, onclick: () => keep({ page: f.page - 1 }) }),
+        h("button", { class: "btn ghost small", type: "button", text: "Next ›", disabled: f.page >= pages - 1, onclick: () => keep({ page: f.page + 1 }) }))
+        : list.length ? h("div", { class: "tr-pager" }, h("span", { class: "muted small", text: `${list.length} trend${list.length === 1 ? "" : "s"}` })) : null].filter(Boolean));
+    paintBulk();
+    paintPanel();
+  }
+  paint();
+  return [pageHead("Trending", `What people search right now in ${marketName(f.geo)}, from Google Trends.${data.stale ? " Google didn't answer: showing the last list." : ""}`),
+    filters, h("div", { class: "tr-layout" }, tableBox, panel), bulk];
+};
+
+// ==================================================================
 // Settings
 // ==================================================================
 VIEWS.settings = async (route) => {
