@@ -884,7 +884,8 @@ function generateDialog(ideas, onDone) {
   f.language = h("select", { id: "g-language", class: "field" }, h("option", { value: "", text: "Network language" }), LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, text: t })));
   f.aspect = h("select", { id: "g-aspect", class: "field" }, [["9:16", "Short / Reel (9:16)"], ["1:1", "Square (1:1)"], ["16:9", "Long video (16:9), not a Short"]].map(([v, t]) => h("option", { value: v, text: t })));
   f.length = h("select", { id: "g-length", class: "field" }, [["short45", "Short, about 45 s"], ["short60", "Short, about 60 s"], ["long3", "Long, about 3 min"]].map(([v, t]) => h("option", { value: v, text: t })));
-  f.angle = h("input", { id: "g-angle", class: "field", dir: "auto", placeholder: "Optional: your twist, e.g. make it about what most people get wrong" });
+  f.angle = h("input", { id: "g-angle", class: "field", dir: "auto", placeholder: "Optional: your twist, e.g. make it about what most people get wrong",
+    value: single ? srcList(single).find((x) => x.type === "trend")?.angle || "" : "" });  // a Trending idea keeps the angle the AI chose
   f.voice = h("select", { id: "g-voice", class: "field" });
   const langNow = () => f.language.value || channelById(f.channel.value)?.video_style?.language || channelById(f.channel.value)?.language || "en";
   const fillVoices = () => f.voice.replaceChildren(h("option", { value: "", text: "Chosen from the subject" }), ...(VOICES[langNow()] || VOICES.en).map(([v, t]) => h("option", { value: v, text: t })));
@@ -3000,6 +3001,56 @@ function trendLasted(t) {
   return s < 3600 ? `${Math.max(1, Math.round(s / 60))} min` : s < 86400 * 2 ? `${Math.round(s / 3600)} hrs` : `${Math.round(s / 86400)} days`;
 }
 
+/** The AI's ideas for the selected trends: the user keeps, edits or drops each one, then saves them to the network. */
+function trendIdeasDialog(channelId, trends, onDone) {
+  const net = state.channels.find((c) => c.id === channelId)?.title || "the network";
+  const dialog = h("dialog", { class: "gen-dialog tr-ideas", "aria-labelledby": "tri-title" });
+  const close = () => { dialog.close(); dialog.remove(); };
+  const body = h("div", { class: "tr-ideas-body" },
+    h("p", { class: "muted", text: `Reading the breakdown and the news of ${trends.length} trend${trends.length === 1 ? "" : "s"}… about 10 to 30 seconds.` }));
+  const save = h("button", { class: "btn primary", type: "button", text: "Save ideas", disabled: true });
+  const msg = h("p", { class: "muted small", style: "margin:0" });
+  dialog.append(h("div", { class: "gen-form" },
+    h("div", { class: "tr-panel-head" }, h("h2", { id: "tri-title", style: "margin:0", text: `Ideas for ${net}` }),
+      h("button", { class: "btn ghost small", type: "button", "aria-label": "Close", text: "×", onclick: close })),
+    body, msg,
+    h("div", { class: "row gen-actions" }, h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: close }), save)));
+  dialog.addEventListener("cancel", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+
+  const kept = [];  // {pick, check, title}
+  const count = () => { const n = kept.filter((k) => k.check.checked && k.title.value.trim()).length; save.disabled = !n; save.textContent = n ? `Save ${n} idea${n === 1 ? "" : "s"}` : "Save ideas"; };
+  trendingCall({ action: "propose", channel_id: channelId, trends }).then(({ results }) => {
+    body.replaceChildren(...results.map((r) => h("section", { class: "tr-idea-trend" },
+      h("div", { class: "tr-idea-head" }, h("strong", { text: r.trend.title }), h("span", { class: "muted small", text: `${marketName(r.trend.geo)} · ${trendVolume(r.trend.volume)} searches` })),
+      r.about ? h("p", { class: "muted small", style: "margin:0", text: r.about }) : null,
+      r.ideas.length ? r.ideas.map((idea) => {
+        const check = h("input", { type: "checkbox", checked: true, "aria-label": `Keep “${idea.title}”`, onchange: count });
+        const title = h("input", { class: "field", dir: "auto", value: idea.title, "aria-label": "Idea title", oninput: count });
+        kept.push({ pick: { ...idea, trend: r.trend, news: r.news }, check, title });
+        return h("div", { class: "tr-idea" }, check,
+          h("div", { class: "tr-idea-main" }, title,
+            idea.angle ? h("p", { class: "small", style: "margin:0", dir: "auto", text: idea.angle }) : null,
+            idea.covers.length ? h("div", { class: "tr-breakdown" }, h("span", { class: "muted small", text: "Answers:" }), idea.covers.map((c) => h("span", { class: "tr-q", text: c }))) : null,
+            idea.facts.length ? h("details", { class: "small" }, h("summary", { class: "muted", text: `Facts from the news (${idea.facts.length})` }),
+              h("ul", { style: "margin:4px 0 0;padding-left:18px" }, idea.facts.map((f) => h("li", { dir: "auto", text: f })))) : null));
+      }) : h("p", { class: "muted small", style: "margin:0", text: `No idea: ${r.skipped}` }))));
+    if (!kept.length) msg.textContent = "The AI found no idea that fits this network. Try other trends or another network.";
+    count();
+  }).catch((e) => { body.replaceChildren(h("p", { class: "muted", text: e.message })); });
+
+  save.onclick = async () => {
+    const ideas = kept.filter((k) => k.check.checked && k.title.value.trim()).map((k) => ({ ...k.pick, title: k.title.value.trim() }));
+    save.disabled = true; save.textContent = "Saving…";
+    try {
+      const r = await trendingCall({ action: "assign", channel_id: channelId, ideas });
+      toast(`${r.added} idea${r.added === 1 ? "" : "s"} added to ${net}${r.skipped ? ` · ${r.skipped} already there` : ""}`);
+      close(); onDone();
+    } catch (e) { msg.textContent = e.message; count(); }
+  };
+}
+
 VIEWS.trending = async (route) => {
   const p = route.params;
   const ch = state.channels.find((c) => c.id === state.channel);
@@ -3068,19 +3119,23 @@ VIEWS.trending = async (route) => {
     if (!n) return;
     const netSel = h("select", { class: "field", "aria-label": "Network for the ideas" },
       state.channels.map((c) => h("option", { value: c.id, text: c.title, selected: c.id === state.channel })));
-    const add = h("button", { class: "btn primary small", type: "button", text: `Add ${n} as idea${n === 1 ? "" : "s"}`, onclick: async () => {
+    const turn = h("button", { class: "btn primary small", type: "button", text: "✨ Turn into ideas", disabled: n > 5,
+      title: n > 5 ? "5 trends at a time" : "The AI reads each trend's breakdown and news, and proposes video ideas",
+      onclick: () => trendIdeasDialog(netSel.value, [...trendUi.selected.values()], () => { trendUi.selected.clear(); paint(); }) });
+    const add = h("button", { class: "btn ghost small", type: "button", text: "Add as they are", onclick: async () => {
       add.disabled = true; add.textContent = "Adding… (reading the news)";
       try {
         const r = await trendingCall({ action: "assign", channel_id: netSel.value, trends: [...trendUi.selected.values()] });
         const net = state.channels.find((c) => c.id === netSel.value)?.title || "the network";
         toast(`${r.added} idea${r.added === 1 ? "" : "s"} added to ${net}${r.skipped ? ` · ${r.skipped} already there` : ""}`);
         trendUi.selected.clear(); paint();
-      } catch (e) { toast(e.message); add.disabled = false; add.textContent = `Add ${n} as idea${n === 1 ? "" : "s"}`; }
+      } catch (e) { toast(e.message); add.disabled = false; add.textContent = "Add as they are"; }
     } });
-    bulk.replaceChildren(h("span", { class: "tr-bulk-n", text: `${n} selected` }),
+    bulk.replaceChildren(...[h("span", { class: "tr-bulk-n", text: `${n} selected` }),
       h("label", { class: "sr", text: "Network" }), state.channels.length ? netSel : h("span", { class: "muted small", text: "Add a network first" }),
-      state.channels.length ? add : null,
-      h("button", { class: "btn ghost small", type: "button", text: "Clear", onclick: () => { trendUi.selected.clear(); paint(); } }));
+      state.channels.length ? turn : null, state.channels.length ? add : null,
+      n > 5 ? h("span", { class: "muted small", text: "Turn 5 trends at a time" }) : null,
+      h("button", { class: "btn ghost small", type: "button", text: "Clear", onclick: () => { trendUi.selected.clear(); paint(); } })].filter(Boolean));
   }
 
   async function paintPanel() {

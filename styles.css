@@ -845,3 +845,12 @@ button.tr-q:hover { color: var(--signal); }
 .tr-bulk select { min-height: 36px; width: auto; }
 .tr-bulk-n { font-weight: 600; }
 @media (max-width: 1100px) { .tr-layout { grid-template-columns: 1fr; } .tr-panel { position: static; max-height: none; } }
+.tr-ideas { width: min(720px, calc(100vw - 32px)); }
+.tr-ideas-body { display: grid; gap: 16px; max-height: 62vh; overflow-y: auto; padding-right: 4px; }
+.tr-idea-trend { display: grid; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.tr-idea-trend:last-child { border-bottom: 0; }
+.tr-idea-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.tr-idea { display: grid; grid-template-columns: 22px 1fr; gap: 10px; align-items: start; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); }
+.tr-idea > input { width: 18px; height: 18px; margin-top: 10px; accent-color: var(--signal); }
+.tr-idea-main { display: grid; gap: 6px; min-width: 0; }
+.tr-idea-main .field { min-height: 38px; font-weight: 500; }
