@@ -1,5 +1,5 @@
-// The Animation styles (settings.style = "explainer", settings.explainer.look), drawn for 9:16, no stock footage and
-// no sound effects. Each element appears when its cue word is spoken (times from video/layout.js explainerScene).
+// The Animation styles (settings.style = "explainer", settings.explainer.look), drawn for 9:16 Shorts and 16:9 YouTube
+// videos (G: the layout of each), no stock footage and no sound effects. Each element appears when its cue word is spoken (times from video/layout.js explainerScene).
 //   glow        white glowing line-art pictograms on black, a camera sliding right from scene to scene, labels in pills
 //   whiteboard  the same scenes drawn in marker on paper, in a hand-written face
 //   kinetic     kinetic typography: the narration itself, a few words at a time, big, on colour blocks that change per scene
@@ -9,9 +9,35 @@ import { ARABIC, HAND, LATIN, useFonts } from "./fonts.js";
 import { ICONS } from "./explainer-icons.js";
 import { EXPLAINER_LOOKS, MUSIC_UNDER_VOICE } from "./layout.js";
 
-const W = 1080;
-const GROUND = 1250;  // where figures stand (no line is drawn: each one gets a soft shadow)
 const MOVE = 20;      // frames of camera travel between scenes
+
+// Where things go, for a vertical Short and for a horizontal YouTube video. `ground` is where figures stand (no line
+// is drawn: each one gets a soft shadow).
+const GEO = {
+  portrait: { W: 1080, H: 1920, ground: 1250, head: 470, side: 70, capY: 1590, capSize: 50, capSide: 70,
+    title: { y: 560, yAlone: 760, size: 96, item: 300 },
+    journey: { head: 400, ax: 210, bx: 870, ay: 980, ctrl: 440, lift: 120, size: 190, mover: 150 },
+    compare: { lineTop: 700, lineBelow: 140, vsY: 900, ax: 265, bx: 815, size: 210 },
+    checklist: { head: 470, top: 650, topAlone: 600, gap: 150, left: 120, right: 90 },
+    year: { y: 560, size: 210, head: 790, item: 170 },
+    stat: { head: 420, y: 600, size: 150, cols: 10, gap: 66, gy: 780 },
+    quote: { markY: 380, markX: 90, y: 760, side: 110, item: 180 },
+    row: [220, 220, 180, 150],
+    kin: { tag: 250, num: 520, numSize: 200, icon: 430, iconSize: 260, words: 1120, side: 70, width: 900, max: 230 },
+  },
+  landscape: { W: 1920, H: 1080, ground: 770, head: 190, side: 230, capY: 935, capSize: 44, capSide: 340,
+    title: { y: 300, yAlone: 470, size: 90, item: 250 },
+    journey: { head: 150, ax: 420, bx: 1500, ay: 540, ctrl: 230, lift: 100, size: 170, mover: 130 },
+    compare: { lineTop: 300, lineBelow: 80, vsY: 520, ax: 620, bx: 1300, size: 190 },
+    checklist: { head: 170, top: 300, topAlone: 250, gap: 125, left: 560, right: 380 },
+    year: { y: 300, size: 190, head: 480, item: 150 },
+    stat: { head: 140, y: 270, size: 130, cols: 20, gap: 54, gy: 440 },
+    quote: { markY: 140, markX: 260, y: 420, side: 300, item: 160 },
+    row: [200, 200, 170, 150],
+    kin: { tag: 44, num: 150, numSize: 170, icon: 130, iconSize: 180, words: 650, side: 160, width: 1500, max: 210, row: true },
+  },
+};
+let G = GEO.portrait;
 
 const THEMES = {
   glow: {
@@ -121,7 +147,7 @@ function Standing({ x, item, ...rest }) {
   const p = progress(rest.t, item.at, 0.8);
   const wide = (rest.size || 230) * (item.kind === "icon" ? 0.9 : Math.min(2.4, 0.55 + 0.32 * (item.count || 1)));
   return (
-    <div style={{ position: "absolute", left: x, top: GROUND - 2, transform: "translateX(-50%)" }}>
+    <div style={{ position: "absolute", left: x, top: G.ground - 2, transform: "translateX(-50%)" }}>
       <div style={{ position: "absolute", top: -14, left: "50%", width: wide, height: 28, transform: `translateX(-50%) scaleX(${p})`, background: T.shadow }} />
       <div style={{ position: "absolute", bottom: 0, left: "50%", transform: "translateX(-50%)" }}>
         <Thing {...rest} item={{ ...item, label: "" }} />
@@ -133,12 +159,12 @@ function Standing({ x, item, ...rest }) {
   );
 }
 
-function Heading({ text, t, at = 0.15, y = 470, size = 74, accent = false }) {
+function Heading({ text, t, at = 0.15, y = G.head, size = 74, accent = false }) {
   if (!text) return null;
   const words = text.split(/\s+/);
   const fs = T.hand ? size * 1.12 : size;
   return (
-    <div style={{ position: "absolute", left: 70, right: 70, top: y, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: `0 ${fs * 0.28}px`,
+    <div style={{ position: "absolute", left: G.side, right: G.side, top: y, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: `0 ${fs * 0.28}px`,
       fontFamily: FONT, fontSize: fs, lineHeight: 1.12, color: accent ? T.accent : T.ink, textAlign: "center", textTransform: T.upper ? "uppercase" : "none",
       filter: accent ? T.glowAccent : T.glow, transform: "translateY(-50%)" }}>
       {words.map((w, i) => {
@@ -174,32 +200,33 @@ function Counter({ value, prefix, suffix, t, from, y, size }) {
 function SceneBody({ s, t, frame, fps, icons }) {
   const its = s.items;
   const P = { t, frame, fps, icons };
+  const W = G.W;
   switch (s.layout) {
     case "title": {
-      const it = its[0];
+      const it = its[0], L = G.title;
       return (
         <>
-          <Heading text={s.heading} t={t} y={it ? 560 : 760} size={96} />
-          {it ? <Standing x={W / 2} item={it} {...P} size={300} accent /> : null}
+          <Heading text={s.heading} t={t} y={it ? L.y : L.yAlone} size={L.size} />
+          {it ? <Standing x={W / 2} item={it} {...P} size={L.item} accent /> : null}
         </>
       );
     }
     case "journey": {
       const [a, b, mover] = its;
-      const ax = 210, bx = 870, ay = 980, top = 560;
+      const L = G.journey, ax = L.ax, bx = L.bx, ay = L.ay, cy = L.ctrl;
       const arcStart = a ? a.at + 0.3 : 0.3;
       const arcEnd = b ? Math.max(arcStart + 0.8, b.at) : arcStart + 1.5;
       const ap = progress(t, arcStart, arcEnd - arcStart);
-      const d = `M ${ax} ${ay} Q ${W / 2} ${top - 120} ${bx} ${ay}`;
+      const d = `M ${ax} ${ay} Q ${W / 2} ${cy} ${bx} ${ay}`;
       const go = mover ? Math.min(mover.at, (a ? a.at : 0) + 0.5) : 0;
       const end = Math.max(go + 1.2, s.dur / fps - 0.2);
       const mp = mover ? interpolate(t, [go, end], [0, 1], { ...clamp, easing: ease }) : 0;
       const qx = (u) => (1 - u) ** 2 * ax + 2 * (1 - u) * u * (W / 2) + u ** 2 * bx;
-      const qy = (u) => (1 - u) ** 2 * ay + 2 * (1 - u) * u * (top - 120) + u ** 2 * ay;
+      const qy = (u) => (1 - u) ** 2 * ay + 2 * (1 - u) * u * cy + u ** 2 * ay;
       return (
         <>
-          <Heading text={s.heading} t={t} y={400} />
-          <svg width={W} height={1920} style={{ position: "absolute", left: 0, top: 0, overflow: "visible", filter: T.glow }}>
+          <Heading text={s.heading} t={t} y={L.head} />
+          <svg width={W} height={G.H} style={{ position: "absolute", left: 0, top: 0, overflow: "visible", filter: T.glow }}>
             <path d={d} fill="none" stroke={T.ink} strokeWidth={4} strokeDasharray="4 22" strokeLinecap="round" pathLength={1000} mask={`url(#m${s.i})`} />
             <defs>
               <mask id={`m${s.i}`} maskUnits="userSpaceOnUse">
@@ -207,11 +234,11 @@ function SceneBody({ s, t, frame, fps, icons }) {
               </mask>
             </defs>
           </svg>
-          {a ? <Standing x={ax} item={a} {...P} size={190} /> : null}
-          {b ? <Standing x={bx} item={b} {...P} size={190} accent /> : null}
+          {a ? <Standing x={ax} item={a} {...P} size={L.size} /> : null}
+          {b ? <Standing x={bx} item={b} {...P} size={L.size} accent /> : null}
           {mover ? (
-            <div style={{ position: "absolute", left: qx(mp), top: qy(mp) - 120, transform: "translate(-50%, -50%)", opacity: progress(t, go, 0.3) }}>
-              <Thing item={{ ...mover, label: "", at: go }} {...P} size={150} />
+            <div style={{ position: "absolute", left: qx(mp), top: qy(mp) - L.lift, transform: "translate(-50%, -50%)", opacity: progress(t, go, 0.3) }}>
+              <Thing item={{ ...mover, label: "", at: go }} {...P} size={L.mover} />
               <div style={{ position: "absolute", top: "105%", left: "50%", transform: "translateX(-50%)" }}>
                 <Pill text={mover.label} s={pop(frame, fps, mover.at + 0.25)} />
               </div>
@@ -222,28 +249,30 @@ function SceneBody({ s, t, frame, fps, icons }) {
     }
     case "compare": {
       const [a, b] = its;
+      const L = G.compare;
       const lp = progress(t, b ? b.at - 0.3 : 0.5, 0.6);
       return (
         <>
           <Heading text={s.heading} t={t} />
-          <div style={{ position: "absolute", left: W / 2 - 2, top: 700, width: 4, height: (GROUND - 700 + 140) * lp, background: `repeating-linear-gradient(${T.ink} 0 8px, transparent 8px 26px)`, filter: T.glow }} />
-          <div style={{ position: "absolute", left: W / 2, top: 900, transform: `translate(-50%,-50%) scale(${lp})`, width: 96, height: 96, borderRadius: 99,
+          <div style={{ position: "absolute", left: W / 2 - 2, top: L.lineTop, width: 4, height: (G.ground - L.lineTop + L.lineBelow) * lp, background: `repeating-linear-gradient(${T.ink} 0 8px, transparent 8px 26px)`, filter: T.glow }} />
+          <div style={{ position: "absolute", left: W / 2, top: L.vsY, transform: `translate(-50%,-50%) scale(${lp})`, width: 96, height: 96, borderRadius: 99,
             border: `3px solid ${T.accent}`, background: T.base, color: T.accent, fontFamily: FONT, fontSize: 34, display: "flex", alignItems: "center", justifyContent: "center", filter: T.glowAccent }}>VS</div>
-          {a ? <Standing x={265} item={a} {...P} size={210} /> : null}
-          {b ? <Standing x={815} item={b} {...P} size={210} accent /> : null}
+          {a ? <Standing x={L.ax} item={a} {...P} size={L.size} /> : null}
+          {b ? <Standing x={L.bx} item={b} {...P} size={L.size} accent /> : null}
         </>
       );
     }
     case "checklist": {
-      const top = s.heading ? 650 : 600;
+      const L = G.checklist;
+      const top = s.heading ? L.top : L.topAlone;
       return (
         <>
-          <Heading text={s.heading} t={t} y={470} />
+          <Heading text={s.heading} t={t} y={L.head} />
           {its.slice(0, 4).map((it, i) => {
             const p = progress(t, it.at, 0.5);
             const c = progress(t, it.at + 0.35, 0.45);
             return (
-              <div key={i} style={{ position: "absolute", left: 120, right: 90, top: top + i * 150, display: "flex", alignItems: "center", gap: 34, opacity: p,
+              <div key={i} style={{ position: "absolute", left: L.left, right: L.right, top: top + i * L.gap, display: "flex", alignItems: "center", gap: 34, opacity: p,
                 transform: `translateX(${(1 - p) * 60}px)` }}>
                 <svg width={78} height={78} viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round" style={{ filter: c > 0 ? T.glowAccent : T.glow, flex: "none" }}>
                   <rect x={2} y={2} width={20} height={20} rx={5} stroke={c > 0.99 ? T.accent : T.ink} strokeWidth={1.6} />
@@ -260,19 +289,19 @@ function SceneBody({ s, t, frame, fps, icons }) {
     case "year": {
       return (
         <>
-          <Counter value={s.number} prefix={s.number_prefix} suffix={s.number_suffix} t={t} from={Math.max(0, s.number - 60)} y={560} size={210} />
-          <Heading text={s.heading} t={t} at={0.9} y={790} size={60} />
-          {its.slice(0, 3).map((it, i, arr) => <Standing key={i} x={(W / (arr.length + 1)) * (i + 1)} item={it} {...P} size={170} />)}
+          <Counter value={s.number} prefix={s.number_prefix} suffix={s.number_suffix} t={t} from={Math.max(0, s.number - 60)} y={G.year.y} size={G.year.size} />
+          <Heading text={s.heading} t={t} at={0.9} y={G.year.head} size={60} />
+          {its.slice(0, 3).map((it, i, arr) => <Standing key={i} x={(W / (arr.length + 1)) * (i + 1)} item={it} {...P} size={G.year.item} />)}
         </>
       );
     }
     case "stat": {
       const pct = String(s.number_suffix).includes("%"); const n = pct ? 100 : Math.max(1, Math.min(100, s.number)); const hl = s.highlight || (pct ? s.number : 0);
-      const cols = 10, gap = 66, gx = (W - (cols - 1) * gap) / 2, gy = 780;
+      const L = G.stat, cols = L.cols, gap = L.gap, gx = (W - (cols - 1) * gap) / 2, gy = L.gy;
       return (
         <>
-          <Heading text={s.heading} t={t} y={420} size={58} />
-          <Counter value={s.number} prefix={s.number_prefix} suffix={s.number_suffix} t={t} from={0} y={600} size={150} />
+          <Heading text={s.heading} t={t} y={L.head} size={58} />
+          <Counter value={s.number} prefix={s.number_prefix} suffix={s.number_suffix} t={t} from={0} y={L.y} size={L.size} />
           {Array.from({ length: n }, (_, i) => {
             const at = 0.6 + i * (1.6 / n);
             const p = progress(t, at, 0.25);
@@ -285,25 +314,25 @@ function SceneBody({ s, t, frame, fps, icons }) {
       );
     }
     case "quote": {
-      const it = its[0];
+      const it = its[0], L = G.quote;
       const words = (s.heading || "").split(/\s+/).filter(Boolean);
       return (
         <>
-          <div style={{ position: "absolute", left: 90, top: 380, fontFamily: FONT, fontSize: 200, color: T.accent, filter: T.glowAccent, opacity: progress(t, 0.1, 0.4), lineHeight: 1 }}>“</div>
-          <div style={{ position: "absolute", left: 110, right: 110, top: 760, transform: "translateY(-50%)", display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 18px",
+          <div style={{ position: "absolute", left: L.markX, top: L.markY, fontFamily: FONT, fontSize: 200, color: T.accent, filter: T.glowAccent, opacity: progress(t, 0.1, 0.4), lineHeight: 1 }}>“</div>
+          <div style={{ position: "absolute", left: L.side, right: L.side, top: L.y, transform: "translateY(-50%)", display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 18px",
             fontFamily: FONT, fontSize: T.hand ? 72 : 64, lineHeight: 1.2, color: T.ink, filter: T.glow, textAlign: "center" }}>
             {words.map((w, i) => {
               const p = progress(t, 0.3 + i * 0.16, 0.35);
               return <span key={i} style={{ opacity: p, transform: `translateY(${(1 - p) * 18}px)`, display: "inline-block" }}>{w}</span>;
             })}
           </div>
-          {it ? <Standing x={W / 2} item={it} {...P} size={180} /> : null}
+          {it ? <Standing x={W / 2} item={it} {...P} size={L.item} /> : null}
         </>
       );
     }
     default: { // row
       const list = its.slice(0, 4);
-      const size = list.length >= 4 ? 150 : list.length === 3 ? 180 : 220;
+      const size = G.row[Math.min(3, Math.max(0, list.length - 1))];
       return (
         <>
           <Heading text={s.heading} t={t} />
@@ -330,8 +359,8 @@ function Captions({ words, t }) {
   const g = groupAt(groups, t);
   if (!g || t > g[g.length - 1].e + 0.6) return null;
   return (
-    <div style={{ position: "absolute", left: 70, right: 70, top: 1590, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 16px",
-      fontFamily: FONT, fontSize: T.hand ? 58 : 50, lineHeight: 1.2, textAlign: "center" }}>
+    <div style={{ position: "absolute", left: G.capSide, right: G.capSide, top: G.capY, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 16px",
+      fontFamily: FONT, fontSize: G.capSize * (T.hand ? 1.16 : 1), lineHeight: 1.2, textAlign: "center" }}>
       {g.map((w, i) => {
         const on = t >= w.s - 0.03;
         return <span key={i} style={{ color: on ? T.ink : T.dim, filter: on ? T.glow : "none" }}>{w.w}</span>;
@@ -341,7 +370,7 @@ function Captions({ words, t }) {
 }
 
 function Dust({ camX, total }) {
-  const dots = React.useMemo(() => Array.from({ length: 90 }, (_, i) => ({ x: random(`x${i}`) * total, y: random(`y${i}`) * 1920, r: 1 + random(`r${i}`) * 2.2, o: 0.15 + random(`o${i}`) * 0.35 })), [total]);
+  const dots = React.useMemo(() => Array.from({ length: 90 }, (_, i) => ({ x: random(`x${i}`) * total, y: random(`y${i}`) * G.H, r: 1 + random(`r${i}`) * 2.2, o: 0.15 + random(`o${i}`) * 0.35 })), [total]);
   if (!T.dust) return null;
   return (
     <AbsoluteFill style={{ transform: `translateX(${-camX * 0.3}px)` }}>
@@ -375,32 +404,38 @@ function KineticScene({ s, t, frame, fps, icons, rtl }) {
   const item = [...s.items].reverse().find((it) => t >= it.at) || null;
   const hasNumber = (s.layout === "year" || s.layout === "stat") && s.number;
   const n = hasNumber ? Math.round(interpolate(progress(t, 0.2, 1.2), [0, 1], [s.layout === "year" ? Math.max(0, s.number - 60) : 0, s.number])) : 0;
-  const fit = (w) => Math.max(96, Math.min(230, 900 / Math.max(3, String(w).length * 0.68)));
+  const K = G.kin;
+  // a Short stacks the words, one per line; a 16:9 video sets them on one line when they fit
+  const chars = g.reduce((n, w) => n + String(w.w).length + 1, 0);
+  const fit = (w) => Math.max(90, Math.min(K.max, K.width / Math.max(3, (K.row ? chars : String(w).length) * 0.68)));
   return (
     <AbsoluteFill style={{ clipPath: `inset(${(1 - wipe) * 100}% 0 0 0)`, background: block.bg, direction: rtl ? "rtl" : "ltr" }}>
       {s.heading ? (
-        <div style={{ position: "absolute", top: 250, left: 0, right: 0, display: "flex", justifyContent: "center", opacity: progress(t, 0.1, 0.3) }}>
+        <div style={{ position: "absolute", top: K.tag, left: 0, right: 0, display: "flex", justifyContent: "center", opacity: progress(t, 0.1, 0.3) }}>
           <div style={{ background: block.fg, color: block.bg, fontFamily: FONT, fontSize: 36, letterSpacing: 3, textTransform: "uppercase", padding: "10px 24px", borderRadius: 8 }}>{s.heading}</div>
         </div>
       ) : null}
       {hasNumber ? (
-        <div style={{ position: "absolute", top: 520, left: 0, right: 0, textAlign: "center", fontFamily: FONT, fontSize: 200, color: block.hi, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
+        <div style={{ position: "absolute", top: K.num, left: 0, right: 0, textAlign: "center", fontFamily: FONT, fontSize: K.numSize, color: block.hi, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>
           {s.number_prefix}{n}{s.number_suffix}
         </div>
       ) : item ? (
-        <div style={{ position: "absolute", top: 430, left: 0, right: 0, display: "flex", justifyContent: "center", transform: `scale(${interpolate(pop(frame, fps, item.at), [0, 1], [0.7, 1])})` }}>
+        <div style={{ position: "absolute", top: K.icon, left: 0, right: 0, display: "flex", justifyContent: "center", transform: `scale(${interpolate(pop(frame, fps, item.at), [0, 1], [0.7, 1])})` }}>
           {item.kind === "icon"
-            ? <Draw nodes={icons[item.icon] || icons.sparkles} size={260} p={progress(t, item.at, 0.6)} color={block.fg} width={1.6} glow="none" />
-            : <div style={{ display: "flex" }}>{Array.from({ length: Math.min(4, item.count || 1) }, (_, k) => <Person key={k} kind={item.kind} height={260} p={progress(t, item.at + k * 0.1, 0.6)} bob={0} color={block.fg} />)}</div>}
+            ? <Draw nodes={icons[item.icon] || icons.sparkles} size={K.iconSize} p={progress(t, item.at, 0.6)} color={block.fg} width={1.6} glow="none" />
+            : <div style={{ display: "flex" }}>{Array.from({ length: Math.min(4, item.count || 1) }, (_, k) => <Person key={k} kind={item.kind} height={K.iconSize} p={progress(t, item.at + k * 0.1, 0.6)} bob={0} color={block.fg} />)}</div>}
         </div>
       ) : null}
-      <div style={{ position: "absolute", top: 1120, left: 70, right: 70, transform: "translateY(-50%)", display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+      <div style={{ position: "absolute", top: K.words, left: K.side, right: K.side, transform: "translateY(-50%)", display: "flex", flexDirection: K.row ? "row" : "column",
+        flexWrap: K.row ? "wrap" : "nowrap", justifyContent: "center", alignItems: K.row ? "baseline" : "center", gap: K.row ? "0 0.38em" : 6, fontSize: fit("") }}>
         {g.map((w, k) => {
           const sp = pop(frame, fps, w.s - 0.04);
           const key = keys.has(norm(w.w)) || /\d/.test(w.w);
           return (
             <div key={`${w.s}-${k}`} style={{ fontFamily: FONT, fontSize: fit(w.w), lineHeight: 1.02, textTransform: "uppercase", color: key ? block.hi : block.fg,
-              opacity: Math.min(1, sp * 2), transform: `scale(${interpolate(sp, [0, 1], [1.35, 1])}) rotate(${(1 - sp) * (k % 2 ? 4 : -4)}deg)`, whiteSpace: "nowrap" }}>
+              opacity: Math.min(1, sp * 2), whiteSpace: "nowrap",
+              // stacked words punch in; words on one line rise, so they never cover their neighbour
+              transform: K.row ? `translateY(${(1 - sp) * 60}px) scale(${interpolate(sp, [0, 1], [1.08, 1])})` : `scale(${interpolate(sp, [0, 1], [1.35, 1])}) rotate(${(1 - sp) * (k % 2 ? 4 : -4)}deg)` }}>
               {w.w}
               {key ? <div style={{ height: 14, marginTop: 4, background: block.hi, transformOrigin: "left", transform: `scaleX(${progress(t, w.s + 0.1, 0.3)})` }} /> : null}
             </div>
@@ -415,6 +450,7 @@ export function Explainer(props) {
   const { scenes: list, music, rtl, totalFrames } = props;
   const look = EXPLAINER_LOOKS.includes(props.look) ? props.look : "glow";
   T = THEMES[look] || THEMES.glow;
+  G = Number(props.width) > Number(props.height) ? GEO.landscape : GEO.portrait;
   useFonts(props.assetBase);
   FONT = look === "whiteboard" ? `"${HAND}", "${LATIN}", "${ARABIC}", cursive` : rtl ? `"${ARABIC}", "${LATIN}", sans-serif` : `"${LATIN}", "${ARABIC}", sans-serif`;
   const frame = useCurrentFrame();
@@ -453,6 +489,7 @@ export function Explainer(props) {
   }
 
   const mp = idx === 0 ? 1 : interpolate(frame - cur.from, [0, MOVE], [0, 1], { ...clamp, easing: ease });
+  const W = G.W;
   const camX = (idx - 1 + mp) * W;
   const worldW = (scenes.length + 1) * W;
   return (
@@ -463,7 +500,7 @@ export function Explainer(props) {
           if (Math.abs(i - idx) > 1) return null;
           const t = (frame - s.from) / fps;
           return (
-            <div key={s.id || i} style={{ position: "absolute", left: i * W, top: 0, width: W, height: 1920, direction: rtl ? "rtl" : "ltr" }}>
+            <div key={s.id || i} style={{ position: "absolute", left: i * W, top: 0, width: W, height: G.H, direction: rtl ? "rtl" : "ltr" }}>
               {t >= -0.05 || i <= idx ? <SceneBody s={s} t={t} frame={frame - s.from} fps={fps} icons={icons} /> : null}
             </div>
           );

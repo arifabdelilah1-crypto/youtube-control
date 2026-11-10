@@ -96,7 +96,8 @@ async function writeScript(idea, channel, options) {
 const MODEL_LABELS = { "claude-opus-5-5": "Claude Opus 5.5", "claude-fable-5-2": "Claude Fable 5.2", "claude-sonnet-5-5": "Claude Sonnet 5.5" };
 async function planExplainer(idea, channel, options, note) {
   const model = MODEL_LABELS[options.ai_model] ? options.ai_model : "claude-opus-5-5";
-  const body = { action: "plan", idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow" };
+  const body = { action: "plan", idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow",
+    aspect: options.aspect === "16:9" ? "16:9" : "9:16" };
   // a function gets about 150 s: less thinking, then the faster model, if the first answer takes too long
   const tries = [{}, { effort: "low" }, ...(model === "claude-sonnet-5-5" ? [] : [{ model: "claude-sonnet-5-5", effort: "low" }])];
   let lastError = "";
@@ -151,7 +152,7 @@ async function buildScenes(idea, channel, options, project) {
   };
   const out = await call("studio", {
     action: "build", project_id: project?.id || null, idea_id: idea.id, channel_id: channel.id, title: idea.video_title || idea.title, script: idea.script,
-    language, voice, voice_rate: rate, aspect: drawn ? "9:16" : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn ? [] : idea.search_terms || [],
+    language, voice, voice_rate: rate, aspect: drawn ? (options.aspect === "16:9" ? "16:9" : "9:16") : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn ? [] : idea.search_terms || [],
   });
   if (!out.project_id) throw new Error(out.error || "The scenes couldn't be built");
   if (out.status === "failed") throw new Error(out.error || "The voice job couldn't start");

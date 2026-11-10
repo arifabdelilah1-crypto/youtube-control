@@ -273,7 +273,7 @@ export function preRenderCheck(project, scenes) {
   if (noVoice) issues.push({ level: "block", text: `${noVoice} scene(s) have no voice yet. Press “Update voice”.` });
   if (outdated) issues.push({ level: "block", text: `${outdated} scene(s) were edited after their voice was made. Press “Update voice”.` });
   const drawn = project.settings?.style === "explainer";
-  if (drawn && project.aspect !== "9:16") issues.push({ level: "block", text: "The Explainer style is drawn for 9:16 only. Choose 9:16 on its Studio page." });
+  if (drawn && !["9:16", "16:9"].includes(project.aspect)) issues.push({ level: "block", text: "Animations are drawn for 9:16 (Short) or 16:9 (YouTube video). Choose one of them on its Studio page." });
   const cards = drawn ? 0 : ordered.filter((s) => !s.clip || s.clip.type === "card").length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
   const credited = ordered.filter((s) => creditOf(s.clip)).length;

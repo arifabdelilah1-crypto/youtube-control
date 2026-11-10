@@ -1101,7 +1101,7 @@ VIEWS.ideas = async () => {
 
 // ==================================================================
 // Animation: drawn videos. Claude writes the voice-over and draws every scene (supabase/functions/explainer),
-// video/Explainer.jsx animates it in the chosen style. No stock clips, no sound effects, always 9:16.
+// video/Explainer.jsx animates it in the chosen style, as a 9:16 Short or a 16:9 YouTube video. No stock clips, no sound effects.
 // ==================================================================
 const ANIM_LOOKS = {
   glow: { label: "Glow explainer", text: "White glowing pictograms on black. The camera slides from scene to scene.", img: "anim/glow.jpg" },
@@ -1109,7 +1109,8 @@ const ANIM_LOOKS = {
   kinetic: { label: "Kinetic typography", text: "The narration itself, huge, a few words at a time, on colour blocks.", img: "anim/kinetic.jpg" },
 };
 const ANIM_LENGTHS = [["short45", "Short, about 45 s", 0.75], ["short60", "Short, about 60 s", 1], ["long3", "Long, about 3 min", 3]];
-const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45" };
+const ANIM_FORMATS = [["9:16", "Short · 9:16"], ["16:9", "YouTube · 16:9"]];
+const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45", aspect: "9:16" };
 const animCost = (model, length) => { const m = EXPLAINER_MODELS[model] || EXPLAINER_MODELS["claude-opus-5-5"]; return m.base + m.perMinute * (ANIM_LENGTHS.find(([k]) => k === length)?.[2] || 0.75); };
 
 VIEWS.animation = async () => {
@@ -1120,7 +1121,15 @@ VIEWS.animation = async () => {
   f.channel = h("select", { id: "a-channel", class: "field", required: true }, h("option", { value: "", text: "Choose a network" }),
     state.channels.map((c) => h("option", { value: c.id, selected: state.channel === c.id, text: c.title })));
   f.language = h("select", { id: "a-language", class: "field" }, h("option", { value: "", text: "Network language" }), LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, text: t })));
+  f.aspect = h("select", { id: "a-aspect", class: "field" }, ANIM_FORMATS.map(([v, t]) => h("option", { value: v, selected: animUi.aspect === v, text: t })));
   f.length = h("select", { id: "a-length", class: "field" }, ANIM_LENGTHS.map(([v, t]) => h("option", { value: v, selected: animUi.length === v, text: t })));
+  const formatNote = h("p", { class: "muted small", style: "margin:0" });
+  const showFormat = () => {
+    animUi.aspect = f.aspect.value;
+    formatNote.textContent = f.aspect.value === "16:9" ? "A 16:9 video goes to YouTube as a normal video, never as a Short." : "A vertical Short for YouTube, TikTok and Reels.";
+  };
+  // a YouTube video is usually the long one, a Short the short one
+  f.aspect.addEventListener("change", () => { f.length.value = f.aspect.value === "16:9" ? "long3" : "short45"; showFormat(); showCost(); });
   f.model = h("select", { id: "a-model", class: "field" }, Object.entries(EXPLAINER_MODELS).map(([v, m]) => h("option", { value: v, selected: animUi.model === v, text: m.label })));
   f.voice = h("select", { id: "a-voice", class: "field" });
   f.music = h("input", { type: "checkbox", checked: true });
@@ -1131,7 +1140,7 @@ VIEWS.animation = async () => {
   const showCost = () => { animUi.model = f.model.value; animUi.length = f.length.value; cost.textContent = `About $${animCost(f.model.value, f.length.value).toFixed(2)} for Claude's plan. The voice and the render cost nothing.`; };
   f.language.addEventListener("change", fillVoices); f.channel.addEventListener("change", fillVoices);
   [f.model, f.length].forEach((el) => el.addEventListener("change", showCost));
-  fillVoices(); showCost();
+  fillVoices(); showCost(); showFormat();
 
   // the styles, as cards with a frame of each
   const looks = h("div", { class: "anim-looks", role: "radiogroup", "aria-label": "Style" });
@@ -1154,7 +1163,7 @@ VIEWS.animation = async () => {
     try {
       const id = picked ? picked.id : (await q(sb.from("ideas").insert({ title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
       await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
-        look: animUi.look, ai_model: f.model.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
+        look: animUi.look, ai_model: f.model.value, aspect: f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
         music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask" } }, "explainer");
       toast("Making your animation");
       f.subject.value = ""; f.idea.value = "";
@@ -1165,12 +1174,12 @@ VIEWS.animation = async () => {
     h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
     h("div", { class: "eyebrow", text: "Style" }), looks,
     h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
-    h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-length", "Length", f.length)),
+    h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-aspect", "Format", f.aspect, formatNote), field("a-length", "Length", f.length)),
     h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
     h("div", { class: "gen-checks" },
       h("label", { class: "row ed-check" }, f.music, " Background music that fits the subject"),
       h("label", { class: "row ed-check" }, f.next, " Schedule it in the next free slot if every check passes")),
-    h("p", { class: "muted small", style: "margin:0", text: "Always 9:16, with no sound effects. It takes a few minutes, and you can leave this page." }),
+    h("p", { class: "muted small", style: "margin:0", text: "No sound effects. It takes a few minutes, and you can leave this page." }),
     error, h("div", { class: "row gen-actions" }, go));
 
   // the animations made so far
@@ -1199,7 +1208,7 @@ VIEWS.animation = async () => {
       h("img", { class: "anim-thumb", src: look.img, alt: "", width: 54, height: 96 }),
       h("div", { class: "idea-main" },
         h("a", { class: "title", dir: "auto", href: `#/studio/${r.idea_id}`, text: runTitle(r) }),
-        h("div", { class: "idea-meta muted small" }, h("span", { text: look.label }), h("span", { text: channelById(r.channel_id)?.title || "" }),
+        h("div", { class: "idea-meta muted small" }, h("span", { text: look.label }), h("span", { text: r.options?.aspect === "16:9" ? "YouTube video 16:9" : "Short 9:16" }), h("span", { text: channelById(r.channel_id)?.title || "" }),
           plan ? h("span", { text: plan }) : null, h("span", { text: ago(r.created_at) })),
         isActiveRun(r) ? runProgress(r) : null,
         r.status === "failed" ? h("p", { class: "small idea-error", role: "alert", text: r.error || "It stopped before the end." }) : null,

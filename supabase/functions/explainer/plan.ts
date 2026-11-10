@@ -48,7 +48,7 @@ export const Plan = z.object({
   scenes: z.array(Scene),
 });
 
-export function system(language: string, length: string, look = "glow") {
+export function system(language: string, length: string, look = "glow", aspect = "9:16") {
   const L = LENGTHS[length];
   const kinetic = look === "kinetic"
     ? "\nKinetic typography: short punchy sentences (4 to 10 words), concrete words that look good huge on screen. The heading and the labels hold the scene's key words: those are the ones that light up.\n"
@@ -57,7 +57,7 @@ export function system(language: string, length: string, look = "glow") {
 ${LOOKS[look] || LOOKS.glow}.${kinetic}
 Everything you write is in ${LANGS[language] || "English"} (narration, headings, labels, title, description), except the icon names.
 
-Write a vertical video of ${L.duration}: ${L.words} words of narration in total, ${L.scenes} scenes.
+Write a ${aspect === "16:9" ? "horizontal 16:9 YouTube video" : "vertical 9:16 Short"} of ${L.duration}: ${L.words} words of narration in total, ${L.scenes} scenes.
 Narration rules:
 - Hook in the first sentence (a surprising fact or question). Never "In this video".
 - Plain spoken language, short sentences, one idea per scene, 1 to 2 sentences per scene (10 to 25 words).

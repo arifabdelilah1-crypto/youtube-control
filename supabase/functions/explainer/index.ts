@@ -4,7 +4,8 @@
 //   model: claude-opus-5-5 (default) | claude-fable-5-2 | claude-sonnet-5-5. effort: low | medium | high (default: the model's own).
 // POST {action:"start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs) as an Explainer video,
 //   like ai's auto_start, with options.video_style = "explainer", options.ai_model, options.look (glow | whiteboard | kinetic),
-//   always 9:16 and no sound effects. Returns {run_id}. Started from the Animation page.
+//   options.aspect 9:16 (Short, the default) or 16:9 (YouTube video), and no sound effects. Returns {run_id}. Started from the
+//   Animation page. "plan" takes the same aspect.
 // "plan" is called by the "Generate video" job (x-cron-secret) or by a signed-in team member; "start" by a team member.
 // Secrets: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_REPO.
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -55,7 +56,7 @@ Deno.serve(async (req) => {
       const o = body.options && typeof body.options === "object" ? body.options : {};
       // same options as ai's auto_start, plus the style and the model
       const options = {
-        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: "9:16",
+        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: o.aspect === "16:9" ? "16:9" : "9:16",
         length: Object.hasOwn(LENGTHS, o.length || "") ? o.length : null,
         angle: o.angle ? clean(o.angle, 300) : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: VOICE_STYLES.has(o.voice_style) ? o.voice_style : null,
@@ -94,6 +95,7 @@ Deno.serve(async (req) => {
     const model = Object.hasOwn(MODELS, body.model || "") ? body.model : "claude-opus-5-5";
     const effort = ["low", "medium", "high"].includes(body.effort) ? body.effort : null;
     const look = Object.hasOwn(LOOKS, body.look || "") ? body.look : "glow";
+    const aspect = body.aspect === "16:9" ? "16:9" : "9:16";
 
     const since = new Date(Date.now() - 864e5).toISOString();
     const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
@@ -106,7 +108,7 @@ Deno.serve(async (req) => {
     try {
       res = await client.messages.parse({
         model, max_tokens: 16000,
-        system: system(language, length, look),
+        system: system(language, length, look, aspect),
         messages: [{ role: "user", content: userPrompt(idea, channel, niche, body.angle ? clean(body.angle, 300) : null) }],
         output_config: { format: zodOutputFormat(Plan), ...(effort ? { effort } : {}) },
       });
@@ -139,7 +141,7 @@ Deno.serve(async (req) => {
     const script = scenes.map((s) => `VO: ${s.narration}`).join("\n\n");
     const hashtags = plan.hashtags.map((t) => "#" + clean(t, 40).replace(/^#/, "").replace(/\s+/g, "")).filter((t) => t.length > 1).slice(0, 3);
     const ai = {
-      style: "explainer", language, length, aspect: "9:16", model, generated_at: new Date().toISOString(),
+      style: "explainer", language, length, aspect, model, generated_at: new Date().toISOString(),
       explainer: { scenes, model, look, usage: u, cost_usd: cost, seconds: Math.round((Date.now() - started) / 1000) },
       hook_text: clean(scenes[0]?.heading, 40),
       brief: { subject: clean(idea.video_title || idea.title, 200), kind: "explainer", feeling: "", voice_style: "natural", voice_gender: "any",
