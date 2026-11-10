@@ -1730,25 +1730,17 @@ VIEWS.automation = async () => {
   // ----- schedule per channel
   const schedCard = (c) => {
     const sc = schedOf(c.id);
-    const days = new Set(sc.days);
     const en = h("input", { type: "checkbox", checked: sc.enabled, id: `en-${c.id}` });
     const targets = targetsOfSchedule(sc.channel_id ? sc : { ...sc, channel_id: connected.has(c.id) ? c.id : null });
-    const dayBtns = h("div", { class: "chips-tabs", role: "group", "aria-label": "Posting days" }, WEEKDAYS.map(([d, t]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(days.has(d)), text: t,
-      onclick: (e) => { days.has(d) ? days.delete(d) : days.add(d); e.currentTarget.setAttribute("aria-pressed", String(days.has(d))); } })));
-    const times = h("input", { class: "field", id: `t-${c.id}`, value: sc.times.join(", "), placeholder: "18:00, 21:00" });
-    const tz = h("select", { class: "field", id: `tz-${c.id}` }, TIMEZONES.map(([v, t]) => h("option", { value: v, selected: sc.timezone === v, text: t })));
     const privacy = h("select", { class: "field", id: `p-${c.id}` }, [["public", "Public"], ["unlisted", "Unlisted"], ["private", "Private"]].map(([v, t]) => h("option", { value: v, selected: sc.privacy === v, text: t })));
     const cat = h("select", { class: "field", id: `c-${c.id}` }, CATEGORIES.map(([v, t]) => h("option", { value: v, selected: sc.category_id === v, text: t })));
     const notify = h("input", { type: "checkbox", checked: sc.notify_subscribers });
     const synth = h("input", { type: "checkbox", checked: sc.synthetic_media });
     const fld = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
     const save = h("button", { class: "btn primary small", type: "button", text: "Save schedule", onclick: async () => {
-      const tlist = times.value.split(/[,\s]+/).map((x) => x.trim()).filter(Boolean);
-      if (tlist.some((x) => !/^([01]?\d|2[0-3]):[0-5]\d$/.test(x))) return toast("Times look like 18:00, 21:30");
-      if (!days.size || !tlist.length) return toast("Pick at least one day and one time");
       if (en.checked && !targets.length) return toast("Pick this network's accounts on its page first");
       await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked,
-        days: [...days], times: tlist.map((x) => x.padStart(5, "0")), timezone: tz.value, privacy: privacy.value, category_id: cat.value,
+        days: sc.days, times: sc.times, timezone: sc.timezone, privacy: privacy.value, category_id: cat.value,
         notify_subscribers: notify.checked, synthetic_media: synth.checked }, { onConflict: "channel_id" }));
       toast("Schedule saved"); render();
     } });
@@ -1759,8 +1751,10 @@ VIEWS.automation = async () => {
       h("div", { class: "row", style: "justify-content:space-between" },
         h("div", { class: "net-chips", "aria-label": "Where it posts" }, targets.length ? targets.map((x) => h("span", { class: "pill short", text: PLATFORM_NAMES[x.platform] || x.platform })) : h("span", { class: "muted small", text: "Posts nowhere yet" })),
         h("a", { class: "small", href: `#/channel/${c.id}`, text: "Change accounts" })),
-      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Posting days" }), dayBtns),
-      h("div", { class: "form-grid" }, fld(`t-${c.id}`, "Times (local)", times), fld(`tz-${c.id}`, "Time zone", tz), fld(`p-${c.id}`, "YouTube visibility", privacy), fld(`c-${c.id}`, "Category", cat)),
+      h("div", { class: "row small", style: "justify-content:space-between" },
+        h("span", { text: `${sc.times.length} a day at ${sc.times.join(", ")} · ${sc.days.length === 7 ? "every day" : WEEKDAYS.filter(([d]) => sc.days.includes(d)).map(([, t]) => t).join(" ")} · ${(TIMEZONES.find(([v]) => v === sc.timezone) || [, sc.timezone])[1]}` }),
+        h("a", { href: "#/schedule", text: "Change in Schedule" })),
+      h("div", { class: "form-grid" }, fld(`p-${c.id}`, "YouTube visibility", privacy), fld(`c-${c.id}`, "Category", cat)),
       h("label", { class: "pub-check small" }, notify, "Notify subscribers"),
       h("label", { class: "pub-check small" }, synth, "Label as altered/synthetic content (realistic AI people or events)"),
       h("div", { class: "row" }, save));
@@ -1818,8 +1812,108 @@ VIEWS.automation = async () => {
   if (queue.some((r) => ["queued", "uploading"].includes(r.status))) state.timer = setInterval(() => render(), 20000);
   return [pageHead("Publishing", "Each channel posts on its own days and times. Render a video and it lands in the next free slot."),
     weekBox, readyBox, queueBox,
-    h("h2", { style: "margin:8px 0 0", text: "Schedules" }),
+    h("h2", { style: "margin:8px 0 0", text: "Publishing settings" }),
     channels.length ? h("div", { class: "grid-cards wide pub-grid" }, channels.map(schedCard)) : empty("No networks yet.")];
+};
+
+// ==================================================================
+// Schedule: how many videos a day each network posts, and when
+// ==================================================================
+const PER_DAY_TIMES = { 1: ["18:00"], 2: ["17:00", "20:00"], 3: ["13:00", "17:00", "20:30"] };  // late afternoon and evening did best on our networks
+
+VIEWS.schedule = async () => {
+  const since = new Date(Date.now() - 14 * 864e5).toISOString();
+  const [scheds, queue, jobs, tokens] = await Promise.all([
+    q(sb.from("publish_schedules").select("*")),
+    q(sb.from("publish_queue").select("channel_id,render_job_id,slot_at,status").neq("status", "cancelled").limit(2000)),
+    q(sb.from("render_jobs").select("id,channel_id,idea_id,params,created_at").eq("status", "done").gte("created_at", since).order("created_at")),
+    q(sb.from("channel_tokens").select("channel_id")),
+  ]);
+  const connected = new Set(tokens.map((t) => t.channel_id));
+  const channels = state.channel === "all" ? state.channels : state.channels.filter((c) => c.id === state.channel);
+  const now = Date.now();
+  const queuedJobs = new Set(queue.map((r) => r.render_job_id));
+
+  const row = (c) => {
+    const saved = scheds.find((x) => x.channel_id === c.id);
+    const sc = { ...DEFAULT_SCHED, ...(saved || {}) };
+    const days = new Set(sc.days);
+    let times = [...sc.times].sort();
+    const en = h("input", { type: "checkbox", checked: !!sc.enabled, "aria-label": `Auto-publish on ${c.title}` });
+    const tz = h("select", { class: "field", "aria-label": "Time zone", style: "width:auto;min-height:36px" }, TIMEZONES.map(([v, t]) => h("option", { value: v, selected: sc.timezone === v, text: t })));
+    const timeBox = h("div", { class: "row sch-times" });
+    const perDay = h("div");
+    const paintTimes = () => {
+      timeBox.replaceChildren(...times.map((t, i) => h("input", { type: "time", class: "field", value: t, step: 300, "aria-label": `Video ${i + 1} time`, style: "width:auto;min-height:36px",
+        onchange: (e) => { times[i] = e.target.value; dirty(); } })));
+      perDay.replaceChildren(seg([[1, "1 a day"], [2, "2 a day"], [3, "3 a day"]], Math.min(times.length, 3), (n) => {
+        times = n === times.length ? times : (PER_DAY_TIMES[n] || PER_DAY_TIMES[1]).slice();
+        paintTimes(); dirty();
+      }, "Videos per day"));
+    };
+    const dayBtns = h("div", { class: "chips-tabs", role: "group", "aria-label": "Posting days" }, WEEKDAYS.map(([d, t]) => h("button", { type: "button", class: "chip-tab", "aria-pressed": String(days.has(d)), text: t,
+      onclick: (e) => { days.has(d) ? days.delete(d) : days.add(d); e.currentTarget.setAttribute("aria-pressed", String(days.has(d))); dirty(); } })));
+    const save = h("button", { class: "btn small primary", type: "button", text: "Save", disabled: true });
+    const dirty = () => { save.disabled = false; save.textContent = "Save"; };
+    en.addEventListener("change", dirty); tz.addEventListener("change", dirty);
+    paintTimes();
+    save.addEventListener("click", async () => {
+      const list = [...new Set(times.filter((t) => /^\d{2}:\d{2}$/.test(t)))].sort();
+      if (!list.length || !days.size) return toast("Pick at least one day and one time");
+      for (let i = 1; i < list.length; i++) {
+        const [h1, m1] = list[i - 1].split(":").map(Number), [h2, m2] = list[i].split(":").map(Number);
+        if ((h2 * 60 + m2) - (h1 * 60 + m1) < 60) return toast("Keep at least 1 hour between two videos");
+      }
+      save.disabled = true;
+      try {
+        await q(sb.from("publish_schedules").upsert({ channel_id: c.id, enabled: en.checked, days: [...days], times: list, timezone: tz.value }, { onConflict: "channel_id" }));
+        toast(`${c.title}: ${list.length} a day at ${list.join(", ")}`); render();
+      } catch (e) { toast(e.message); save.disabled = false; }
+    });
+
+    // the next 7 days: which slots have a video
+    const slots = slotsBetween(sc, now, 7);
+    const taken = [...new Set(queue.filter((r) => r.channel_id === c.id && r.slot_at && ["queued", "uploading", "scheduled", "published"].includes(r.status)).map((r) => Date.parse(r.slot_at)))];
+    const filled = (t) => taken.some((x) => Math.abs(x - t) < 30 * 60e3);
+    const emptyCount = slots.filter((t) => !filled(t)).length;
+    const waiting = jobs.filter((j) => j.channel_id === c.id && !queuedJobs.has(j.id));
+    const byDay = new Map();
+    for (const t of slots) { const k = new Date(t).toLocaleDateString("en-GB", { timeZone: sc.timezone, weekday: "short", day: "numeric" }); (byDay.get(k) || byDay.set(k, []).get(k)).push(t); }
+    const week = h("div", { class: "sch-week" }, [...byDay].map(([day, ts]) => h("div", { class: "sch-day" }, h("span", { class: "muted small", text: day }),
+      h("div", { class: "row", style: "gap:4px" }, ts.map((t) => h("span", { class: `pub-dot${filled(t) ? " on" : ""}`, title: `${inTz(new Date(t).toISOString(), sc.timezone)} · ${filled(t) ? "video planned" : "empty"}` }))))));
+    const fill = h("button", { class: "btn small", type: "button", disabled: !waiting.length || !emptyCount || !sc.enabled,
+      text: waiting.length ? `Fill with ${Math.min(waiting.length, emptyCount || waiting.length)} rendered video${waiting.length > 1 ? "s" : ""}` : "No rendered video waiting",
+      title: sc.enabled ? "Puts the videos already rendered for this network into its next free slots" : "Turn auto-publish on and save first",
+      onclick: async (e) => {
+        const btn = e.currentTarget; btn.disabled = true;
+        let ok = 0;
+        for (const j of waiting.slice(0, emptyCount)) {
+          btn.textContent = `Scheduling ${ok + 1} of ${Math.min(waiting.length, emptyCount)}…`;
+          try { await publishCall({ action: "queue", render_job_id: j.id, when: "next" }); ok++; } catch (err) { toast(err.message); break; }
+        }
+        toast(`${ok} video${ok === 1 ? "" : "s"} scheduled on ${c.title}`); render();
+      } });
+
+    return h("article", { class: "card sch-row" },
+      h("div", { class: "sch-head" },
+        c.thumbnail_url ? h("img", { class: "avatar", src: c.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
+        h("div", { style: "min-width:0;flex:1" }, h("div", { style: "font-weight:600", text: c.title }),
+          h("div", { class: "muted small", text: [connected.has(c.id) ? null : "YouTube not connected", sc.enabled ? "Auto-publish on" : "Auto-publish off", `${waiting.length} rendered, waiting`].filter(Boolean).join(" · ") })),
+        h("label", { class: "pub-check small", style: "font-weight:600" }, en, "Auto-publish"),
+        h("span", { class: `pill ${!sc.enabled ? "short" : emptyCount ? (slots.find((t) => !filled(t)) - now < 2 * 864e5 ? "crit" : "warn") : "ok"}`, text: !sc.enabled ? "Off" : emptyCount ? `${emptyCount} empty this week` : "Week full" })),
+      h("div", { class: "sch-grid" },
+        h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Videos per day" }), perDay),
+        h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "At (network's time)" }), timeBox),
+        h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Time zone" }), tz),
+        h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Days" }), dayBtns)),
+      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Next 7 days" }), week),
+      h("div", { class: "row" }, save, fill, h("a", { class: "small", href: "#/automation", text: "Queue and publishing settings" })));
+  };
+
+  const totalPerDay = channels.reduce((a, c) => { const s = scheds.find((x) => x.channel_id === c.id); return a + (s?.enabled ? (s.times || []).length * ((s.days || []).length / 7) : 0); }, 0);
+  return [pageHead("Schedule", `How many videos each network posts a day, and when. ${channels.length} networks · about ${Math.round(totalPerDay * 10) / 10} videos a day in total.`),
+    h("p", { class: "muted small", style: "margin:0", text: "Renders go to the next free slot of their network. 1–3 a day per network is the healthy range; keep at least 1 hour between two videos." }),
+    ...(channels.length ? channels.map(row) : [empty("No networks yet.")])];
 };
 
 // ==================================================================

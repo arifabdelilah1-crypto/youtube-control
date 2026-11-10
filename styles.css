@@ -880,3 +880,13 @@ button.tr-q:hover { color: var(--signal); }
 /* ---------- Costs page ---------- */
 .cost-share { width: 120px; height: 8px; border-radius: 99px; background: var(--panel-2); overflow: hidden; margin-left: auto; }
 .cost-share span { display: block; height: 100%; background: var(--ink); border-radius: 99px; }
+
+/* ---- Schedule ---- */
+.sch-row { display: flex; flex-direction: column; gap: 12px; }
+.sch-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.sch-grid { display: grid; grid-template-columns: auto auto auto 1fr; gap: 14px 20px; align-items: start; }
+.sch-times { gap: 6px; }
+.sch-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.sch-day { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); min-width: 0; }
+@media (max-width: 900px) { .sch-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 520px) { .sch-week { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
