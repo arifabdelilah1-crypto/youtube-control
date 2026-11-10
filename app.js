@@ -343,16 +343,17 @@ function hBars(items, fmtV = fmt) {
 }
 
 /** Stacked columns per week. weeks: [{label, parts: [{color, value, name}]}] */
-function stackedCols(weeks, label) {
+function stackedCols(weeks, label, fmtV = (v) => String(Math.round(v)), floor = 1) {
   const narrow = window.innerWidth < 600;
-  const w = narrow ? 380 : 720, ht = narrow ? 200 : 200, pl = 28, pr = 8, pt = 20, pb = 26;
-  const max = chartMax(Math.max(1, ...weeks.map((x) => x.parts.reduce((a, p) => a + p.value, 0))));
+  const max = chartMax(Math.max(floor, ...weeks.map((x) => x.parts.reduce((a, p) => a + p.value, 0))));
+  // room on the left for the axis labels ("$1.50" is wider than "12")
+  const w = narrow ? 380 : 720, ht = narrow ? 200 : 200, pl = Math.max(28, 10 + 6.4 * fmtV(max).length), pr = 8, pt = 20, pb = 26;
   const bw = (w - pl - pr) / weeks.length;
   const Y = (v) => pt + (1 - v / max) * (ht - pt - pb);
   const g = svg("svg", { viewBox: `0 0 ${w} ${ht}`, role: "img", "aria-label": label, class: "chart-svg" });
   [0, 0.5, 1].forEach((f) => {
     g.append(svg("line", { x1: pl, x2: w - pr, y1: Y(max * f), y2: Y(max * f), stroke: f === 0 ? "rgba(255,255,255,.18)" : "rgba(255,255,255,.06)" }));
-    g.append(chartLabel({ x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end" }, String(Math.round(max * f))));
+    g.append(chartLabel({ x: pl - 6, y: Y(max * f) + 4, "text-anchor": "end" }, fmtV(max * f)));
   });
   weeks.forEach((wk, i) => {
     let base = 0;
@@ -360,10 +361,10 @@ function stackedCols(weeks, label) {
     const total = wk.parts.reduce((a, p) => a + p.value, 0);
     for (const p of wk.parts.filter((p) => p.value)) {
       const r = svg("rect", { x, width: cw, y: Y(base + p.value), height: Math.max(Y(base) - Y(base + p.value) - 1, 1), rx: "2", fill: p.color });
-      const t = svg("title"); t.textContent = `${wk.label}: ${p.name} ${p.value}`; r.append(t);
+      const t = svg("title"); t.textContent = `${wk.label}: ${p.name} ${fmtV(p.value)}`; r.append(t);
       g.append(r); base += p.value;
     }
-    if (total) g.append(chartLabel({ x: x + cw / 2, y: Y(total) - 4, "text-anchor": "middle", fill: "#FAFAFA" }, String(total)));
+    if (total && weeks.length <= 16) g.append(chartLabel({ x: x + cw / 2, y: Y(total) - 4, "text-anchor": "middle", fill: "#FAFAFA" }, fmtV(total)));
     if (weeks.length <= (narrow ? 5 : 8) || i % 2 === 0) g.append(chartLabel({ x: x + cw / 2, y: ht - 8, "text-anchor": "middle" }, wk.label));
   });
   return g;
@@ -1104,10 +1105,21 @@ VIEWS.ideas = async () => {
 // video/Explainer.jsx animates it in the chosen style, as a 9:16 Short or a 16:9 YouTube video. No stock clips, no sound effects.
 // ==================================================================
 const ANIM_LOOKS = {
-  glow: { label: "Glow explainer", text: "White glowing pictograms on black. The camera slides from scene to scene.", img: "anim/glow.jpg" },
-  whiteboard: { label: "Whiteboard", text: "The same scenes drawn in marker on a white board, with hand-written titles.", img: "anim/whiteboard.jpg" },
-  kinetic: { label: "Kinetic typography", text: "The narration itself, huge, a few words at a time, on colour blocks.", img: "anim/kinetic.jpg" },
+  glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
+  whiteboard: { label: "Whiteboard", text: "Drawn in marker on a white board, with hand-written titles." },
+  kinetic: { label: "Kinetic text", text: "The narration itself, huge, a few words at a time, on colour blocks." },
+  blueprint: { label: "Blueprint", text: "White lines on a blue engineering grid, in a technical face." },
+  chalkboard: { label: "Chalkboard", text: "Chalk on a green school board, hand-written and underlined." },
+  neon: { label: "Neon", text: "Pink and cyan neon tubes glowing on deep purple." },
+  comic: { label: "Comic", text: "Thick black lines on yellow halftone, comic-book lettering and panels." },
+  terminal: { label: "Terminal", text: "Green code on black, titles typed in with a cursor, scanlines." },
+  vintage: { label: "Vintage", text: "Brown ink on old paper, classic serif titles, framed labels." },
+  clean: { label: "Clean", text: "Black on white, one blue accent: calm and minimal." },
+  sunset: { label: "Sunset", text: "Soft white lines on a purple-to-orange sky." },
+  badges: { label: "Flat badges", text: "Each icon on a bright colour disc, navy labels." },
+  notes: { label: "Sticky notes", text: "Hand-drawn on a cork board, labels on yellow sticky notes." },
 };
+for (const k of Object.keys(ANIM_LOOKS)) ANIM_LOOKS[k].img = `anim/${k}.jpg`;
 // a Short stays under 3 minutes; a YouTube video past 3 minutes is written chapter by chapter
 const ANIM_LENGTHS = {
   "9:16": [["short45", "About 45 s", 0.75], ["short60", "About 1 min", 1], ["short120", "About 2 min", 2]],
@@ -1156,12 +1168,17 @@ VIEWS.animation = async () => {
   [f.model, f.length].forEach((el) => el.addEventListener("change", showCost));
   fillVoices(); showCost(); showFormat();
 
-  // the styles, as cards with a frame of each
+  // the styles, as small cards with a frame of each; the one picked says what it looks like
   const looks = h("div", { class: "anim-looks", role: "radiogroup", "aria-label": "Style" });
-  const paintLooks = () => looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
-    onclick: () => { animUi.look = k; paintLooks(); } },
-    h("img", { src: l.img, alt: "", loading: "lazy", width: 270, height: 480 }),
-    h("span", { class: "anim-look-text" }, h("span", { class: "anim-look-name", text: l.label }), h("span", { class: "muted small", text: l.text })))));
+  const lookNote = h("p", { class: "muted small anim-look-note", "aria-live": "polite" });
+  const paintLooks = () => {
+    if (!ANIM_LOOKS[animUi.look]) animUi.look = "glow";
+    looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
+      title: l.text, onclick: () => { animUi.look = k; paintLooks(); } },
+      h("img", { src: l.img, alt: "", loading: "lazy", width: 120, height: 213 }),
+      h("span", { class: "anim-look-name", text: l.label }))));
+    lookNote.replaceChildren(h("strong", { text: `${ANIM_LOOKS[animUi.look].label}: ` }), ANIM_LOOKS[animUi.look].text);
+  };
   paintLooks();
 
   const error = h("p", { class: "small idea-error", role: "alert" });
@@ -1186,7 +1203,7 @@ VIEWS.animation = async () => {
     go.disabled = false; go.textContent = "Create animation";
   } },
     h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
-    h("div", { class: "eyebrow", text: "Style" }), looks,
+    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks` }), looks, lookNote,
     h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
     h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-aspect", "Format", f.aspect, formatNote), field("a-length", "Length", f.length)),
     h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
@@ -1246,6 +1263,108 @@ VIEWS.animation = async () => {
   paint();
   return [pageHead("Animation", "Drawn videos: Claude writes the voice-over and draws every scene. No stock clips, no sound effects."),
     form, h("section", { class: "anim-list", "aria-label": "Your animations" }, h("h2", { text: "Your animations" }), list)];
+};
+
+// ==================================================================
+// Costs: what the AI calls cost, per network, task and model (supabase/migrations/0029_ai_costs.sql sums ai_runs).
+// ==================================================================
+// $ per million tokens, from the providers' price pages (checked 10 Nov 2026). DeepSeek doubles on weekday peak hours
+// (01:00-04:00 and 06:00-10:00 UTC). Cache discounts aren't logged, so the real bill can be a little lower.
+const AI_PRICES = {
+  "claude-opus-5-5": { provider: "Claude", in: 4, out: 20 },
+  "claude-fable-5-2": { provider: "Claude", in: 8, out: 40 },
+  "claude-sonnet-5-5": { provider: "Claude", in: 2, out: 10 },
+  "deepseek-flash": { provider: "DeepSeek", in: 0.15, out: 0.6, peak: 2 },
+  "deepseek-v4-pro": { provider: "DeepSeek", in: 0.66, out: 1.98, peak: 2 },
+};
+const priceFor = (model) => AI_PRICES[model] || (/^deepseek/.test(model) ? AI_PRICES["deepseek-flash"] : /^claude/.test(model) ? AI_PRICES["claude-opus-5-5"] : null);
+const aiCost = (r) => { const p = priceFor(r.model); return p ? ((Number(r.prompt_tokens) * p.in + Number(r.completion_tokens) * p.out) / 1e6) * (r.peak && p.peak ? p.peak : 1) : 0; };
+const usd = (v) => (!v ? "$0" : v >= 100 ? `$${Math.round(v)}` : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(v >= 0.1 ? 2 : 3)}`);
+const AI_TASKS = {
+  script: "Writing scripts", review: "Reviewing scripts", clips: "Choosing clips", clip_check: "Checking clips by eye", sounds: "Choosing sound effects",
+  thumbnail: "Thumbnail text", brief: "Production brief", blueprint: "Outlier blueprints", hooks: "Other openings", translate: "Translations",
+  trends: "Picking trends", trend_ideas: "Trends into ideas", explainer: "Animation plans", explainer_outline: "Animation outlines", explainer_chapter: "Animation chapters",
+  clipper: "Clipper", clipper_memory: "Clipper", clipper_narrate: "Clipper", clipper_lines: "Clipper",
+};
+const COST_PERIODS = [["7", "7 days"], ["30", "30 days"], ["month", "This month"], ["90", "90 days"]];
+const costsUi = { period: "30" };
+const PROVIDER_COLORS = { Claude: "#D97757", DeepSeek: "#60A5FA" };
+
+VIEWS.costs = async () => {
+  const now = new Date();
+  const since = costsUi.period === "month" ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)) : new Date(Date.now() - Number(costsUi.period) * 864e5);
+  const [rows, runs] = await Promise.all([
+    q(sb.rpc("ai_cost_rows", { p_since: since.toISOString() })),
+    q(sb.from("video_runs").select("id,channel_id,status,created_at").gte("created_at", since.toISOString()).in("status", ["ready", "review"]).limit(1000)),
+  ]);
+  const one = state.channel !== "all";
+  const mine = rows.map((r) => ({ ...r, cost: aiCost(r), provider: priceFor(r.model)?.provider || "Other" })).filter((r) => !one || r.channel_id === state.channel);
+  const videos = runs.filter((r) => !one || r.channel_id === state.channel).length;
+  const sum = (list, f = (r) => r.cost) => list.reduce((t, r) => t + f(r), 0);
+  const total = sum(mine), calls = sum(mine, (r) => Number(r.runs));
+  const byProvider = (p) => sum(mine.filter((r) => r.provider === p));
+  const shared = sum(mine.filter((r) => !r.channel_id));
+
+  // one column a day (a week when it's 90 days), split by network (all) or by provider (one network)
+  const days = [];
+  for (let d = new Date(Date.UTC(since.getUTCFullYear(), since.getUTCMonth(), since.getUTCDate())); d <= now; d = new Date(d.getTime() + 864e5)) days.push(utcDay(d));
+  const weekly = days.length > 45;
+  const buckets = weekly ? days.filter((_, i) => i % 7 === 0) : days;
+  const bucketOf = (day) => (weekly ? buckets.filter((b) => b <= day).pop() || buckets[0] : day);
+  const parts = one
+    ? Object.keys(PROVIDER_COLORS).map((p) => ({ name: p, color: PROVIDER_COLORS[p], match: (r) => r.provider === p }))
+    : [...state.channels.map((c) => ({ name: c.title, color: netColor(c.id), match: (r) => r.channel_id === c.id })), { name: "Shared", color: "#71717A", match: (r) => !r.channel_id }];
+  const cols = buckets.map((b) => ({ label: dayLabel(b), parts: parts.map((p) => ({ name: p.name, color: p.color, value: sum(mine.filter((r) => bucketOf(r.day) === b && p.match(r))) })) }));
+
+  const group = (key) => {
+    const m = new Map();
+    for (const r of mine) {
+      const k = key(r);
+      const g = m.get(k) || { key: k, calls: 0, cost: 0, tin: 0, tout: 0, claude: 0, deepseek: 0 };
+      g.calls += Number(r.runs); g.cost += r.cost; g.tin += Number(r.prompt_tokens); g.tout += Number(r.completion_tokens);
+      if (r.provider === "Claude") g.claude += r.cost; else g.deepseek += r.cost;
+      m.set(k, g);
+    }
+    return [...m.values()].sort((a, b) => b.cost - a.cost);
+  };
+  const share = (v) => h("div", { class: "cost-share", title: `${total ? Math.round((v / total) * 100) : 0}%` }, h("span", { style: `width:${total ? Math.max(2, (v / total) * 100) : 0}%` }));
+  const tokens = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)} k` : String(n));
+  const table = (head, body, min = 560) => h("div", { class: "tablebox" }, h("table", { style: `min-width:${min}px` },
+    h("thead", {}, h("tr", {}, head.map((t, i) => h("th", { class: i ? "num" : "", text: t })))), h("tbody", {}, body)));
+  const k = (label, value, foot) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), foot ? h("div", { class: "muted small", text: foot }) : null);
+  const seg = h("div", { class: "seg", role: "group", "aria-label": "Period" }, COST_PERIODS.map(([v, t]) => h("button", { type: "button", "aria-pressed": String(costsUi.period === v), text: t,
+    onclick: () => { costsUi.period = v; render(); } })));
+
+  const nets = group((r) => r.channel_id || "");
+  const tasks = group((r) => AI_TASKS[r.kind] || r.kind);
+  const models = group((r) => r.model);
+  return [
+    pageHead("Costs", one ? `What the AI cost for ${channelById(state.channel)?.title}` : "What the AI cost, for every network", seg),
+    h("section", { class: "kpis" },
+      k("AI cost", usd(total), `${fmt(calls)} AI calls`),
+      k("Claude", usd(byProvider("Claude")), "Animation plans"),
+      k("DeepSeek", usd(byProvider("DeepSeek")), "Scripts, reviews, clips, trends"),
+      k("Per finished video", videos ? usd((total - (one ? 0 : shared)) / videos) : "—", `${videos} video${videos === 1 ? "" : "s"} finished`)),
+    h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: weekly ? "Cost per week" : "Cost per day" }),
+      h("div", { class: "row small muted" }, parts.filter((p) => sum(mine.filter(p.match)) > 0).map((p) => h("span", { class: "row", style: "gap:6px" }, h("span", { class: "dot", style: `background:${p.color}` }), p.name)))),
+      total ? stackedCols(cols, "AI cost over time", (v) => (v ? usd(v) : "$0"), 0.01) : empty("No AI calls in this period.")),
+    one ? null : h("section", { class: "card" }, h("h2", { text: "By network" }),
+      nets.length ? table(["Network", "AI calls", "Claude", "DeepSeek", "Total", "Share"], nets.map((g) => h("tr", {},
+        h("td", {}, g.key ? h("span", { class: "row", style: "gap:7px" }, h("span", { class: "dot", style: `background:${netColor(g.key)}` }), channelById(g.key)?.title || "Removed network")
+          : h("span", { title: "Calls that belong to no idea yet: picking trends, the Clipper", text: "Shared (trends, Clipper)" })),
+        h("td", { class: "num mono", text: fmt(g.calls) }), h("td", { class: "num mono", text: usd(g.claude) }), h("td", { class: "num mono", text: usd(g.deepseek) }),
+        h("td", { class: "num mono", text: usd(g.cost) }), h("td", { class: "num" }, share(g.cost))))) : empty("No AI calls in this period.")),
+    h("section", { class: "card" }, h("h2", { text: "By task" }),
+      tasks.length ? table(["Task", "AI calls", "Tokens", "Cost", "Share"], tasks.map((g) => h("tr", {}, h("td", { text: g.key }),
+        h("td", { class: "num mono", text: fmt(g.calls) }), h("td", { class: "num mono", text: tokens(g.tin + g.tout) }), h("td", { class: "num mono", text: usd(g.cost) }), h("td", { class: "num" }, share(g.cost))))) : empty("Nothing yet.")),
+    h("section", { class: "card" }, h("h2", { text: "By model" }),
+      models.length ? table(["Model", "Price in / out (per M tokens)", "AI calls", "Tokens in", "Tokens out", "Cost"], models.map((g) => {
+        const p = priceFor(g.key);
+        return h("tr", {}, h("td", { class: "mono", text: g.key }), h("td", { class: "num mono", text: p ? `$${p.in} / $${p.out}${p.peak ? " (×2 at peak)" : ""}` : "unknown" }),
+          h("td", { class: "num mono", text: fmt(g.calls) }), h("td", { class: "num mono", text: tokens(g.tin) }), h("td", { class: "num mono", text: tokens(g.tout) }), h("td", { class: "num mono", text: usd(g.cost) }));
+      }), 680) : empty("Nothing yet.")),
+    h("p", { class: "muted small", text: "Estimated from the tokens of every AI call and the providers' list prices (DeepSeek's weekday peak hours count double). Cache discounts aren't counted, so the real bill can be a little lower. The voice, the render, stock footage and music cost nothing." }),
+  ];
 };
 
 // ==================================================================

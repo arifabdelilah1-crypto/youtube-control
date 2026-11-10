@@ -170,7 +170,7 @@ function estimatedWords(text, seconds) {
 const norm = (w) => String(w || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
 export const EXPLAINER_LAYOUTS = ["title", "row", "journey", "compare", "checklist", "year", "stat", "quote"];
 // the Animation page's styles (video/Explainer.jsx): settings.explainer.look
-export const EXPLAINER_LOOKS = ["glow", "whiteboard", "kinetic"];
+export const EXPLAINER_LOOKS = ["glow", "whiteboard", "kinetic", "blueprint", "chalkboard", "neon", "comic", "terminal", "vintage", "clean", "sunset", "badges", "notes"];
 const EXPLAINER_KINDS = ["icon", "person", "person_hat", "child"];
 
 /**

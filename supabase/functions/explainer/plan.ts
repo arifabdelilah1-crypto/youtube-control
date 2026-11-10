@@ -28,6 +28,16 @@ export const LOOKS: Record<string, string> = {
   glow: "white glowing line-art pictograms on black, a camera that slides right from scene to scene, short kinetic labels in pills",
   whiteboard: "pictograms drawn in black marker on a white board, hand-written headings underlined in red, a camera that slides along the board",
   kinetic: "kinetic typography: the narration itself fills the screen two or three words at a time, huge, on colour blocks that change every scene, with one pictogram above the words",
+  blueprint: "white line pictograms on a blue engineering blueprint grid, technical monospace labels, a camera that slides along the sheet",
+  chalkboard: "pictograms drawn in chalk on a green school board, hand-written headings underlined in yellow chalk",
+  neon: "pink and cyan neon-tube pictograms glowing on deep purple, a camera that slides from scene to scene",
+  comic: "comic-book style: thick black pictograms on yellow halftone, bold comic lettering, labels in white panels with hard shadows",
+  terminal: "a hacker terminal: green monospace pictograms and labels on black, headings typed in with a blinking cursor, scanlines",
+  vintage: "brown-ink pictograms on old paper, classic serif headings, labels in thin double frames",
+  clean: "minimal black line pictograms on white with one blue accent, calm and clear",
+  sunset: "soft white line pictograms on a purple-to-orange sunset sky",
+  badges: "flat design: each pictogram in white on a bright colour disc, navy text, rounded labels",
+  notes: "pictograms hand-drawn on a cork board, labels written on yellow sticky notes",
 };
 const Item = z.object({
   kind: z.enum(["icon", "person", "person_hat", "child"]),

@@ -3,9 +3,11 @@
 //   glow        white glowing line-art pictograms on black, a camera sliding right from scene to scene, labels in pills
 //   whiteboard  the same scenes drawn in marker on paper, in a hand-written face
 //   kinetic     kinetic typography: the narration itself, a few words at a time, big, on colour blocks that change per scene
+//   and ten more themes of the same scenes (THEMES): blueprint, chalkboard, neon, comic, terminal, vintage, clean, sunset,
+//   badges (icons on flat colour discs), notes (sticky notes on a cork board)
 import React from "react";
 import { AbsoluteFill, Easing, Html5Audio, Sequence, interpolate, random, spring, useCurrentFrame, useVideoConfig } from "remotion";
-import { ARABIC, HAND, LATIN, useFonts } from "./fonts.js";
+import { ARABIC, COMIC, HAND, LATIN, MONO, SERIF, useFonts } from "./fonts.js";
 import { ICONS } from "./explainer-icons.js";
 import { EXPLAINER_LOOKS, MUSIC_UNDER_VOICE } from "./layout.js";
 
@@ -56,7 +58,48 @@ const THEMES = {
     iconW: 1.7, personW: 3.6, hand: true, dust: null, upper: false,
   },
 };
+// every theme starts from these and changes what makes it itself
+const BASE = { font: "sans", upper: true, pill: "round", heading: "rise", underline: false, overlay: null, badges: null, tilt: 0 };
+const hardShadow = "drop-shadow(5px 5px 0 #111)";
+Object.assign(THEMES, {
+  blueprint: { background: "linear-gradient(180deg, #123F7C 0%, #0C2F60 100%)", base: "#0C2F60", ink: "#EAF2FF", accent: "#FFD166", dim: "rgba(234,242,255,.4)",
+    pillBg: "rgba(12,47,96,.9)", glow: "drop-shadow(0 0 2px rgba(234,242,255,.5))", glowAccent: "drop-shadow(0 0 3px rgba(255,209,102,.6))",
+    shadow: "radial-gradient(closest-side, rgba(234,242,255,.18), rgba(234,242,255,0))", iconW: 1.2, personW: 2.8, dust: null, font: "mono", pill: "box", overlay: "grid" },
+  chalkboard: { background: "radial-gradient(ellipse at 50% 45%, #355C47 0%, #22402F 70%, #1A3125 100%)", base: "#22402F", ink: "#F3F1E7", accent: "#FFE27A",
+    dim: "rgba(243,241,231,.35)", pillBg: "rgba(34,64,47,.9)", glow: "drop-shadow(0 0 1.5px rgba(243,241,231,.7))", glowAccent: "drop-shadow(0 0 2px rgba(255,226,122,.7))",
+    shadow: "radial-gradient(closest-side, rgba(243,241,231,.14), rgba(243,241,231,0))", iconW: 1.8, personW: 3.8, dust: null, font: "hand", upper: false, hand: true,
+    underline: true, pill: "chalk", overlay: "grain", tilt: -1.5 },
+  neon: { background: "radial-gradient(ellipse at 50% 40%, #2A0650 0%, #12002B 60%, #07000F 100%)", base: "#12002B", ink: "#FF5FD9", accent: "#3CF5FF",
+    dim: "rgba(255,95,217,.35)", pillBg: "rgba(18,0,43,.85)",
+    glow: "drop-shadow(0 0 4px rgba(255,95,217,1)) drop-shadow(0 0 18px rgba(255,60,200,.8))", glowAccent: "drop-shadow(0 0 4px rgba(60,245,255,1)) drop-shadow(0 0 18px rgba(60,245,255,.8))",
+    shadow: "radial-gradient(closest-side, rgba(255,95,217,.35), rgba(255,95,217,0))", iconW: 1.5, personW: 3.4, dust: "#FF8BE5" },
+  comic: { background: "radial-gradient(ellipse at 50% 45%, #FFE766 0%, #FFD21F 75%, #F5B700 100%)", base: "#FFD21F", ink: "#111111", accent: "#E63946",
+    dim: "rgba(17,17,17,.35)", pillBg: "#FFFFFF", glow: hardShadow, glowAccent: hardShadow,
+    shadow: "radial-gradient(closest-side, rgba(17,17,17,.25), rgba(17,17,17,0))", iconW: 2.2, personW: 4.6, dust: null, font: "comic", pill: "hard", overlay: "halftone", tilt: -2 },
+  terminal: { background: "radial-gradient(ellipse at 50% 45%, #06170B 0%, #020804 75%)", base: "#020804", ink: "#43FF7A", accent: "#E8FFE0",
+    dim: "rgba(67,255,122,.3)", pillBg: "rgba(2,8,4,.9)", glow: "drop-shadow(0 0 3px rgba(67,255,122,.9))", glowAccent: "drop-shadow(0 0 3px rgba(232,255,224,.9))",
+    shadow: "radial-gradient(closest-side, rgba(67,255,122,.2), rgba(67,255,122,0))", iconW: 1.3, personW: 3, dust: null, font: "mono", upper: false, pill: "tag",
+    heading: "type", overlay: "scan" },
+  vintage: { background: "radial-gradient(ellipse at 50% 45%, #F4EAD2 0%, #E9DAB8 70%, #D9C59B 100%)", base: "#EFE3C8", ink: "#3B2A1A", accent: "#9C2F1F",
+    dim: "rgba(59,42,26,.35)", pillBg: "rgba(244,234,210,.92)", glow: "none", glowAccent: "none",
+    shadow: "radial-gradient(closest-side, rgba(59,42,26,.18), rgba(59,42,26,0))", iconW: 1.5, personW: 3.4, dust: null, font: "serif", upper: false, pill: "frame", overlay: "grain" },
+  clean: { background: "#FFFFFF", base: "#FFFFFF", ink: "#111827", accent: "#2563EB", dim: "rgba(17,24,39,.3)", pillBg: "#F1F3F7", glow: "none", glowAccent: "none",
+    shadow: "radial-gradient(closest-side, rgba(17,24,39,.12), rgba(17,24,39,0))", iconW: 1.4, personW: 3.2, dust: null, upper: false, pill: "soft" },
+  sunset: { background: "linear-gradient(180deg, #2B1055 0%, #6E2B8C 42%, #D7566F 75%, #FF9A62 100%)", base: "#6E2B8C", ink: "#FFF4EA", accent: "#FFD36E",
+    dim: "rgba(255,244,234,.4)", pillBg: "rgba(43,16,85,.55)", glow: "drop-shadow(0 0 3px rgba(255,244,234,.8)) drop-shadow(0 0 14px rgba(255,170,120,.45))",
+    glowAccent: "drop-shadow(0 0 3px rgba(255,211,110,.9)) drop-shadow(0 0 14px rgba(255,180,80,.55))",
+    shadow: "radial-gradient(closest-side, rgba(255,244,234,.25), rgba(255,244,234,0))", iconW: 1.4, personW: 3.2, dust: "#FFE1C4" },
+  badges: { background: "#F2F6F5", base: "#F2F6F5", ink: "#1D3557", accent: "#E76F51", dim: "rgba(29,53,87,.3)", pillBg: "#1D3557", glow: "none", glowAccent: "none",
+    shadow: "radial-gradient(closest-side, rgba(29,53,87,.14), rgba(29,53,87,0))", iconW: 1.6, personW: 3.4, dust: null, upper: false, pill: "solid",
+    badges: ["#F4A261", "#2A9D8F", "#E9C46A", "#8ECAE6", "#E76F51"] },
+  notes: { background: "#B98A57", base: "#B98A57", ink: "#2B2B2B", accent: "#C1121F", dim: "rgba(43,43,43,.35)", pillBg: "#FFF27A",
+    glow: "drop-shadow(0 2px 0 rgba(0,0,0,.12))", glowAccent: "drop-shadow(0 2px 0 rgba(0,0,0,.12))",
+    shadow: "radial-gradient(closest-side, rgba(0,0,0,.22), rgba(0,0,0,0))", iconW: 1.7, personW: 3.6, dust: null, font: "hand", upper: false, hand: true,
+    pill: "note", overlay: "cork", tilt: -2 },
+});
+for (const k of Object.keys(THEMES)) THEMES[k] = { ...BASE, ...(k === "whiteboard" ? { font: "hand", upper: false, underline: true, tilt: -1.5, pill: "marker" } : {}), ...THEMES[k] };
 let T = THEMES.glow;
+const TS = () => ({ hand: 1.12, comic: 1.3, mono: 0.9, serif: 1.04 }[T.font] || 1);
 let FONT = `"${LATIN}", "${ARABIC}", sans-serif`;
 
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" };
@@ -102,14 +145,31 @@ function Person({ kind, height, p, bob, color }) {
   );
 }
 
-function Pill({ text, s, accent }) {
+// a label: each theme has its own shape (pill, marker, box, comic panel, code tag, frame, sticky note...)
+const PILLS = {
+  round: (c) => ({ border: `3px solid ${c}`, borderRadius: 999 }),
+  marker: (c) => ({ border: `3px solid ${c}`, borderRadius: "18px 26px 20px 24px" }),
+  chalk: (c) => ({ border: `3px dashed ${c}`, borderRadius: "16px 24px 18px 22px" }),
+  box: (c) => ({ border: `2px solid ${c}`, borderRadius: 4 }),
+  hard: () => ({ border: "4px solid #111", borderRadius: 6, boxShadow: "6px 6px 0 #111", color: "#111" }),
+  tag: () => ({ border: "none", padding: "6px 8px" }),
+  frame: (c) => ({ border: `4px double ${c}`, borderRadius: 2 }),
+  soft: () => ({ border: "none", borderRadius: 999 }),
+  solid: () => ({ border: "none", borderRadius: 999, color: "#FFFFFF" }),
+  note: () => ({ border: "none", borderRadius: 2, boxShadow: "0 8px 14px rgba(0,0,0,.28)", color: "#2B2B2B", padding: "16px 26px 18px" }),
+};
+function Pill({ text, s, accent, room }) {
   if (!text) return null;
   const c = accent ? T.accent : T.ink;
+  const shape = (PILLS[T.pill] || PILLS.round)(c);
+  const tight = room && room < 300;
   return (
-    <div style={{ transform: `scale(${interpolate(s, [0, 1], [0.6, 1])}) rotate(${T.hand ? -1.5 : 0}deg)`, opacity: Math.min(1, s * 1.5), border: `3px solid ${c}`,
-      borderRadius: T.hand ? "18px 26px 20px 24px" : 999, padding: "10px 26px", color: c, fontFamily: FONT, fontSize: T.hand ? 36 : 30,
-      letterSpacing: T.upper ? 2.5 : 0.5, textTransform: T.upper ? "uppercase" : "none", whiteSpace: "nowrap",
-      filter: accent ? T.glowAccent : T.glow, background: T.pillBg }}>{text}</div>
+    <div style={{ transform: `scale(${interpolate(s, [0, 1], [0.6, 1])}) rotate(${T.tilt}deg)`, opacity: Math.min(1, s * 1.5), padding: tight ? "8px 14px" : "10px 26px", color: c,
+      fontFamily: FONT, fontSize: (tight ? 24 : 30) * TS(), letterSpacing: T.upper ? (tight ? 1 : 2.5) : 0.5, textTransform: T.upper ? "uppercase" : "none",
+      whiteSpace: tight ? "normal" : "nowrap", maxWidth: room ? room - 16 : undefined, textAlign: "center", lineHeight: 1.15,
+      filter: T.pill === "hard" || T.pill === "note" ? "none" : accent ? T.glowAccent : T.glow, background: T.pill === "note" && accent ? "#FFB3C1" : T.pillBg, ...shape }}>
+      {T.pill === "tag" ? `[ ${text} ]` : text}
+    </div>
   );
 }
 
@@ -119,7 +179,15 @@ function Thing({ item, t, frame, fps, icons, size = 230, accent }) {
   const s = pop(frame, fps, item.at + 0.25);
   const lift = interpolate(p, [0, 1], [30, 0]);
   let body;
-  if (item.kind === "icon") {
+  if (item.kind === "icon" && T.badges) {
+    const fill = T.badges[Math.abs([...String(item.label || item.icon)].reduce((a, ch) => a * 31 + ch.charCodeAt(0), 7)) % T.badges.length];
+    body = (
+      <div style={{ width: size * 1.15, height: size * 1.15, borderRadius: "50%", background: fill, display: "flex", alignItems: "center", justifyContent: "center",
+        transform: `scale(${interpolate(p, [0, 1], [0.4, 1])})`, boxShadow: "0 10px 0 rgba(29,53,87,.12)" }}>
+        <Draw nodes={icons[item.icon] || icons.sparkles} size={size * 0.62} p={p} color="#FFFFFF" width={2} glow="none" />
+      </div>
+    );
+  } else if (item.kind === "icon") {
     body = <Draw nodes={icons[item.icon] || icons.sparkles} size={size} p={p} color={accent ? T.accent : T.ink} glow={accent ? T.glowAccent : T.glow} />;
   } else {
     const n = Math.max(1, Math.min(6, item.count || 1));
@@ -143,7 +211,7 @@ function Thing({ item, t, frame, fps, icons, size = 230, accent }) {
 }
 
 // An item standing at the ground height, its soft shadow under it and its pill below.
-function Standing({ x, item, ...rest }) {
+function Standing({ x, item, room, ...rest }) {
   const p = progress(rest.t, item.at, 0.8);
   const wide = (rest.size || 230) * (item.kind === "icon" ? 0.9 : Math.min(2.4, 0.55 + 0.32 * (item.count || 1)));
   return (
@@ -153,7 +221,7 @@ function Standing({ x, item, ...rest }) {
         <Thing {...rest} item={{ ...item, label: "" }} />
       </div>
       <div style={{ position: "absolute", top: 40, left: "50%", transform: "translateX(-50%)" }}>
-        <Pill text={item.label} s={pop(rest.frame, rest.fps, item.at + 0.25)} accent={rest.accent} />
+        <Pill text={item.label} s={pop(rest.frame, rest.fps, item.at + 0.25)} accent={rest.accent} room={room} />
       </div>
     </div>
   );
@@ -162,7 +230,17 @@ function Standing({ x, item, ...rest }) {
 function Heading({ text, t, at = 0.15, y = G.head, size = 74, accent = false }) {
   if (!text) return null;
   const words = text.split(/\s+/);
-  const fs = T.hand ? size * 1.12 : size;
+  const fs = size * (T.font === "mono" ? 0.82 : TS());
+  if (T.heading === "type") {
+    const shown = Math.floor(interpolate(t, [at, at + text.length * 0.035], [0, text.length], clamp));
+    const blink = Math.floor(t * 2.5) % 2 === 0 || shown < text.length;
+    return (
+      <div style={{ position: "absolute", left: G.side, right: G.side, top: y, transform: "translateY(-50%)", textAlign: "center", fontFamily: FONT, fontSize: fs,
+        lineHeight: 1.15, color: accent ? T.accent : T.ink, filter: accent ? T.glowAccent : T.glow }}>
+        <span style={{ opacity: 0.6 }}>{"> "}</span>{text.slice(0, shown)}<span style={{ opacity: blink ? 1 : 0 }}>▍</span>
+      </div>
+    );
+  }
   return (
     <div style={{ position: "absolute", left: G.side, right: G.side, top: y, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: `0 ${fs * 0.28}px`,
       fontFamily: FONT, fontSize: fs, lineHeight: 1.12, color: accent ? T.accent : T.ink, textAlign: "center", textTransform: T.upper ? "uppercase" : "none",
@@ -171,7 +249,7 @@ function Heading({ text, t, at = 0.15, y = G.head, size = 74, accent = false }) 
         const p = progress(t, at + i * 0.09, 0.45);
         return <span key={i} style={{ opacity: p, transform: `translateY(${(1 - p) * 26}px)`, display: "inline-block" }}>{w}</span>;
       })}
-      {T.hand ? <Underline t={t} at={at + words.length * 0.09} /> : null}
+      {T.underline ? <Underline t={t} at={at + words.length * 0.09} /> : null}
     </div>
   );
 }
@@ -189,7 +267,7 @@ function Counter({ value, prefix, suffix, t, from, y, size }) {
   const p = progress(t, 0.2, 1.4);
   const n = Math.round(interpolate(p, [0, 1], [from, value]));
   return (
-    <div style={{ position: "absolute", left: 0, right: 0, top: y, transform: "translateY(-50%)", textAlign: "center", fontFamily: FONT, fontSize: T.hand ? size * 1.1 : size,
+    <div style={{ position: "absolute", left: 0, right: 0, top: y, transform: "translateY(-50%)", textAlign: "center", fontFamily: FONT, fontSize: size * TS(),
       color: T.accent, filter: T.glowAccent, letterSpacing: 4, fontVariantNumeric: "tabular-nums" }}>
       {prefix}{n}{suffix}
     </div>
@@ -279,7 +357,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
                   <path d="M6.5 12.5 L10.5 16.5 L17.5 8" stroke={T.accent} strokeWidth={2.4} pathLength={1} strokeDasharray={1} strokeDashoffset={1 - c} />
                 </svg>
                 {it.kind === "icon" ? <Draw nodes={icons[it.icon] || icons.sparkles} size={86} p={p} /> : <Person kind={it.kind} height={110} p={p} bob={0} />}
-                <div style={{ fontFamily: FONT, fontSize: T.hand ? 58 : 50, color: T.ink, filter: T.glow, textTransform: T.upper ? "uppercase" : "none", letterSpacing: T.upper ? 1.5 : 0, lineHeight: 1.1 }}>{it.label}</div>
+                <div style={{ fontFamily: FONT, fontSize: 50 * TS(), color: T.ink, filter: T.glow, textTransform: T.upper ? "uppercase" : "none", letterSpacing: T.upper ? 1.5 : 0, lineHeight: 1.1 }}>{it.label}</div>
               </div>
             );
           })}
@@ -291,7 +369,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
         <>
           <Counter value={s.number} prefix={s.number_prefix} suffix={s.number_suffix} t={t} from={Math.max(0, s.number - 60)} y={G.year.y} size={G.year.size} />
           <Heading text={s.heading} t={t} at={0.9} y={G.year.head} size={60} />
-          {its.slice(0, 3).map((it, i, arr) => <Standing key={i} x={(W / (arr.length + 1)) * (i + 1)} item={it} {...P} size={G.year.item} />)}
+          {its.slice(0, 3).map((it, i, arr) => <Standing key={i} x={(W / (arr.length + 1)) * (i + 1)} item={it} {...P} size={G.year.item} room={W / (arr.length + 1)} />)}
         </>
       );
     }
@@ -320,7 +398,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
         <>
           <div style={{ position: "absolute", left: L.markX, top: L.markY, fontFamily: FONT, fontSize: 200, color: T.accent, filter: T.glowAccent, opacity: progress(t, 0.1, 0.4), lineHeight: 1 }}>“</div>
           <div style={{ position: "absolute", left: L.side, right: L.side, top: L.y, transform: "translateY(-50%)", display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 18px",
-            fontFamily: FONT, fontSize: T.hand ? 72 : 64, lineHeight: 1.2, color: T.ink, filter: T.glow, textAlign: "center" }}>
+            fontFamily: FONT, fontSize: 64 * TS(), lineHeight: 1.2, color: T.ink, filter: T.glow, textAlign: "center" }}>
             {words.map((w, i) => {
               const p = progress(t, 0.3 + i * 0.16, 0.35);
               return <span key={i} style={{ opacity: p, transform: `translateY(${(1 - p) * 18}px)`, display: "inline-block" }}>{w}</span>;
@@ -336,7 +414,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
       return (
         <>
           <Heading text={s.heading} t={t} />
-          {list.map((it, i) => <Standing key={i} x={(W / (list.length + 1)) * (i + 1)} item={it} {...P} size={size} />)}
+          {list.map((it, i) => <Standing key={i} x={(W / (list.length + 1)) * (i + 1)} item={it} {...P} size={size} room={W / (list.length + 1)} />)}
         </>
       );
     }
@@ -360,13 +438,39 @@ function Captions({ words, t }) {
   if (!g || t > g[g.length - 1].e + 0.6) return null;
   return (
     <div style={{ position: "absolute", left: G.capSide, right: G.capSide, top: G.capY, display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "0 16px",
-      fontFamily: FONT, fontSize: G.capSize * (T.hand ? 1.16 : 1), lineHeight: 1.2, textAlign: "center" }}>
+      fontFamily: FONT, fontSize: G.capSize * TS(), lineHeight: 1.2, textAlign: "center" }}>
       {g.map((w, i) => {
         const on = t >= w.s - 0.03;
         return <span key={i} style={{ color: on ? T.ink : T.dim, filter: on ? T.glow : "none" }}>{w.w}</span>;
       })}
     </div>
   );
+}
+
+function Overlay({ camX }) {
+  switch (T.overlay) {
+    case "grid":
+      return <AbsoluteFill style={{ backgroundImage: "linear-gradient(rgba(234,242,255,.16) 2px, transparent 2px), linear-gradient(90deg, rgba(234,242,255,.16) 2px, transparent 2px), linear-gradient(rgba(234,242,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(234,242,255,.07) 1px, transparent 1px)",
+        backgroundSize: "200px 200px, 200px 200px, 40px 40px, 40px 40px", backgroundPosition: `${-camX}px 0, ${-camX}px 0, ${-camX}px 0, ${-camX}px 0` }} />;
+    case "scan":
+      return <AbsoluteFill style={{ background: "repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 2px, transparent 2px 5px), radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%)" }} />;
+    case "halftone":
+      return <AbsoluteFill style={{ backgroundImage: "radial-gradient(rgba(17,17,17,.13) 2.4px, transparent 2.8px)", backgroundSize: "18px 18px", backgroundPosition: `${-camX * 0.5}px 0` }} />;
+    case "grain":
+    case "cork": {
+      const cork = T.overlay === "cork";
+      return (
+        <AbsoluteFill style={{ opacity: cork ? 0.55 : 0.22, mixBlendMode: "multiply" }}>
+          <svg width="100%" height="100%">
+            <filter id="grain"><feTurbulence type="fractalNoise" baseFrequency={cork ? 0.55 : 0.9} numOctaves={cork ? 3 : 2} seed={4} /><feColorMatrix values={cork ? "0 0 0 0 .35 0 0 0 0 .2 0 0 0 0 .08 0 0 0 1.4 -.3" : "0 0 0 0 .2 0 0 0 0 .15 0 0 0 0 .1 0 0 0 1 0"} /></filter>
+            <rect width="100%" height="100%" filter="url(#grain)" />
+          </svg>
+        </AbsoluteFill>
+      );
+    }
+    default:
+      return null;
+  }
 }
 
 function Dust({ camX, total }) {
@@ -452,7 +556,8 @@ export function Explainer(props) {
   T = THEMES[look] || THEMES.glow;
   G = Number(props.width) > Number(props.height) ? GEO.landscape : GEO.portrait;
   useFonts(props.assetBase);
-  FONT = look === "whiteboard" ? `"${HAND}", "${LATIN}", "${ARABIC}", cursive` : rtl ? `"${ARABIC}", "${LATIN}", sans-serif` : `"${LATIN}", "${ARABIC}", sans-serif`;
+  const face = { hand: HAND, mono: MONO, serif: SERIF, comic: COMIC }[T.font];
+  FONT = rtl ? `"${ARABIC}", "${face || LATIN}", sans-serif` : face ? `"${face}", "${LATIN}", "${ARABIC}", sans-serif` : `"${LATIN}", "${ARABIC}", sans-serif`;
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const icons = ICONS;
@@ -494,6 +599,7 @@ export function Explainer(props) {
   const worldW = (scenes.length + 1) * W;
   return (
     <AbsoluteFill style={{ background: T.background, direction: "ltr" }}>
+      <Overlay camX={camX} />
       <Dust camX={camX} total={worldW} />
       <AbsoluteFill style={{ transform: `translateX(${-camX}px)` }}>
         {scenes.map((s, i) => {

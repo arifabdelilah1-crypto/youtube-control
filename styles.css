@@ -856,24 +856,27 @@ button.tr-q:hover { color: var(--signal); }
 .tr-idea-main .field { min-height: 38px; font-weight: 500; }
 
 /* ---------- Animation page ---------- */
-.anim-looks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.anim-look { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px 8px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); color: inherit; cursor: pointer; font: inherit; }
-.anim-look img { width: 100%; height: auto; aspect-ratio: 9 / 13; object-fit: cover; object-position: center 40%; border-radius: 10px; background: #000; }
-.anim-look-text { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
-.anim-look-name { font-weight: 600; }
+.anim-looks { display: grid; grid-template-columns: repeat(auto-fill, minmax(70px, 82px)); gap: 8px; }
+.anim-look { display: flex; flex-direction: column; gap: 5px; padding: 5px 5px 7px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-2); color: inherit; cursor: pointer; font: inherit; text-align: center; }
+.anim-look img { width: 100%; height: auto; aspect-ratio: 3 / 4; object-fit: cover; object-position: center 30%; border-radius: 8px; background: #000; }
+.anim-look-name { font-size: 11.5px; font-weight: 600; line-height: 1.2; }
 .anim-look[aria-checked="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--ink) inset; }
 .anim-look:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.anim-look-note { margin: 0; }
 .anim-subject { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
 .anim-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
 .anim-list > h2 { margin: 0; font-size: 18px; }
 .anim-run { grid-template-columns: 54px minmax(0, 1fr) auto; }
 .anim-thumb { width: 54px; height: 96px; object-fit: cover; border-radius: 8px; background: #000; }
 @media (max-width: 720px) {
-  .anim-looks { grid-template-columns: 1fr; }
-  .anim-look { flex-direction: row; align-items: center; gap: 12px; }
-  .anim-look img { width: 72px; flex: none; aspect-ratio: 9 / 16; }
+  .anim-looks { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .anim-look-name { font-size: 10.5px; }
   .anim-subject { grid-template-columns: 1fr; }
   .anim-run { grid-template-columns: 40px minmax(0, 1fr); }
   .anim-run .idea-side { grid-column: 1 / -1; align-items: flex-start; }
   .anim-thumb { width: 40px; height: 71px; }
 }
+
+/* ---------- Costs page ---------- */
+.cost-share { width: 120px; height: 8px; border-radius: 99px; background: var(--panel-2); overflow: hidden; margin-left: auto; }
+.cost-share span { display: block; height: 100%; background: var(--ink); border-radius: 99px; }
