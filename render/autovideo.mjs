@@ -96,7 +96,7 @@ async function writeScript(idea, channel, options) {
 const MODEL_LABELS = { "claude-opus-5-5": "Claude Opus 5.5", "claude-fable-5-2": "Claude Fable 5.2", "claude-sonnet-5-5": "Claude Sonnet 5.5" };
 async function planExplainer(idea, channel, options, note) {
   const model = MODEL_LABELS[options.ai_model] ? options.ai_model : "claude-opus-5-5";
-  const body = { action: "plan", idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model };
+  const body = { action: "plan", idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow" };
   // a function gets about 150 s: less thinking, then the faster model, if the first answer takes too long
   const tries = [{}, { effort: "low" }, ...(model === "claude-sonnet-5-5" ? [] : [{ model: "claude-sonnet-5-5", effort: "low" }])];
   let lastError = "";
@@ -146,7 +146,7 @@ async function buildScenes(idea, channel, options, project) {
     // nothing goes out by itself before the final checks
     publish: { ...(base.publish || {}), mode: "ask" },
     // the Explainer style draws its scenes (video/Explainer.jsx): the plan without the narration, which is the script
-    ...(drawn ? { style: "explainer", explainer: { scenes: (ai.explainer?.scenes || []).map(({ narration: _n, ...rest }) => rest), model: ai.explainer?.model || null },
+    ...(drawn ? { style: "explainer", explainer: { scenes: (ai.explainer?.scenes || []).map(({ narration: _n, ...rest }) => rest), model: ai.explainer?.model || null, look: options.look || "glow" },
       hook: { ...(base.hook || {}), enabled: false } } : { style: "classic" }),
   };
   const out = await call("studio", {
@@ -382,7 +382,7 @@ async function main(id) {
   const drawn = options.video_style === "explainer";
   if (drawn) {
     // the drawing belongs to its words: a kept script keeps its plan only if that plan was made for it
-    const planned = idea.ai?.style === "explainer" && idea.ai?.explainer?.scenes?.length
+    const planned = idea.ai?.style === "explainer" && idea.ai?.explainer?.scenes?.length && (idea.ai.explainer.look || "glow") === (options.look || "glow")
       && idea.ai.explainer.scenes.map((x) => `VO: ${x.narration}`).join("\n\n") === String(idea.script || "").trim();
     if (options.keep_script && planned) await skip("script", "Keeping the explainer already planned");
     else await step("script", (note) => planExplainer(idea, channel, options, note));

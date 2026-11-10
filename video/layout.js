@@ -169,6 +169,8 @@ function estimatedWords(text, seconds) {
 
 const norm = (w) => String(w || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
 export const EXPLAINER_LAYOUTS = ["title", "row", "journey", "compare", "checklist", "year", "stat", "quote"];
+// the Animation page's styles (video/Explainer.jsx): settings.explainer.look
+export const EXPLAINER_LOOKS = ["glow", "whiteboard", "kinetic"];
 const EXPLAINER_KINDS = ["icon", "person", "person_hat", "child"];
 
 /**
@@ -245,6 +247,7 @@ export function buildProps(project, scenes, urls = {}) {
   });
   return {
     style: drawn ? "explainer" : "classic",
+    look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow") : null,
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),
     rtl: RTL_LANGS.has(project.language),
     language: project.language,

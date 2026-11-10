@@ -854,3 +854,26 @@ button.tr-q:hover { color: var(--signal); }
 .tr-idea > input { width: 18px; height: 18px; margin-top: 10px; accent-color: var(--signal); }
 .tr-idea-main { display: grid; gap: 6px; min-width: 0; }
 .tr-idea-main .field { min-height: 38px; font-weight: 500; }
+
+/* ---------- Animation page ---------- */
+.anim-looks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.anim-look { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 8px 8px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-2); color: inherit; cursor: pointer; font: inherit; }
+.anim-look img { width: 100%; height: auto; aspect-ratio: 9 / 13; object-fit: cover; object-position: center 40%; border-radius: 10px; background: #000; }
+.anim-look-text { display: flex; flex-direction: column; gap: 4px; padding: 0 2px; }
+.anim-look-name { font-weight: 600; }
+.anim-look[aria-checked="true"] { border-color: var(--ink); box-shadow: 0 0 0 2px var(--ink) inset; }
+.anim-look:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.anim-subject { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); }
+.anim-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.anim-list > h2 { margin: 0; font-size: 18px; }
+.anim-run { grid-template-columns: 54px minmax(0, 1fr) auto; }
+.anim-thumb { width: 54px; height: 96px; object-fit: cover; border-radius: 8px; background: #000; }
+@media (max-width: 720px) {
+  .anim-looks { grid-template-columns: 1fr; }
+  .anim-look { flex-direction: row; align-items: center; gap: 12px; }
+  .anim-look img { width: 72px; flex: none; aspect-ratio: 9 / 16; }
+  .anim-subject { grid-template-columns: 1fr; }
+  .anim-run { grid-template-columns: 40px minmax(0, 1fr); }
+  .anim-run .idea-side { grid-column: 1 / -1; align-items: flex-start; }
+  .anim-thumb { width: 40px; height: 71px; }
+}

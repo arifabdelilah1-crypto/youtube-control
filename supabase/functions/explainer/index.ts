@@ -1,16 +1,17 @@
 // Explainer style: Claude writes the voice-over AND the drawing of every scene (layout, pictograms, labels, cue words).
-// POST {action:"plan", idea_id, channel_id?, language?, length?, angle?, model?, effort?}
+// POST {action:"plan", idea_id, channel_id?, language?, length?, angle?, model?, effort?, look?}
 //   -> saves ideas.script (one "VO:" line per scene), title, description, tags, and ideas.ai.explainer {scenes} + the cost.
 //   model: claude-opus-5-5 (default) | claude-fable-5-2 | claude-sonnet-5-5. effort: low | medium | high (default: the model's own).
 // POST {action:"start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs) as an Explainer video,
-//   like ai's auto_start, with options.video_style = "explainer", options.ai_model, always 9:16 and no sound effects. Returns {run_id}.
+//   like ai's auto_start, with options.video_style = "explainer", options.ai_model, options.look (glow | whiteboard | kinetic),
+//   always 9:16 and no sound effects. Returns {run_id}. Started from the Animation page.
 // "plan" is called by the "Generate video" job (x-cron-secret) or by a signed-in team member; "start" by a team member.
 // Secrets: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_REPO.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import Anthropic from "npm:@anthropic-ai/sdk@1.8.0";
 import { zodOutputFormat } from "npm:@anthropic-ai/sdk@1.8.0/helpers/zod";
 import { ICON_NAMES } from "./icons.ts";
-import { LENGTHS, MODELS, Plan, clean, system, userPrompt } from "./plan.ts";
+import { LENGTHS, LOOKS, MODELS, Plan, clean, system, userPrompt } from "./plan.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -61,6 +62,7 @@ Deno.serve(async (req) => {
         music: o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
         publish: o.publish === "next" ? "next" : "ask",
         video_style: "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
+        look: Object.hasOwn(LOOKS, o.look || "") ? o.look : "glow",
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", ideaId);
       const { data: run, error } = await db.from("video_runs").insert({ idea_id: ideaId, channel_id: channelId, options, owner_id: user?.id ?? null }).select().single();
@@ -91,6 +93,7 @@ Deno.serve(async (req) => {
     const length = Object.hasOwn(LENGTHS, body.length || "") ? body.length : "short45";
     const model = Object.hasOwn(MODELS, body.model || "") ? body.model : "claude-opus-5-5";
     const effort = ["low", "medium", "high"].includes(body.effort) ? body.effort : null;
+    const look = Object.hasOwn(LOOKS, body.look || "") ? body.look : "glow";
 
     const since = new Date(Date.now() - 864e5).toISOString();
     const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
@@ -103,7 +106,7 @@ Deno.serve(async (req) => {
     try {
       res = await client.messages.parse({
         model, max_tokens: 16000,
-        system: system(language, length),
+        system: system(language, length, look),
         messages: [{ role: "user", content: userPrompt(idea, channel, niche, body.angle ? clean(body.angle, 300) : null) }],
         output_config: { format: zodOutputFormat(Plan), ...(effort ? { effort } : {}) },
       });
@@ -137,7 +140,7 @@ Deno.serve(async (req) => {
     const hashtags = plan.hashtags.map((t) => "#" + clean(t, 40).replace(/^#/, "").replace(/\s+/g, "")).filter((t) => t.length > 1).slice(0, 3);
     const ai = {
       style: "explainer", language, length, aspect: "9:16", model, generated_at: new Date().toISOString(),
-      explainer: { scenes, model, usage: u, cost_usd: cost, seconds: Math.round((Date.now() - started) / 1000) },
+      explainer: { scenes, model, look, usage: u, cost_usd: cost, seconds: Math.round((Date.now() - started) / 1000) },
       hook_text: clean(scenes[0]?.heading, 40),
       brief: { subject: clean(idea.video_title || idea.title, 200), kind: "explainer", feeling: "", voice_style: "natural", voice_gender: "any",
         music_mood: plan.music_mood, music_words: [], thumbnail_style: "dark" },

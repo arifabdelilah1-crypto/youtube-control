@@ -16,6 +16,12 @@ export const LENGTHS: Record<string, { duration: string; words: string; scenes: 
 };
 export const LANGS: Record<string, string> = { en: "English", fr: "French", ar: "Arabic", es: "Spanish", de: "German" };
 export const MUSIC = ["calm", "dark", "epic", "sad", "happy", "funny", "love", "horror", "none"] as const;
+// The Animation page's styles (video/Explainer.jsx). The plan is the same; the words are tuned to how they're shown.
+export const LOOKS: Record<string, string> = {
+  glow: "white glowing line-art pictograms on black, a camera that slides right from scene to scene, short kinetic labels in pills",
+  whiteboard: "pictograms drawn in black marker on a white board, hand-written headings underlined in red, a camera that slides along the board",
+  kinetic: "kinetic typography: the narration itself fills the screen two or three words at a time, huge, on colour blocks that change every scene, with one pictogram above the words",
+};
 const Item = z.object({
   kind: z.enum(["icon", "person", "person_hat", "child"]),
   icon: z.string(),
@@ -42,10 +48,13 @@ export const Plan = z.object({
   scenes: z.array(Scene),
 });
 
-export function system(language: string, length: string) {
+export function system(language: string, length: string, look = "glow") {
   const L = LENGTHS[length];
+  const kinetic = look === "kinetic"
+    ? "\nKinetic typography: short punchy sentences (4 to 10 words), concrete words that look good huge on screen. The heading and the labels hold the scene's key words: those are the ones that light up.\n"
+    : "";
   return `You write faceless educational explainer videos in a minimalist motion-graphics style:
-white glowing line-art pictograms on black, a camera that slides right from scene to scene, short kinetic labels in pills.
+${LOOKS[look] || LOOKS.glow}.${kinetic}
 Everything you write is in ${LANGS[language] || "English"} (narration, headings, labels, title, description), except the icon names.
 
 Write a vertical video of ${L.duration}: ${L.words} words of narration in total, ${L.scenes} scenes.

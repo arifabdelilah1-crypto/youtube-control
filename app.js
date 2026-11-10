@@ -907,23 +907,6 @@ function generateDialog(ideas, onDone) {
   const showLong = () => { longNote.style.display = f.aspect.value === "16:9" ? "" : "none"; };
   f.aspect.addEventListener("change", () => { f.length.value = f.aspect.value === "16:9" ? "long3" : "short45"; showLong(); });
   showLong();
-  // Explainer: drawn motion graphics (white glowing pictograms on black), planned by Claude, 9:16, no sound effects
-  f.look = h("select", { id: "g-look", class: "field" }, h("option", { value: "classic", text: "Clips and photos" }), h("option", { value: "explainer", text: "Explainer: drawn motion graphics" }));
-  f.model = h("select", { id: "g-model", class: "field" }, Object.entries(EXPLAINER_MODELS).map(([v, m]) => h("option", { value: v, text: m.label })));
-  const cost = h("div", { class: "muted small", "aria-live": "polite" });
-  const soundsRow = h("label", { class: "row ed-check" }, f.sounds, " Add sound effects where the words call for them");
-  const modelWrap = h("div", { class: "field-wrap" }, h("label", { for: "g-model", text: "AI that plans it" }), f.model, cost);
-  const showLook = () => {
-    const drawn = f.look.value === "explainer";
-    modelWrap.style.display = drawn ? "" : "none";
-    soundsRow.style.display = drawn ? "none" : "";
-    if (drawn) { f.aspect.value = "9:16"; showLong(); }
-    f.aspect.disabled = drawn;
-    const m = EXPLAINER_MODELS[f.model.value], minutes = { short45: 0.75, short60: 1, long3: 3 }[f.length.value] || 0.75;
-    cost.textContent = `About $${(m.base + m.perMinute * minutes).toFixed(2)} per video for the plan. Voice and render cost nothing.`;
-  };
-  [f.look, f.model, f.length].forEach((el) => el.addEventListener("change", showLook));
-  showLook();
   const error = h("p", { class: "small", role: "alert", style: "color:var(--tally);margin:0" });
   const go = h("button", { class: "btn primary", type: "submit", text: single ? "Generate video" : `Generate ${ideas.length} videos` });
   const dialog = h("dialog", { class: "gen-dialog", "aria-labelledby": "gen-title" });
@@ -933,16 +916,13 @@ function generateDialog(ideas, onDone) {
     if (!f.channel.value) { error.textContent = "Choose a network first."; f.channel.focus(); return; }
     go.disabled = true; go.textContent = "Starting…"; error.textContent = "";
     const options = { language: f.language.value || null, aspect: f.aspect.value, length: f.length.value, angle: single ? f.angle.value.trim() || null : null, voice: f.voice.value || null, voice_style: f.style.value || null,
-      music: f.music.checked, sounds: f.look.value === "classic" && f.sounds.checked, keep_script: f.keep.checked, publish: f.next.checked ? "next" : "ask",
-      video_style: f.look.value, ai_model: f.look.value === "explainer" ? f.model.value : null };
+      music: f.music.checked, sounds: f.sounds.checked, keep_script: f.keep.checked, publish: f.next.checked ? "next" : "ask" };
     const failed = [];
     for (const i of ideas) {
       try {
         // a new idea exists from here on: cancelling the dialog leaves nothing behind
         if (!i.id) i.id = (await q(sb.from("ideas").insert({ title: i.title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
-        // an Explainer video starts from its own function (supabase/functions/explainer), the others from "ai"
-        if (options.video_style === "explainer") await aiCall({ action: "start", idea_id: i.id, channel_id: f.channel.value, options }, "explainer");
-        else await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options });
+        await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options });
       } catch (err) { failed.push(err.message); }
     }
     if (failed.length) { error.textContent = failed[0]; go.disabled = false; go.textContent = "Try again"; onDone(false); return; }
@@ -952,13 +932,12 @@ function generateDialog(ideas, onDone) {
     h("h2", { id: "gen-title", text: single ? "Generate this video" : `Generate ${ideas.length} videos` }),
     h("p", { class: "muted small", style: "margin:0", dir: "auto", text: single ? single.video_title || single.title : "With the same choices for each." }),
     h("div", { class: "form-grid" }, field("g-channel", "Network", f.channel), field("g-language", "Language", f.language), field("g-aspect", "Format", f.aspect), field("g-length", "Length", f.length)),
-    h("div", { class: "form-grid" }, field("g-look", "Style", f.look), modelWrap),
     longNote,
     single ? field("g-angle", "Angle", f.angle) : null,
     h("div", { class: "form-grid" }, field("g-voice", "Voice", f.voice), field("g-style", "Voice style", f.style)),
     h("div", { class: "gen-checks" },
       h("label", { class: "row ed-check" }, f.music, " Background music that fits the subject"),
-      soundsRow,
+      h("label", { class: "row ed-check" }, f.sounds, " Add sound effects where the words call for them"),
       withScript ? h("label", { class: "row ed-check" }, f.keep, single ? " Keep the script I already have" : ` Keep the scripts already written (${withScript})`) : null,
       h("label", { class: "row ed-check" }, f.next, " Schedule it in the next free slot if every check passes")),
     h("p", { class: "muted small", style: "margin:0", text: "It takes a few minutes, and you can leave this page. Unless you tick the last box, it then waits for you to check it." }),
@@ -1118,6 +1097,132 @@ VIEWS.ideas = async () => {
   paint();
   return [pageHead("Ideas", state.channel !== "all" ? `For ${channelById(state.channel)?.title} and unassigned ideas` : "All networks"),
     addForm, live, h("div", { class: "idea-tools" }, tabs, h("div", { class: "row idea-filter" }, search, source, sort)), bulk, list, foot];
+};
+
+// ==================================================================
+// Animation: drawn videos. Claude writes the voice-over and draws every scene (supabase/functions/explainer),
+// video/Explainer.jsx animates it in the chosen style. No stock clips, no sound effects, always 9:16.
+// ==================================================================
+const ANIM_LOOKS = {
+  glow: { label: "Glow explainer", text: "White glowing pictograms on black. The camera slides from scene to scene.", img: "anim/glow.jpg" },
+  whiteboard: { label: "Whiteboard", text: "The same scenes drawn in marker on a white board, with hand-written titles.", img: "anim/whiteboard.jpg" },
+  kinetic: { label: "Kinetic typography", text: "The narration itself, huge, a few words at a time, on colour blocks.", img: "anim/kinetic.jpg" },
+};
+const ANIM_LENGTHS = [["short45", "Short, about 45 s", 0.75], ["short60", "Short, about 60 s", 1], ["long3", "Long, about 3 min", 3]];
+const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45" };
+const animCost = (model, length) => { const m = EXPLAINER_MODELS[model] || EXPLAINER_MODELS["claude-opus-5-5"]; return m.base + m.perMinute * (ANIM_LENGTHS.find(([k]) => k === length)?.[2] || 0.75); };
+
+VIEWS.animation = async () => {
+  const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint || null);
+  const f = {};
+  f.subject = h("input", { id: "a-subject", class: "field", dir: "auto", placeholder: "e.g. What if you never had to sleep?" });
+  f.idea = h("select", { id: "a-idea", class: "field" });
+  f.channel = h("select", { id: "a-channel", class: "field", required: true }, h("option", { value: "", text: "Choose a network" }),
+    state.channels.map((c) => h("option", { value: c.id, selected: state.channel === c.id, text: c.title })));
+  f.language = h("select", { id: "a-language", class: "field" }, h("option", { value: "", text: "Network language" }), LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, text: t })));
+  f.length = h("select", { id: "a-length", class: "field" }, ANIM_LENGTHS.map(([v, t]) => h("option", { value: v, selected: animUi.length === v, text: t })));
+  f.model = h("select", { id: "a-model", class: "field" }, Object.entries(EXPLAINER_MODELS).map(([v, m]) => h("option", { value: v, selected: animUi.model === v, text: m.label })));
+  f.voice = h("select", { id: "a-voice", class: "field" });
+  f.music = h("input", { type: "checkbox", checked: true });
+  f.next = h("input", { type: "checkbox" });
+  const langNow = () => f.language.value || channelById(f.channel.value)?.video_style?.language || channelById(f.channel.value)?.language || "en";
+  const fillVoices = () => f.voice.replaceChildren(h("option", { value: "", text: "Chosen for you" }), ...(VOICES[String(langNow()).toLowerCase()] || VOICES.en).map(([v, t]) => h("option", { value: v, text: t })));
+  const cost = h("p", { class: "muted small", style: "margin:0", "aria-live": "polite" });
+  const showCost = () => { animUi.model = f.model.value; animUi.length = f.length.value; cost.textContent = `About $${animCost(f.model.value, f.length.value).toFixed(2)} for Claude's plan. The voice and the render cost nothing.`; };
+  f.language.addEventListener("change", fillVoices); f.channel.addEventListener("change", fillVoices);
+  [f.model, f.length].forEach((el) => el.addEventListener("change", showCost));
+  fillVoices(); showCost();
+
+  // the styles, as cards with a frame of each
+  const looks = h("div", { class: "anim-looks", role: "radiogroup", "aria-label": "Style" });
+  const paintLooks = () => looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
+    onclick: () => { animUi.look = k; paintLooks(); } },
+    h("img", { src: l.img, alt: "", loading: "lazy", width: 270, height: 480 }),
+    h("span", { class: "anim-look-text" }, h("span", { class: "anim-look-name", text: l.label }), h("span", { class: "muted small", text: l.text })))));
+  paintLooks();
+
+  const error = h("p", { class: "small idea-error", role: "alert" });
+  const go = h("button", { class: "btn primary", type: "submit", text: "Create animation" });
+  const form = h("form", { class: "card anim-form", onsubmit: async (e) => {
+    e.preventDefault();
+    error.textContent = "";
+    const picked = ideas.find((i) => i.id === f.idea.value);
+    const title = f.subject.value.trim();
+    if (!picked && !title) { error.textContent = "Type a subject, or pick one of your ideas."; f.subject.focus(); return; }
+    if (!f.channel.value) { error.textContent = "Choose a network first."; f.channel.focus(); return; }
+    go.disabled = true; go.textContent = "Starting…";
+    try {
+      const id = picked ? picked.id : (await q(sb.from("ideas").insert({ title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
+      await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
+        look: animUi.look, ai_model: f.model.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
+        music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask" } }, "explainer");
+      toast("Making your animation");
+      f.subject.value = ""; f.idea.value = "";
+      await reload();
+    } catch (err) { error.textContent = err.message; }
+    go.disabled = false; go.textContent = "Create animation";
+  } },
+    h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
+    h("div", { class: "eyebrow", text: "Style" }), looks,
+    h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
+    h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-length", "Length", f.length)),
+    h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
+    h("div", { class: "gen-checks" },
+      h("label", { class: "row ed-check" }, f.music, " Background music that fits the subject"),
+      h("label", { class: "row ed-check" }, f.next, " Schedule it in the next free slot if every check passes")),
+    h("p", { class: "muted small", style: "margin:0", text: "Always 9:16, with no sound effects. It takes a few minutes, and you can leave this page." }),
+    error, h("div", { class: "row gen-actions" }, go));
+
+  // the animations made so far
+  const list = h("div", { class: "idea-list", "aria-live": "off" });
+  let ideas = [], runs = [];
+  const load = async () => {
+    let iq = sb.from("ideas").select("id,title,video_title,channel_id,stage,created_at").not("stage", "in", "(archived,published)").order("created_at", { ascending: false }).limit(200);
+    if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
+    const [rows, all] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(200))]);
+    ideas = rows;
+    runs = all.filter((r) => r.options?.video_style === "explainer" && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
+  };
+  const reload = async () => { await load(); paint(); };
+  const stopRun = async (r) => { try { await aiCall({ action: "auto_stop", idea_id: r.idea_id, run_id: r.id }); await reload(); } catch (e) { toast(e.message); } };
+  const again = async (r) => {
+    try { await aiCall({ action: "start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } }, "explainer"); toast("Making it again"); await reload(); } catch (e) { toast(e.message); }
+  };
+  const row = (r) => {
+    const look = ANIM_LOOKS[r.options?.look] || ANIM_LOOKS.glow;
+    const plan = (r.steps || []).find((x) => x.key === "script" && x.status === "done")?.detail;
+    const lamp = isActiveRun(r) ? ["Working", "cue"] : r.status === "ready" ? ["Ready", "ready"] : r.status === "review" ? ["Ready, to check", "cue"] : r.status === "failed" ? ["Stopped", "alert"] : ["Cancelled", "idle"];
+    const acts = isActiveRun(r) ? [h("button", { class: "btn small ghost", type: "button", text: "Stop", onclick: () => stopRun(r) })]
+      : ["ready", "review"].includes(r.status) && r.project_id ? [h("a", { class: "btn small primary", href: `#/edit/${r.project_id}?tab=publish`, text: "Review video" })]
+        : [h("button", { class: "btn small", type: "button", text: "Try again", onclick: () => again(r) })];
+    return h("article", { class: "idea anim-run", "data-state": r.status },
+      h("img", { class: "anim-thumb", src: look.img, alt: "", width: 54, height: 96 }),
+      h("div", { class: "idea-main" },
+        h("a", { class: "title", dir: "auto", href: `#/studio/${r.idea_id}`, text: runTitle(r) }),
+        h("div", { class: "idea-meta muted small" }, h("span", { text: look.label }), h("span", { text: channelById(r.channel_id)?.title || "" }),
+          plan ? h("span", { text: plan }) : null, h("span", { text: ago(r.created_at) })),
+        isActiveRun(r) ? runProgress(r) : null,
+        r.status === "failed" ? h("p", { class: "small idea-error", role: "alert", text: r.error || "It stopped before the end." }) : null,
+        ["ready", "review"].includes(r.status) ? ideaNotes({ id: r.idea_id, ai: {} }, r) : null),
+      h("div", { class: "idea-side" }, h("span", { class: "idea-lamp small", "data-lamp": lamp[1], text: lamp[0] }), h("div", { class: "idea-acts" }, acts)));
+  };
+  function paint() {
+    const keep = f.idea.value;
+    f.idea.replaceChildren(h("option", { value: "", text: "None: use the subject typed here" }),
+      ...ideas.map((i) => h("option", { value: i.id, selected: i.id === keep, text: `${i.video_title || i.title}${channelById(i.channel_id) ? ` · ${channelById(i.channel_id).title}` : ""}` })));
+    list.replaceChildren(...(runs.length ? runs.map(row) : [empty("No animation yet. Pick a style and a subject above.")]));
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    if (runs.some(isActiveRun)) state.timer = setInterval(() => reload().catch(() => {}), 6000);
+  }
+  f.idea.addEventListener("change", () => {
+    const i = ideas.find((x) => x.id === f.idea.value);
+    if (i?.channel_id && !f.channel.value) { f.channel.value = i.channel_id; fillVoices(); }
+  });
+
+  await load();
+  paint();
+  return [pageHead("Animation", "Drawn videos: Claude writes the voice-over and draws every scene. No stock clips, no sound effects."),
+    form, h("section", { class: "anim-list", "aria-label": "Your animations" }, h("h2", { text: "Your animations" }), list)];
 };
 
 // ==================================================================
