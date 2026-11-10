@@ -94,26 +94,57 @@ async function writeScript(idea, channel, options) {
 
 /** Explainer style: Claude writes the voice-over and the drawing of each scene in one go (supabase/functions/explainer). */
 const MODEL_LABELS = { "claude-opus-5-5": "Claude Opus 5.5", "claude-fable-5-2": "Claude Fable 5.2", "claude-sonnet-5-5": "Claude Sonnet 5.5" };
+// lengths Claude writes chapter by chapter (supabase/functions/explainer/plan.ts LENGTHS)
+const CHAPTERED = { long5: 3, long8: 4, long10: 5 };
 async function planExplainer(idea, channel, options, note) {
   const model = MODEL_LABELS[options.ai_model] ? options.ai_model : "claude-opus-5-5";
-  const body = { action: "plan", idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow",
-    aspect: options.aspect === "16:9" ? "16:9" : "9:16" };
-  // a function gets about 150 s: less thinking, then the faster model, if the first answer takes too long
+  const aspect = options.aspect === "16:9" ? "16:9" : "9:16";
+  const body = { idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow", aspect };
+  // a function gets about 150 s: less thinking, then the faster model, if an answer takes too long
   const tries = [{}, { effort: "low" }, ...(model === "claude-sonnet-5-5" ? [] : [{ model: "claude-sonnet-5-5", effort: "low" }])];
-  let lastError = "";
-  for (const extra of tries) {
-    try {
-      if (extra.model || extra.effort) await note(`Trying again with ${extra.model ? MODEL_LABELS[extra.model] : "less thinking"}`);
-      const out = await call("explainer", { ...body, ...extra }, 160);
-      if (extra.model) await warn(`${MODEL_LABELS[model]} was too slow, so ${MODEL_LABELS[extra.model]} planned this video.`);
-      return `${out.scenes} scenes by ${MODEL_LABELS[out.model] || out.model}, $${Number(out.cost_usd || 0).toFixed(3)}`;
-    } catch (e) {
-      lastError = e.message;
-      log(`explainer ${JSON.stringify(extra)} failed: ${e.message}`);
-      if (/not allowed|limit reached|not set up|required|not found|Pick a network/i.test(e.message)) break;  // trying again would not help
+  const fallbacks = [];
+  const ask = async (extraBody, what) => {
+    let lastError = "";
+    for (const extra of tries) {
+      try {
+        if (extra.model || extra.effort) await note(`${what}: trying again with ${extra.model ? MODEL_LABELS[extra.model] : "less thinking"}`);
+        const out = await call("explainer", { ...body, ...extraBody, ...extra }, 160);
+        if (extra.model) fallbacks.push(what);
+        return out;
+      } catch (e) {
+        lastError = e.message;
+        log(`explainer ${extraBody.action} ${JSON.stringify(extra)} failed: ${e.message}`);
+        if (/not allowed|limit reached|not set up|required|not found|Pick a network|out of range/i.test(e.message)) break;  // trying again would not help
+      }
     }
+    throw new Error(`${what}: ${lastError || "failed"}`);
+  };
+  const tell = async () => { if (fallbacks.length) await warn(`${MODEL_LABELS[model]} was too slow for ${fallbacks.join(", ")}, so ${MODEL_LABELS["claude-sonnet-5-5"]} wrote ${fallbacks.length === 1 ? "it" : "them"}.`); };
+
+  if (!(aspect === "16:9" && CHAPTERED[options.length])) {
+    const out = await ask({ action: "plan" }, "The plan");
+    await tell();
+    return `${out.scenes} scenes by ${MODEL_LABELS[out.model] || out.model}, $${Number(out.cost_usd || 0).toFixed(3)}`;
   }
-  throw new Error(lastError || "The explainer plan failed");
+  // a long YouTube video: the outline, then the chapters three at a time (each one only reads the outline), then the whole
+  await note("Planning the chapters");
+  const { outline, cost_usd: outlineCost } = await ask({ action: "outline" }, "The outline");
+  const parts = new Array(outline.chapters.length);
+  let done = 0, cost = Number(outlineCost) || 0;
+  const queue = outline.chapters.map((_, i) => i);
+  await note(`Writing ${outline.chapters.length} chapters`);
+  await Promise.all(Array.from({ length: Math.min(3, queue.length) }, async () => {
+    while (queue.length) {
+      const i = queue.shift();
+      const out = await ask({ action: "chapter", outline, index: i }, `Chapter ${i + 1}`);
+      parts[i] = out.scenes;
+      cost += Number(out.cost_usd) || 0;
+      await note(`${++done} of ${outline.chapters.length} chapters written`);
+    }
+  }));
+  const saved = await call("explainer", { ...body, action: "assemble", outline, chapters: parts, cost_usd: cost }, 60);
+  await tell();
+  return `${saved.scenes} scenes in ${outline.chapters.length} chapters by ${MODEL_LABELS[model]}, $${cost.toFixed(3)}`;
 }
 
 async function reviewScript(ideaId) {

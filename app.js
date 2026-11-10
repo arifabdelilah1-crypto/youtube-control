@@ -1108,10 +1108,18 @@ const ANIM_LOOKS = {
   whiteboard: { label: "Whiteboard", text: "The same scenes drawn in marker on a white board, with hand-written titles.", img: "anim/whiteboard.jpg" },
   kinetic: { label: "Kinetic typography", text: "The narration itself, huge, a few words at a time, on colour blocks.", img: "anim/kinetic.jpg" },
 };
-const ANIM_LENGTHS = [["short45", "Short, about 45 s", 0.75], ["short60", "Short, about 60 s", 1], ["long3", "Long, about 3 min", 3]];
+// a Short stays under 3 minutes; a YouTube video past 3 minutes is written chapter by chapter
+const ANIM_LENGTHS = {
+  "9:16": [["short45", "About 45 s", 0.75], ["short60", "About 1 min", 1], ["short120", "About 2 min", 2]],
+  "16:9": [["short60", "About 1 min", 1], ["long3", "About 3 min", 3], ["long5", "About 5 min", 5], ["long8", "About 8 min", 8], ["long10", "About 10 min", 10]],
+};
 const ANIM_FORMATS = [["9:16", "Short · 9:16"], ["16:9", "YouTube · 16:9"]];
 const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45", aspect: "9:16" };
-const animCost = (model, length) => { const m = EXPLAINER_MODELS[model] || EXPLAINER_MODELS["claude-opus-5-5"]; return m.base + m.perMinute * (ANIM_LENGTHS.find(([k]) => k === length)?.[2] || 0.75); };
+// past 3 minutes each chapter re-reads the rules and the outline: measured about 1.45 times the per-minute price (Opus, 5 min: $0.47)
+const animCost = (model, length) => {
+  const m = EXPLAINER_MODELS[model] || EXPLAINER_MODELS["claude-opus-5-5"], minutes = Object.values(ANIM_LENGTHS).flat().find(([k]) => k === length)?.[2] || 0.75;
+  return m.base + m.perMinute * minutes * (minutes > 3 ? 1.45 : 1);
+};
 
 VIEWS.animation = async () => {
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint || null);
@@ -1122,14 +1130,20 @@ VIEWS.animation = async () => {
     state.channels.map((c) => h("option", { value: c.id, selected: state.channel === c.id, text: c.title })));
   f.language = h("select", { id: "a-language", class: "field" }, h("option", { value: "", text: "Network language" }), LANGS.filter(([v]) => VOICES[v]).map(([v, t]) => h("option", { value: v, text: t })));
   f.aspect = h("select", { id: "a-aspect", class: "field" }, ANIM_FORMATS.map(([v, t]) => h("option", { value: v, selected: animUi.aspect === v, text: t })));
-  f.length = h("select", { id: "a-length", class: "field" }, ANIM_LENGTHS.map(([v, t]) => h("option", { value: v, selected: animUi.length === v, text: t })));
+  f.length = h("select", { id: "a-length", class: "field" });
+  const fillLengths = (pick) => {
+    const list = ANIM_LENGTHS[f.aspect.value] || ANIM_LENGTHS["9:16"];
+    const keep = list.some(([v]) => v === pick) ? pick : list[f.aspect.value === "16:9" ? 1 : 0][0];
+    f.length.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === keep, text: t })));
+  };
+  fillLengths(animUi.length);
   const formatNote = h("p", { class: "muted small", style: "margin:0" });
   const showFormat = () => {
     animUi.aspect = f.aspect.value;
-    formatNote.textContent = f.aspect.value === "16:9" ? "A 16:9 video goes to YouTube as a normal video, never as a Short." : "A vertical Short for YouTube, TikTok and Reels.";
+    formatNote.textContent = f.aspect.value === "16:9" ? "A normal YouTube video, never a Short. Past 3 minutes, Claude writes it chapter by chapter." : "A vertical Short for YouTube, TikTok and Reels: under 3 minutes.";
   };
   // a YouTube video is usually the long one, a Short the short one
-  f.aspect.addEventListener("change", () => { f.length.value = f.aspect.value === "16:9" ? "long3" : "short45"; showFormat(); showCost(); });
+  f.aspect.addEventListener("change", () => { fillLengths(f.aspect.value === "16:9" ? "long3" : "short45"); showFormat(); showCost(); });
   f.model = h("select", { id: "a-model", class: "field" }, Object.entries(EXPLAINER_MODELS).map(([v, m]) => h("option", { value: v, selected: animUi.model === v, text: m.label })));
   f.voice = h("select", { id: "a-voice", class: "field" });
   f.music = h("input", { type: "checkbox", checked: true });
