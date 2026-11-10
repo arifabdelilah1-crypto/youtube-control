@@ -16,7 +16,7 @@ import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const FN = { ai: process.env.AI_FUNCTION || "ai", studio: process.env.STUDIO_FUNCTION || "studio", publish: "publish" };
+const FN = { ai: process.env.AI_FUNCTION || "ai", studio: process.env.STUDIO_FUNCTION || "studio", publish: "publish", explainer: "explainer" };
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -92,6 +92,29 @@ async function writeScript(idea, channel, options) {
   return "";
 }
 
+/** Explainer style: Claude writes the voice-over and the drawing of each scene in one go (supabase/functions/explainer). */
+const MODEL_LABELS = { "claude-opus-5-5": "Claude Opus 5.5", "claude-fable-5-2": "Claude Fable 5.2", "claude-sonnet-5-5": "Claude Sonnet 5.5" };
+async function planExplainer(idea, channel, options, note) {
+  const model = MODEL_LABELS[options.ai_model] ? options.ai_model : "claude-opus-5-5";
+  const body = { action: "plan", idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model };
+  // a function gets about 150 s: less thinking, then the faster model, if the first answer takes too long
+  const tries = [{}, { effort: "low" }, ...(model === "claude-sonnet-5-5" ? [] : [{ model: "claude-sonnet-5-5", effort: "low" }])];
+  let lastError = "";
+  for (const extra of tries) {
+    try {
+      if (extra.model || extra.effort) await note(`Trying again with ${extra.model ? MODEL_LABELS[extra.model] : "less thinking"}`);
+      const out = await call("explainer", { ...body, ...extra }, 160);
+      if (extra.model) await warn(`${MODEL_LABELS[model]} was too slow, so ${MODEL_LABELS[extra.model]} planned this video.`);
+      return `${out.scenes} scenes by ${MODEL_LABELS[out.model] || out.model}, $${Number(out.cost_usd || 0).toFixed(3)}`;
+    } catch (e) {
+      lastError = e.message;
+      log(`explainer ${JSON.stringify(extra)} failed: ${e.message}`);
+      if (/not allowed|limit reached|not set up|required|not found|Pick a network/i.test(e.message)) break;  // trying again would not help
+    }
+  }
+  throw new Error(lastError || "The explainer plan failed");
+}
+
 async function reviewScript(ideaId) {
   for (const extra of [{}, { fast: true }]) {
     const out = await call("ai", { action: "review", idea_id: ideaId, ...extra }).catch((e) => ({ ok: false, error: e.message }));
@@ -108,6 +131,7 @@ async function reviewScript(ideaId) {
 async function buildScenes(idea, channel, options, project) {
   const style = channel.video_style || {};
   const ai = idea.ai || {};
+  const drawn = options.video_style === "explainer";
   const brief = ai.brief || {};
   const language = options.language || ai.language || style.language || channel.language || "en";
   const voiceStyle = options.voice_style || brief.voice_style || "natural";
@@ -121,10 +145,13 @@ async function buildScenes(idea, channel, options, project) {
     sfx: { ...(base.sfx || {}), enabled: false },
     // nothing goes out by itself before the final checks
     publish: { ...(base.publish || {}), mode: "ask" },
+    // the Explainer style draws its scenes (video/Explainer.jsx): the plan without the narration, which is the script
+    ...(drawn ? { style: "explainer", explainer: { scenes: (ai.explainer?.scenes || []).map(({ narration: _n, ...rest }) => rest), model: ai.explainer?.model || null },
+      hook: { ...(base.hook || {}), enabled: false } } : { style: "classic" }),
   };
   const out = await call("studio", {
     action: "build", project_id: project?.id || null, idea_id: idea.id, channel_id: channel.id, title: idea.video_title || idea.title, script: idea.script,
-    language, voice, voice_rate: rate, aspect: options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: idea.search_terms || [],
+    language, voice, voice_rate: rate, aspect: drawn ? "9:16" : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn ? [] : idea.search_terms || [],
   });
   if (!out.project_id) throw new Error(out.error || "The scenes couldn't be built");
   if (out.status === "failed") throw new Error(out.error || "The voice job couldn't start");
@@ -316,6 +343,7 @@ async function renderVideo(projectId, ideaId) {
 
 /** Measures the finished file. Reports what it finds; a failed check keeps the video from going out. */
 async function finalChecks(job, project) {
+  const drawn = project.settings?.style === "explainer";
   if (!isVds(job.output_path) || !mediaReady()) return [{ name: "File", ok: false, detail: "The video isn't on the VDS, so it couldn't be measured." }];
   const file = path.join(os.tmpdir(), `${job.id}.mp4`);
   await downloadFromVds(vdsPath(job.output_path), file);
@@ -323,7 +351,8 @@ async function finalChecks(job, project) {
   const video = probe.streams.find((s) => s.codec_type === "video") || {};
   const hasAudio = probe.streams.some((s) => s.codec_type === "audio");
   const volume = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-af", "volumedetect", "-vn", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
-  const black = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-vf", "blackdetect=d=0.5:pix_th=0.05", "-an", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
+  const black = drawn ? "" : spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-vf", "blackdetect=d=0.5:pix_th=0.05", "-an", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
+  // (the Explainer style draws white lines on black: the black-screen check would flag every frame)
   const blackSeconds = [...black.matchAll(/black_duration:([\d.]+)/g)].reduce((t, m) => t + Number(m[1]), 0);
   // is the narrator really heard over the music? What a listener would catch, against the script
   const scenes = await sceneRows(project.id);
@@ -350,7 +379,15 @@ async function main(id) {
 
   // the network may have a script to keep, or none yet
   let idea = await one("ideas", run.idea_id);
-  if (options.keep_script && idea.script?.trim()) {
+  const drawn = options.video_style === "explainer";
+  if (drawn) {
+    // the drawing belongs to its words: a kept script keeps its plan only if that plan was made for it
+    const planned = idea.ai?.style === "explainer" && idea.ai?.explainer?.scenes?.length
+      && idea.ai.explainer.scenes.map((x) => `VO: ${x.narration}`).join("\n\n") === String(idea.script || "").trim();
+    if (options.keep_script && planned) await skip("script", "Keeping the explainer already planned");
+    else await step("script", (note) => planExplainer(idea, channel, options, note));
+    await skip("review", "The explainer plan keeps its own words");
+  } else if (options.keep_script && idea.script?.trim()) {
     await skip("script", "Keeping your script");
     await skip("review", "Keeping your script");
     if (!idea.ai?.brief) await call("ai", { action: "brief", idea_id: idea.id }).catch((e) => log(`brief: ${e.message}`));
@@ -366,17 +403,19 @@ async function main(id) {
   let projectId;
   await step("scenes", async () => { projectId = await buildScenes(idea, channel, options, earlier); return `Voice style: ${options.voice_style || brief.voice_style || "natural"}`; });
   const project = await one("video_projects", projectId);
-  await step("clips", (note) => chooseClips(projectId, brief.subject || idea.video_title || idea.title, project.aspect, note));
+  if (drawn) await skip("clips", "Drawn scenes, no clips");
+  else await step("clips", (note) => chooseClips(projectId, brief.subject || idea.video_title || idea.title, project.aspect, note));
   await step("voice", () => waitForVoice(projectId));
   const total = (await sceneRows(projectId)).reduce((t, s) => t + sceneSeconds(s), 0);
   if (options.music === false) await skip("music", "You chose no music");
   else await step("music", () => findMusic(projectId, brief, channel.id, total));
-  if (options.sounds) await step("sounds", () => addSounds(projectId, brief, total));
+  if (options.sounds && !drawn) await step("sounds", () => addSounds(projectId, brief, total));
   else {
     await rest("PATCH", "project_scenes", `?project_id=eq.${projectId}`, { sounds: [] });
     await skip("sounds", "No sound effects");
   }
-  await step("thumbnail", () => makeThumbnailChoice(projectId, idea, brief, project.aspect));
+  if (drawn) await skip("thumbnail", "The drawn frames are the cover");
+  else await step("thumbnail", () => makeThumbnailChoice(projectId, idea, brief, project.aspect));
   let job;
   await step("render", async () => { job = await renderVideo(projectId, idea.id); return `${Math.round(job.duration_s)} s`; });
   let checks = [];

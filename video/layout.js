@@ -167,6 +167,40 @@ function estimatedWords(text, seconds) {
   return parts.map((w, i) => ({ w, s: i * step, e: (i + 1) * step }));
 }
 
+const norm = (w) => String(w || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+export const EXPLAINER_LAYOUTS = ["title", "row", "journey", "compare", "checklist", "year", "stat", "quote"];
+const EXPLAINER_KINDS = ["icon", "person", "person_hat", "child"];
+
+/**
+ * One scene of the Explainer style: its drawing (settings.explainer.scenes[i], written by the AI) with the second each
+ * item appears, at its cue word, or spread over the scene when the word isn't heard (e.g. after the line was edited).
+ */
+export function explainerScene(plan, words, seconds) {
+  const p = plan && typeof plan === "object" ? plan : {};
+  const items = (Array.isArray(p.items) ? p.items : []).slice(0, 4);
+  let k = 0;
+  return {
+    layout: EXPLAINER_LAYOUTS.includes(p.layout) ? p.layout : "title",
+    heading: String(p.heading || "").slice(0, 80),
+    number: Math.round(Number(p.number) || 0),
+    number_prefix: String(p.number_prefix || "").slice(0, 4),
+    number_suffix: String(p.number_suffix || "").slice(0, 6),
+    highlight: Math.max(0, Math.min(100, Math.round(Number(p.highlight) || 0))),
+    items: items.map((it, j) => {
+      const want = norm(it?.cue);
+      let hit = -1;
+      if (want) {
+        for (let x = k; x < words.length; x++) { const w = norm(words[x].w); if (w === want || (want.length > 3 && w.startsWith(want))) { hit = x; break; } }
+        if (hit < 0) for (let x = 0; x < words.length; x++) if (norm(words[x].w).includes(want)) { hit = x; break; }
+      }
+      if (hit >= 0) k = hit + 1;
+      const at = hit >= 0 ? Math.max(0.15, words[hit].s - 0.12) : 0.4 + (j * seconds * 0.6) / Math.max(1, items.length);
+      return { kind: EXPLAINER_KINDS.includes(it?.kind) ? it.kind : "icon", icon: String(it?.icon || ""), label: String(it?.label || "").slice(0, 40),
+        count: Math.max(1, Math.min(6, Math.round(Number(it?.count) || 1))), at: Math.round(at * 1000) / 1000 };
+    }),
+  };
+}
+
 /**
  * @param project  video_projects row
  * @param scenes   project_scenes rows (any order)
@@ -176,6 +210,7 @@ export function buildProps(project, scenes, urls = {}) {
   const settings = mergeSettings(project.settings);
   const [width, height] = SIZES[project.aspect] || SIZES["9:16"];
   const ordered = [...scenes].sort((a, b) => a.idx - b.idx);
+  const drawn = project.settings?.style === "explainer" ? (Array.isArray(project.settings.explainer?.scenes) ? project.settings.explainer.scenes : []) : null;
   let from = 0;
   const out = ordered.map((s, i) => {
     const voiceOk = !!(s.voice_path && s.voice_text === s.text && urls.voice?.[s.id]);
@@ -194,7 +229,8 @@ export function buildProps(project, scenes, urls = {}) {
         const whole = Math.max(1, Math.ceil(Number(x.duration || 1) * FPS));
         return { url: x.url, volume: Math.min(Math.max(0, Number(x.volume ?? 0.6)), 1), start, frames: x.cut === false ? whole : Math.min(whole, dur - start), fade: x.cut !== false && whole > dur - start };
       }),
-      groups: captionGroups(words, settings.captions.words || 3),
+      groups: captionGroups(words, drawn ? 5 : settings.captions.words || 3),
+      ...(drawn ? { x: explainerScene(drawn[i], words, sceneSeconds(s)) } : {}),
       clip: {
         type: clip.type || "card",
         url: clip.path ? urls.media?.[clip.path] || null : clip.url || null,
@@ -208,6 +244,7 @@ export function buildProps(project, scenes, urls = {}) {
     return scene;
   });
   return {
+    style: drawn ? "explainer" : "classic",
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),
     rtl: RTL_LANGS.has(project.language),
     language: project.language,
@@ -232,7 +269,9 @@ export function preRenderCheck(project, scenes) {
   const outdated = ordered.filter((s) => s.voice_path && s.voice_text !== s.text).length;
   if (noVoice) issues.push({ level: "block", text: `${noVoice} scene(s) have no voice yet. Press “Update voice”.` });
   if (outdated) issues.push({ level: "block", text: `${outdated} scene(s) were edited after their voice was made. Press “Update voice”.` });
-  const cards = ordered.filter((s) => !s.clip || s.clip.type === "card").length;
+  const drawn = project.settings?.style === "explainer";
+  if (drawn && project.aspect !== "9:16") issues.push({ level: "block", text: "The Explainer style is drawn for 9:16 only. Choose 9:16 on its Studio page." });
+  const cards = drawn ? 0 : ordered.filter((s) => !s.clip || s.clip.type === "card").length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
   const credited = ordered.filter((s) => creditOf(s.clip)).length;
   if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage that gets a credit. The credit lines below go in the video description.` });

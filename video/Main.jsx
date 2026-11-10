@@ -4,6 +4,7 @@ import { AbsoluteFill, Easing, Html5Audio, Img, OffthreadVideo, Sequence, interp
 import { ARABIC, LATIN, useFonts } from "./fonts.js";
 import { COVER_FRAMES, MUSIC_UNDER_VOICE } from "./layout.js";
 import { Thumbnail } from "./Thumbnail.jsx";
+import { Explainer } from "./Explainer.jsx";
 
 // "static:sfx/x.mp3" = file shipped with the renderer bundle; anything else is a normal URL.
 const src = (u) => (u && u.startsWith("static:") ? staticFile(u.slice(7)) : u);
@@ -199,7 +200,12 @@ function Progress({ total, color }) {
   );
 }
 
+// The Explainer style draws its own scenes; every other video is footage + captions.
 export function Main(props) {
+  return props.style === "explainer" ? <Explainer {...props} /> : <Footage {...props} />;
+}
+
+function Footage(props) {
   const { scenes, captions, hook, progress, sfx, music, cover, rtl, width, height, totalFrames } = props;
   const { fps } = useVideoConfig();
   useFonts(props.assetBase);

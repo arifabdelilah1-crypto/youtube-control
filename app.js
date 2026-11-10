@@ -764,8 +764,8 @@ VIEWS.keyword = async (route) => {
 // ==================================================================
 // AI pipeline (DeepSeek): outlier snapshot -> format blueprint -> new script for the channel
 // ==================================================================
-async function aiCall(body) {
-  const { data, error } = await sb.functions.invoke("ai", { body });
+async function aiCall(body, fn = "ai") {
+  const { data, error } = await sb.functions.invoke(fn, { body });
   if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
   if (data?.error) throw new Error(data.error);
   return data;
@@ -875,6 +875,13 @@ function translateDialog(idea, onDone) {
 }
 
 /** The choices before generating, for one idea or several. Resolves when the runs have started. */
+// Who plans an Explainer video, and roughly what it costs (measured on test videos: thinking included).
+const EXPLAINER_MODELS = {
+  "claude-opus-5-5": { label: "Claude Opus 5.5 (recommended)", base: 0.05, perMinute: 0.06 },
+  "claude-fable-5-2": { label: "Claude Fable 5.2 (most careful, about 2× the price)", base: 0.12, perMinute: 0.14 },
+  "claude-sonnet-5-5": { label: "Claude Sonnet 5.5 (cheapest)", base: 0.025, perMinute: 0.03 },
+};
+
 function generateDialog(ideas, onDone) {
   const single = ideas.length === 1 ? ideas[0] : null;
   const start = single?.channel_id || (state.channel !== "all" ? state.channel : ideas.find((i) => i.channel_id)?.channel_id) || "";
@@ -900,6 +907,23 @@ function generateDialog(ideas, onDone) {
   const showLong = () => { longNote.style.display = f.aspect.value === "16:9" ? "" : "none"; };
   f.aspect.addEventListener("change", () => { f.length.value = f.aspect.value === "16:9" ? "long3" : "short45"; showLong(); });
   showLong();
+  // Explainer: drawn motion graphics (white glowing pictograms on black), planned by Claude, 9:16, no sound effects
+  f.look = h("select", { id: "g-look", class: "field" }, h("option", { value: "classic", text: "Clips and photos" }), h("option", { value: "explainer", text: "Explainer: drawn motion graphics" }));
+  f.model = h("select", { id: "g-model", class: "field" }, Object.entries(EXPLAINER_MODELS).map(([v, m]) => h("option", { value: v, text: m.label })));
+  const cost = h("div", { class: "muted small", "aria-live": "polite" });
+  const soundsRow = h("label", { class: "row ed-check" }, f.sounds, " Add sound effects where the words call for them");
+  const modelWrap = h("div", { class: "field-wrap" }, h("label", { for: "g-model", text: "AI that plans it" }), f.model, cost);
+  const showLook = () => {
+    const drawn = f.look.value === "explainer";
+    modelWrap.style.display = drawn ? "" : "none";
+    soundsRow.style.display = drawn ? "none" : "";
+    if (drawn) { f.aspect.value = "9:16"; showLong(); }
+    f.aspect.disabled = drawn;
+    const m = EXPLAINER_MODELS[f.model.value], minutes = { short45: 0.75, short60: 1, long3: 3 }[f.length.value] || 0.75;
+    cost.textContent = `About $${(m.base + m.perMinute * minutes).toFixed(2)} per video for the plan. Voice and render cost nothing.`;
+  };
+  [f.look, f.model, f.length].forEach((el) => el.addEventListener("change", showLook));
+  showLook();
   const error = h("p", { class: "small", role: "alert", style: "color:var(--tally);margin:0" });
   const go = h("button", { class: "btn primary", type: "submit", text: single ? "Generate video" : `Generate ${ideas.length} videos` });
   const dialog = h("dialog", { class: "gen-dialog", "aria-labelledby": "gen-title" });
@@ -909,13 +933,16 @@ function generateDialog(ideas, onDone) {
     if (!f.channel.value) { error.textContent = "Choose a network first."; f.channel.focus(); return; }
     go.disabled = true; go.textContent = "Starting…"; error.textContent = "";
     const options = { language: f.language.value || null, aspect: f.aspect.value, length: f.length.value, angle: single ? f.angle.value.trim() || null : null, voice: f.voice.value || null, voice_style: f.style.value || null,
-      music: f.music.checked, sounds: f.sounds.checked, keep_script: f.keep.checked, publish: f.next.checked ? "next" : "ask" };
+      music: f.music.checked, sounds: f.look.value === "classic" && f.sounds.checked, keep_script: f.keep.checked, publish: f.next.checked ? "next" : "ask",
+      video_style: f.look.value, ai_model: f.look.value === "explainer" ? f.model.value : null };
     const failed = [];
     for (const i of ideas) {
       try {
         // a new idea exists from here on: cancelling the dialog leaves nothing behind
         if (!i.id) i.id = (await q(sb.from("ideas").insert({ title: i.title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
-        await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options });
+        // an Explainer video starts from its own function (supabase/functions/explainer), the others from "ai"
+        if (options.video_style === "explainer") await aiCall({ action: "start", idea_id: i.id, channel_id: f.channel.value, options }, "explainer");
+        else await aiCall({ action: "auto_start", idea_id: i.id, channel_id: f.channel.value, options });
       } catch (err) { failed.push(err.message); }
     }
     if (failed.length) { error.textContent = failed[0]; go.disabled = false; go.textContent = "Try again"; onDone(false); return; }
@@ -925,12 +952,13 @@ function generateDialog(ideas, onDone) {
     h("h2", { id: "gen-title", text: single ? "Generate this video" : `Generate ${ideas.length} videos` }),
     h("p", { class: "muted small", style: "margin:0", dir: "auto", text: single ? single.video_title || single.title : "With the same choices for each." }),
     h("div", { class: "form-grid" }, field("g-channel", "Network", f.channel), field("g-language", "Language", f.language), field("g-aspect", "Format", f.aspect), field("g-length", "Length", f.length)),
+    h("div", { class: "form-grid" }, field("g-look", "Style", f.look), modelWrap),
     longNote,
     single ? field("g-angle", "Angle", f.angle) : null,
     h("div", { class: "form-grid" }, field("g-voice", "Voice", f.voice), field("g-style", "Voice style", f.style)),
     h("div", { class: "gen-checks" },
       h("label", { class: "row ed-check" }, f.music, " Background music that fits the subject"),
-      h("label", { class: "row ed-check" }, f.sounds, " Add sound effects where the words call for them"),
+      soundsRow,
       withScript ? h("label", { class: "row ed-check" }, f.keep, single ? " Keep the script I already have" : ` Keep the scripts already written (${withScript})`) : null,
       h("label", { class: "row ed-check" }, f.next, " Schedule it in the next free slot if every check passes")),
     h("p", { class: "muted small", style: "margin:0", text: "It takes a few minutes, and you can leave this page. Unless you tick the last box, it then waits for you to check it." }),

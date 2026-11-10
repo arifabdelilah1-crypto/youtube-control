@@ -140,6 +140,7 @@ Secrets:
 | Supabase Edge Function secrets | `UNSPLASH_ACCESS_KEY` | Free Access Key from unsplash.com/developers (photos; 50 requests an hour until Unsplash approves the app, then 1,000) |
 | Supabase Edge Function secrets | `PEXELS_API_KEY` | Free key from pexels.com/api (clip search; 200 requests an hour, raised for free on request) |
 | Supabase Edge Function secrets | `DEEPSEEK_API_KEY`, `DEEPSEEK_MODEL` | DeepSeek key for AI script; model is optional (default `deepseek-chat`) |
+| Supabase Edge Function secrets | `ANTHROPIC_API_KEY` | Claude key for the Explainer style (`supabase/functions/explainer`: Claude plans the voice-over and the drawing of each scene; about $0.10 a Short with Opus 5.5) |
 | GitHub repo secrets | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Used by the voice and render workflows |
 | GitHub repo secrets and Supabase Edge Function secrets | `MEDIA_URL`, `MEDIA_SECRET` | The VDS video store: `https://control.homerecipe.casa/media.php` and the shared secret in `/home/controlapp/.media-secret` |
 
