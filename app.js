@@ -1266,6 +1266,161 @@ VIEWS.animation = async () => {
 };
 
 // ==================================================================
+// Brain: one per network plus a general one (All networks). You talk to it; it reads the app, remembers, adds ideas,
+// and proposes videos you approve (supabase/functions/brain, supabase/migrations/0030_brain.sql).
+// ==================================================================
+const BRAIN_PROVIDERS = [["deepseek", "DeepSeek"], ["anthropic", "Claude"], ["openai", "OpenAI"]];
+const MEMORY_KINDS = { rule: "Rule", preference: "Preference", fact: "Fact", lesson: "Lesson", profile: "Profile", event: "Event" };
+const brainUi = { mem: "all", models: {} };
+const TOOL_NAMES = { network_overview: "read the stats", top_videos: "read the top videos", list_ideas: "read the ideas", recent_videos: "read the videos",
+  calendar: "read the calendar", ai_costs: "read the costs", trending_now: "read the trends", search_memory: "searched its memory", remember: "remembered",
+  create_ideas: "added ideas", propose_video: "proposed a video" };
+
+/** A little Markdown, built as DOM (never as HTML): paragraphs, lists, **bold**. */
+function mdLite(text) {
+  const inline = (s) => String(s).split(/(\*\*[^*]+\*\*)/g).filter(Boolean).map((part) => (/^\*\*[^*]+\*\*$/.test(part) ? h("strong", { text: part.slice(2, -2) }) : document.createTextNode(part)));
+  const out = [];
+  let list = null;
+  for (const line of String(text || "").split("\n")) {
+    const item = line.match(/^\s*(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (item) { if (!list) { list = h(/^\s*\d/.test(line) ? "ol" : "ul", {}); out.push(list); } list.append(h("li", {}, inline(item[1]))); continue; }
+    list = null;
+    if (line.trim()) out.push(h("p", {}, inline(line.replace(/^#+\s*/, ""))));
+  }
+  return out;
+}
+
+VIEWS.brain = async () => {
+  const channelId = state.channel !== "all" ? state.channel : null;
+  const findBrain = async () => (await q(channelId ? sb.from("brains").select("*").eq("channel_id", channelId) : sb.from("brains").select("*").is("channel_id", null)))[0];
+  // made the first time it's opened (the app also makes one for each network it logs an event for)
+  let brain = await findBrain();
+  if (!brain) { try { brain = await q(sb.from("brains").insert({ channel_id: channelId }).select().single()); } catch { brain = await findBrain(); } }
+  const [keys, msgsDesc, mems, acts] = await Promise.all([
+    q(sb.rpc("ai_key_status")).catch(() => []),
+    q(sb.from("brain_messages").select("*").eq("brain_id", brain.id).order("created_at", { ascending: false }).limit(60)),
+    q(sb.from("brain_memory").select("*").eq("brain_id", brain.id).order("created_at", { ascending: false }).limit(300)),
+    q(sb.from("brain_actions").select("*").eq("brain_id", brain.id).order("created_at", { ascending: false }).limit(80)),
+  ]);
+  const msgs = [...msgsDesc].reverse();
+  brain.provider ||= "deepseek";
+  const net = channelById(channelId);
+  const hasKey = keys.some((k) => k.provider === brain.provider);
+  const provLabel = Object.fromEntries(BRAIN_PROVIDERS)[brain.provider];
+
+  // ---- the conversation ----
+  const thread = h("div", { class: "brain-thread", "aria-live": "polite" });
+  const actionCard = (a) => {
+    const done = { done: ["Started", "ok"], rejected: ["Declined", "short"], failed: ["Failed", "crit"] }[a.status];
+    return h("div", { class: "brain-action" },
+      h("div", { class: "small", style: "font-weight:600", text: "Proposed" }), h("div", { class: "small", dir: "auto", text: a.summary }),
+      done ? h("div", { class: "row" }, h("span", { class: `pill ${done[1]}`, text: done[0] }), a.status === "failed" ? h("span", { class: "small idea-error", text: a.result?.error || "" }) : null,
+        a.status === "done" ? h("a", { class: "small", href: a.args?.kind === "clips" ? "#/ideas" : "#/animation", text: "Follow it" }) : null)
+        : h("div", { class: "row" },
+          h("button", { class: "btn small primary", type: "button", text: "Yes, make it", onclick: (e) => decide(a, true, e.target) }),
+          h("button", { class: "btn small ghost", type: "button", text: "No", onclick: (e) => decide(a, false, e.target) })));
+  };
+  const bubble = (m) => {
+    const mine = m.role === "user";
+    const meta = m.meta || {};
+    const tools = [...new Set((meta.tools || []).map((t) => TOOL_NAMES[t.name] || t.name))];
+    return h("div", { class: `brain-msg ${mine ? "me" : "it"}` },
+      h("div", { class: "brain-text", dir: "auto" }, mine ? h("p", { text: m.content }) : mdLite(m.content)),
+      !mine && (tools.length || meta.model) ? h("div", { class: "brain-meta muted small" },
+        [tools.length ? `It ${tools.join(", ")}` : null, meta.model, meta.cost_usd != null ? `$${Number(meta.cost_usd).toFixed(3)}` : null].filter(Boolean).join(" · ")) : null,
+      ...acts.filter((a) => a.message_id === m.id).map(actionCard));
+  };
+  const paintThread = () => {
+    thread.replaceChildren(...(msgs.length ? msgs.map(bubble) : [h("div", { class: "brain-empty" },
+      h("p", { class: "muted", text: channelId ? `This is ${net?.title}'s brain. It reads the network's numbers, ideas, videos and calendar, remembers what you tell it, adds ideas and proposes videos you approve.`
+        : "This is the general brain: it sees every network. Each network also has its own brain: pick it in the bar above." }),
+      h("div", { class: "row" }, (channelId ? ["Learn this network: read its numbers and top videos, then remember what matters", "How are we doing this month?", "Give me 5 ideas for this week", "What did the app do lately?"]
+        : ["Which network is doing best this month?", "What did the app do lately?", "What did the AI cost this month?"]).map((t) => h("button", { class: "chip-tab", type: "button", text: t, onclick: () => send(t) }))))]));
+    // after the page is on screen, so the height is known
+    setTimeout(() => { thread.scrollTop = thread.scrollHeight; }, 0);
+  };
+  const input = h("textarea", { class: "field brain-input", rows: 2, dir: "auto", placeholder: hasKey ? "Ask, or give an order… (Enter to send)" : "Add an AI key first", disabled: !hasKey,
+    onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } } });
+  const sendBtn = h("button", { class: "btn primary", type: "submit", text: "Send", disabled: !hasKey });
+  const error = h("p", { class: "small idea-error", role: "alert" });
+  const send = async (text) => {
+    text = String(text || "").trim();
+    if (!text || sendBtn.disabled) return;
+    error.textContent = "";
+    msgs.push({ id: `tmp${Date.now()}`, role: "user", content: text }, { id: "thinking", role: "assistant", content: "Thinking…", meta: {} });
+    input.value = ""; sendBtn.disabled = true; input.disabled = true; paintThread();
+    try { await aiCall({ action: "chat", brain_id: brain.id, message: text }, "brain"); render(); }
+    catch (err) { msgs.splice(-1, 1); paintThread(); error.textContent = err.message; sendBtn.disabled = false; input.disabled = false; input.value = text; }
+  };
+  const decide = async (a, approve, btn) => {
+    btn.disabled = true;
+    try { await aiCall({ action: "decide", action_id: a.id, approve }, "brain"); toast(approve ? "Started: follow it on the Animation or Ideas page" : "Declined"); render(); }
+    catch (err) { toast(err.message); render(); }
+  };
+  const form = h("form", { class: "brain-form", onsubmit: (e) => { e.preventDefault(); send(input.value); } }, input, sendBtn);
+  paintThread();
+
+  // ---- its settings ----
+  const prov = h("select", { id: "b-provider", class: "field" }, BRAIN_PROVIDERS.map(([v, t]) => h("option", { value: v, selected: brain.provider === v, text: `${t}${keys.some((k) => k.provider === v) ? "" : " (no key)"}` })));
+  const model = h("select", { id: "b-model", class: "field" });
+  const fillModels = async () => {
+    const p = prov.value;
+    model.replaceChildren(h("option", { value: brain.provider === p && brain.model ? brain.model : "", text: brain.provider === p && brain.model ? brain.model : "Default" }));
+    if (!keys.some((k) => k.provider === p)) return;
+    try {
+      const out = brainUi.models[p] || (brainUi.models[p] = await aiCall({ action: "models", provider: p }, "brain"));
+      const cur = brain.provider === p ? brain.model : null;
+      model.replaceChildren(h("option", { value: "", text: `Default${out.default ? ` (${out.default})` : ""}` }), ...out.models.map((m) => h("option", { value: m, selected: m === cur, text: m })));
+    } catch { /* keeps the current value */ }
+  };
+  prov.addEventListener("change", fillModels);
+  fillModels();
+  const rules = h("textarea", { id: "b-rules", class: "field", rows: 4, dir: "auto", placeholder: "Standing instructions, e.g. Always answer in French. Our audience is 18-30 in Morocco. Never more than 2 videos a day.", value: brain.instructions || "" });
+  rules.value = brain.instructions || "";
+  const settings = h("section", { class: "card brain-card" }, h("h2", { text: "Its settings" }),
+    h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: "b-provider", text: "AI" }), prov), h("div", { class: "field-wrap" }, h("label", { for: "b-model", text: "Model" }), model)),
+    h("div", { class: "field-wrap" }, h("label", { for: "b-rules", text: "Standing instructions" }), rules),
+    h("div", { class: "row" }, h("button", { class: "btn small primary", type: "button", text: "Save", onclick: async () => {
+      await q(sb.from("brains").update({ provider: prov.value, model: model.value || null, instructions: rules.value.trim() }).eq("id", brain.id));
+      toast("Saved"); render();
+    } }), h("span", { class: "muted small", text: "It proposes, you decide. (More autonomy comes with the calendar.)" })));
+
+  // ---- its memory ----
+  const memList = h("div", { class: "brain-mem-list" });
+  const memTabs = h("div", { class: "seg", role: "group", "aria-label": "Memory" });
+  const paintMem = () => {
+    memTabs.replaceChildren(...[["all", "All"], ["pinned", "Pinned"], ["notes", "Notes"], ["event", "Events"]].map(([k, t]) => h("button", { type: "button", "aria-pressed": String(brainUi.mem === k), text: t, onclick: () => { brainUi.mem = k; paintMem(); } })));
+    const shown = mems.filter((m) => brainUi.mem === "all" || (brainUi.mem === "pinned" ? m.pinned : brainUi.mem === "event" ? m.kind === "event" : m.kind !== "event"));
+    memList.replaceChildren(...(shown.length ? shown.slice(0, 120).map((m) => h("div", { class: "brain-mem" },
+      h("div", { class: "row small", style: "gap:6px" }, h("span", { class: `pill ${m.kind === "rule" ? "warn" : "short"}`, text: MEMORY_KINDS[m.kind] || m.kind }), h("span", { class: "muted", text: ago(m.created_at) }),
+        h("button", { class: "btn small ghost icon", type: "button", title: m.pinned ? "Unpin" : "Pin: always in view", "aria-label": m.pinned ? "Unpin" : "Pin", text: m.pinned ? "★" : "☆",
+          onclick: async () => { await q(sb.from("brain_memory").update({ pinned: !m.pinned }).eq("id", m.id)); m.pinned = !m.pinned; paintMem(); } }),
+        h("button", { class: "btn small ghost icon", type: "button", title: "Forget", "aria-label": "Forget", onclick: async () => {
+          if (!confirm("Forget this?")) return; await q(sb.from("brain_memory").delete().eq("id", m.id)); mems.splice(mems.indexOf(m), 1); paintMem(); } }, icon("i-x"))),
+      h("div", { class: "small", dir: "auto", text: m.content }))) : [h("p", { class: "muted small", text: "Nothing here yet." })]));
+  };
+  paintMem();
+  const note = h("input", { class: "field", dir: "auto", placeholder: "Teach it something, e.g. Our best hours are 19h-21h", "aria-label": "New memory" });
+  const noteKind = h("select", { class: "field", "aria-label": "Kind", style: "flex:0 0 auto" }, ["rule", "preference", "fact", "lesson"].map((k) => h("option", { value: k, text: MEMORY_KINDS[k] })));
+  const memory = h("section", { class: "card brain-card" }, h("div", { class: "card-head" }, h("h2", { text: `Its memory · ${mems.length}` }), memTabs),
+    h("form", { class: "row", onsubmit: async (e) => {
+      e.preventDefault(); const t = note.value.trim(); if (!t) return;
+      const row = await q(sb.from("brain_memory").insert({ brain_id: brain.id, kind: noteKind.value, content: t.slice(0, 600), source: "user", pinned: noteKind.value === "rule" }).select().single());
+      mems.unshift(row); note.value = ""; paintMem();
+    } }, note, noteKind, h("button", { class: "btn small", type: "submit", text: "Add" })),
+    memList);
+
+  return [
+    pageHead("Brain", channelId ? `${net?.title}'s brain · ${provLabel}` : `General brain, for every network · ${provLabel}`),
+    hasKey ? null : h("div", { class: "card brain-nokey", role: "status" }, h("strong", { text: `No ${provLabel} key yet.` }),
+      h("span", { text: " Paste one in Settings, then come back. Or switch this brain to an AI you have a key for." }), h("a", { class: "btn small", href: "#/settings", text: "Go to AI keys" })),
+    h("div", { class: "brain" },
+      h("section", { class: "card brain-chat" }, thread, error, form),
+      h("div", { class: "brain-side" }, settings, memory)),
+  ];
+};
+
+// ==================================================================
 // Costs: what the AI calls cost, per network, task and model (supabase/migrations/0029_ai_costs.sql sums ai_runs).
 // ==================================================================
 // $ per million tokens, from the providers' price pages (checked 10 Nov 2026). DeepSeek doubles on weekday peak hours
@@ -1283,7 +1438,7 @@ const usd = (v) => (!v ? "$0" : v >= 100 ? `$${Math.round(v)}` : v >= 1 ? `$${v.
 const AI_TASKS = {
   script: "Writing scripts", review: "Reviewing scripts", clips: "Choosing clips", clip_check: "Checking clips by eye", sounds: "Choosing sound effects",
   thumbnail: "Thumbnail text", brief: "Production brief", blueprint: "Outlier blueprints", hooks: "Other openings", translate: "Translations",
-  trends: "Picking trends", trend_ideas: "Trends into ideas", explainer: "Animation plans", explainer_outline: "Animation outlines", explainer_chapter: "Animation chapters",
+  trends: "Picking trends", trend_ideas: "Trends into ideas", brain: "Brain chat", explainer: "Animation plans", explainer_outline: "Animation outlines", explainer_chapter: "Animation chapters",
   clipper: "Clipper", clipper_memory: "Clipper", clipper_narrate: "Clipper", clipper_lines: "Clipper",
 };
 const COST_PERIODS = [["7", "7 days"], ["30", "30 days"], ["month", "This month"], ["90", "90 days"]];
@@ -3695,7 +3850,38 @@ VIEWS.settings = async (route) => {
           } }));
       }))) : empty("No music yet. Upload a few tracks per mood (epic, phonk, oriental…)."));
 
-  return [pageHead("Settings", "Niches, channels, music and background jobs."), nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
+  // the Brain's AI keys: saved encrypted on the server (Vault), never shown again; the page only sees the last 4 characters
+  const keys = await q(sb.rpc("ai_key_status")).catch(() => []);
+  const keyRow = (prov, label, hint, url) => {
+    const k = keys.find((x) => x.provider === prov);
+    const input = h("input", { class: "field", type: "password", autocomplete: "off", spellcheck: "false", "aria-label": `${label} API key`,
+      placeholder: k ? `Paste a new ${label} key to replace it` : hint, style: "flex:1 1 260px" });
+    const msg = h("span", { class: "small idea-error", role: "status" });
+    return h("form", { class: "key-row", onsubmit: async (e) => {
+      e.preventDefault();
+      const v = input.value.trim();
+      if (!v) { input.focus(); return; }
+      msg.textContent = "";
+      try { await q(sb.rpc("set_ai_key", { p_provider: prov, p_key: v })); input.value = ""; toast(`${label} key saved`); render(); }
+      catch (err) { msg.textContent = err.message; }
+    } },
+      h("div", { class: "key-name" }, h("strong", { text: label }), h("span", { class: `pill ${k ? "ok" : "short"}`, text: k ? `Saved ••••${k.last4}` : "Not set" }),
+        k ? h("span", { class: "muted small", text: `updated ${ago(k.updated_at)}` }) : null),
+      h("div", { class: "row" }, input, h("button", { class: "btn small primary", type: "submit", text: k ? "Replace" : "Save" }),
+        k ? h("button", { class: "btn small ghost", type: "button", text: "Remove", onclick: async () => {
+          if (!confirm(`Remove the ${label} key? The brains that use it stop answering until a new one is saved.`)) return;
+          await q(sb.rpc("set_ai_key", { p_provider: prov, p_key: "" })); toast(`${label} key removed`); render();
+        } }) : null,
+        h("a", { class: "small", href: url, target: "_blank", rel: "noopener", text: "Get a key" })),
+      msg);
+  };
+  const keysBox = h("section", { class: "card", id: "ai-keys" },
+    h("div", { class: "card-head" }, h("h2", { text: "AI keys" }), h("span", { class: "muted small", text: "For the Brain. Kept encrypted on the server: once saved, a key can't be shown again, only replaced or removed." })),
+    keyRow("deepseek", "DeepSeek", "Paste a DeepSeek key (sk-…)", "https://platform.deepseek.com/api_keys"),
+    keyRow("openai", "OpenAI", "Paste an OpenAI key (sk-…)", "https://platform.openai.com/api-keys"),
+    keyRow("anthropic", "Claude", "Paste a Claude key (sk-ant-…)", "https://console.anthropic.com/settings/keys"));
+
+  return [pageHead("Settings", "AI keys, niches, channels, music and background jobs."), keysBox, nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
 };
 
 // ==================================================================
