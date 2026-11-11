@@ -38,6 +38,7 @@ export const LOOKS: Record<string, string> = {
   sunset: "soft white line pictograms on a purple-to-orange sunset sky",
   badges: "flat design: each pictogram in white on a bright colour disc, navy text, rounded labels",
   notes: "pictograms hand-drawn on a cork board, labels written on yellow sticky notes",
+  minimal: "minimal motivational line-art: thin white pictograms on pure black, often inside concentric rings, one key phrase per scene in wide-spaced capitals, soft fades between scenes",
 };
 const Item = z.object({
   kind: z.enum(["icon", "person", "person_hat", "child"]),
@@ -81,7 +82,9 @@ function format(aspect: string) {
 function rules(language: string, look: string) {
   const kinetic = look === "kinetic"
     ? "\nKinetic typography: short punchy sentences (4 to 10 words), concrete words that look good huge on screen. The heading and the labels hold the scene's key words: those are the ones that light up.\n"
-    : "";
+    : look === "minimal"
+      ? "\nMinimal style: the heading is the only line of text on screen, so every scene has one: its key phrase in 2 to 4 words (\"IGNORE EVERYONE\", \"BUILDING YOUR FUTURE\"). Short, calm, confident sentences.\n"
+      : "";
   return `You write faceless educational explainer videos in a minimalist motion-graphics style:
 ${LOOKS[look] || LOOKS.glow}.${kinetic}
 Everything you write is in ${LANGS[language] || "English"} (narration, headings, labels, title, description), except the icon names.

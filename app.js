@@ -1106,6 +1106,7 @@ VIEWS.ideas = async () => {
 // ==================================================================
 const ANIM_LOOKS = {
   glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
+  minimal: { label: "Minimal", text: "Thin white lines on pure black, one short phrase per scene in spaced capitals, rings and soft fades." },
   whiteboard: { label: "Whiteboard", text: "Drawn in marker on a white board, with hand-written titles." },
   kinetic: { label: "Kinetic text", text: "The narration itself, huge, a few words at a time, on colour blocks." },
   blueprint: { label: "Blueprint", text: "White lines on a blue engineering grid, in a technical face." },

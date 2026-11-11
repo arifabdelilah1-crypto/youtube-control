@@ -4,10 +4,11 @@
 //   whiteboard  the same scenes drawn in marker on paper, in a hand-written face
 //   kinetic     kinetic typography: the narration itself, a few words at a time, big, on colour blocks that change per scene
 //   and ten more themes of the same scenes (THEMES): blueprint, chalkboard, neon, comic, terminal, vintage, clean, sunset,
-//   badges (icons on flat colour discs), notes (sticky notes on a cork board)
+//   badges (icons on flat colour discs), notes (sticky notes on a cork board), minimal (thin white lines on pure black, one
+//   key phrase per scene in spaced capitals at the bottom, concentric rings, progress bars, soft fades instead of the camera)
 import React from "react";
 import { AbsoluteFill, Easing, Html5Audio, Sequence, interpolate, random, spring, useCurrentFrame, useVideoConfig } from "remotion";
-import { ARABIC, COMIC, HAND, LATIN, MONO, SERIF, useFonts } from "./fonts.js";
+import { ARABIC, COMIC, HAND, LATIN, LIGHT, MONO, SERIF, useFonts } from "./fonts.js";
 import { ICONS } from "./explainer-icons.js";
 import { EXPLAINER_LOOKS, MUSIC_UNDER_VOICE } from "./layout.js";
 
@@ -16,7 +17,7 @@ const MOVE = 20;      // frames of camera travel between scenes
 // Where things go, for a vertical Short and for a horizontal YouTube video. `ground` is where figures stand (no line
 // is drawn: each one gets a soft shadow).
 const GEO = {
-  portrait: { W: 1080, H: 1920, ground: 1250, head: 470, side: 70, capY: 1590, capSize: 50, capSide: 70,
+  portrait: { W: 1080, H: 1920, ground: 1250, head: 470, side: 70, capY: 1590, capSize: 50, capSide: 70, phrase: 1480, phraseSize: 46,
     title: { y: 560, yAlone: 760, size: 96, item: 300 },
     journey: { head: 400, ax: 210, bx: 870, ay: 980, ctrl: 440, lift: 120, size: 190, mover: 150 },
     compare: { lineTop: 700, lineBelow: 140, vsY: 900, ax: 265, bx: 815, size: 210 },
@@ -27,7 +28,7 @@ const GEO = {
     row: [220, 220, 180, 150],
     kin: { tag: 250, num: 520, numSize: 200, icon: 430, iconSize: 260, words: 1120, side: 70, width: 900, max: 230 },
   },
-  landscape: { W: 1920, H: 1080, ground: 770, head: 190, side: 230, capY: 935, capSize: 44, capSide: 340,
+  landscape: { W: 1920, H: 1080, ground: 770, head: 190, side: 230, capY: 935, capSize: 44, capSide: 340, phrase: 905, phraseSize: 38,
     title: { y: 300, yAlone: 470, size: 90, item: 250 },
     journey: { head: 150, ax: 420, bx: 1500, ay: 540, ctrl: 230, lift: 100, size: 170, mover: 130 },
     compare: { lineTop: 300, lineBelow: 80, vsY: 520, ax: 620, bx: 1300, size: 190 },
@@ -59,7 +60,8 @@ const THEMES = {
   },
 };
 // every theme starts from these and changes what makes it itself
-const BASE = { font: "sans", upper: true, pill: "round", heading: "rise", underline: false, overlay: null, badges: null, tilt: 0 };
+const BASE = { font: "sans", upper: true, pill: "round", heading: "rise", underline: false, overlay: null, badges: null, tilt: 0,
+  captions: true, transition: "slide", rings: false, statBar: false, baseline: false };
 const hardShadow = "drop-shadow(5px 5px 0 #111)";
 Object.assign(THEMES, {
   blueprint: { background: "linear-gradient(180deg, #123F7C 0%, #0C2F60 100%)", base: "#0C2F60", ink: "#EAF2FF", accent: "#FFD166", dim: "rgba(234,242,255,.4)",
@@ -92,6 +94,9 @@ Object.assign(THEMES, {
   badges: { background: "#F2F6F5", base: "#F2F6F5", ink: "#1D3557", accent: "#E76F51", dim: "rgba(29,53,87,.3)", pillBg: "#1D3557", glow: "none", glowAccent: "none",
     shadow: "radial-gradient(closest-side, rgba(29,53,87,.14), rgba(29,53,87,0))", iconW: 1.6, personW: 3.4, dust: null, upper: false, pill: "solid",
     badges: ["#F4A261", "#2A9D8F", "#E9C46A", "#8ECAE6", "#E76F51"] },
+  minimal: { background: "#000000", base: "#000000", ink: "#F2F2F2", accent: "#FFFFFF", dim: "rgba(242,242,242,.35)", pillBg: "transparent",
+    glow: "none", glowAccent: "none", shadow: "none", iconW: 1.0, personW: 2.3, dust: "#4A4A4A", pill: "plain", heading: "caption", font: "light", quiet: true,
+    captions: false, transition: "fade", rings: true, statBar: true, baseline: true },
   notes: { background: "#B98A57", base: "#B98A57", ink: "#2B2B2B", accent: "#C1121F", dim: "rgba(43,43,43,.35)", pillBg: "#FFF27A",
     glow: "drop-shadow(0 2px 0 rgba(0,0,0,.12))", glowAccent: "drop-shadow(0 2px 0 rgba(0,0,0,.12))",
     shadow: "radial-gradient(closest-side, rgba(0,0,0,.22), rgba(0,0,0,0))", iconW: 1.7, personW: 3.6, dust: null, font: "hand", upper: false, hand: true,
@@ -157,6 +162,7 @@ const PILLS = {
   soft: () => ({ border: "none", borderRadius: 999 }),
   solid: () => ({ border: "none", borderRadius: 999, color: "#FFFFFF" }),
   note: () => ({ border: "none", borderRadius: 2, boxShadow: "0 8px 14px rgba(0,0,0,.28)", color: "#2B2B2B", padding: "16px 26px 18px" }),
+  plain: () => ({ border: "none", padding: "2px 4px", fontSize: 22, letterSpacing: 5, opacity: 0.8 }),
 };
 function Pill({ text, s, accent, room }) {
   if (!text) return null;
@@ -231,6 +237,13 @@ function Heading({ text, t, at = 0.15, y = G.head, size = 74, accent = false }) 
   if (!text) return null;
   const words = text.split(/\s+/);
   const fs = size * (T.font === "mono" ? 0.82 : TS());
+  if (T.heading === "caption") {
+    const p = progress(t, at, 0.6);
+    return (
+      <div style={{ position: "absolute", left: G.side, right: G.side, top: G.phrase, transform: `translateY(calc(-50% + ${(1 - p) * 14}px))`, opacity: p,
+        textAlign: "center", fontFamily: FONT, fontSize: G.phraseSize, letterSpacing: "0.3em", lineHeight: 1.4, textTransform: "uppercase", color: accent ? T.accent : T.ink }}>{text}</div>
+    );
+  }
   if (T.heading === "type") {
     const shown = Math.floor(interpolate(t, [at, at + text.length * 0.035], [0, text.length], clamp));
     const blink = Math.floor(t * 2.5) % 2 === 0 || shown < text.length;
@@ -263,13 +276,44 @@ function Underline({ t, at }) {
   );
 }
 
-function Counter({ value, prefix, suffix, t, from, y, size }) {
+function Counter({ value, prefix, suffix, t, from, y, size: big }) {
+  const size = T.quiet ? big * 0.6 : big;
   const p = progress(t, 0.2, 1.4);
   const n = Math.round(interpolate(p, [0, 1], [from, value]));
   return (
     <div style={{ position: "absolute", left: 0, right: 0, top: y, transform: "translateY(-50%)", textAlign: "center", fontFamily: FONT, fontSize: size * TS(),
       color: T.accent, filter: T.glowAccent, letterSpacing: 4, fontVariantNumeric: "tabular-nums" }}>
       {prefix}{n}{suffix}
+    </div>
+  );
+}
+
+// concentric rings around the main pictogram (minimal): they draw on, then breathe
+function Rings({ cx, cy, r, t }) {
+  const p = progress(t, 0.05, 0.9);
+  return (
+    <svg width={G.W} height={G.H} style={{ position: "absolute", left: 0, top: 0, overflow: "visible" }}>
+      {[1, 1.38, 1.8].map((k, i) => (
+        <circle key={i} cx={cx} cy={cy} r={r * k * (1 + 0.012 * Math.sin(t * 1.6 + i))} fill="none" stroke={T.ink} strokeWidth={i ? 1.5 : 2.5}
+          opacity={[0.95, 0.4, 0.18][i]} pathLength={1} strokeDasharray={1} strokeDashoffset={1 - progress(t, 0.05 + i * 0.12, 0.9)} style={{ transform: `scale(${interpolate(p, [0, 1], [0.92, 1])})`, transformOrigin: `${cx}px ${cy}px` }} />
+      ))}
+    </svg>
+  );
+}
+// a thin line under standing things (minimal), only as wide as they are
+function Baseline({ x0, x1, t }) {
+  const p = progress(t, 0.1, 0.7);
+  return <div style={{ position: "absolute", left: x0, top: G.ground + 6, width: (x1 - x0) * p, height: 2, background: T.dim }} />;
+}
+// the minimal look's statistic: a long bar filling up
+function StatBar({ s, t, W, y }) {
+  const pct = String(s.number_suffix).includes("%");
+  const share = Math.max(0, Math.min(1, pct ? s.number / 100 : s.highlight ? s.highlight / 100 : 1));
+  const p = progress(t, 0.5, 1.6);
+  const w = W * (G.W > G.H ? 0.42 : 0.66), h = G.W > G.H ? 34 : 44;
+  return (
+    <div style={{ position: "absolute", left: (W - w) / 2, top: y, width: w, height: h, border: `3px solid ${T.ink}`, borderRadius: 6, padding: 6, boxSizing: "border-box" }}>
+      <div style={{ width: `${share * p * 100}%`, height: "100%", background: T.ink, borderRadius: 2 }} />
     </div>
   );
 }
@@ -284,8 +328,9 @@ function SceneBody({ s, t, frame, fps, icons }) {
       const it = its[0], L = G.title;
       return (
         <>
+          {T.rings && it ? <Rings cx={W / 2} cy={G.ground - L.item * 0.55} r={L.item * 0.78} t={t} /> : null}
           <Heading text={s.heading} t={t} y={it ? L.y : L.yAlone} size={L.size} />
-          {it ? <Standing x={W / 2} item={it} {...P} size={L.item} accent /> : null}
+          {it ? <Standing x={W / 2} item={T.rings ? { ...it, label: "" } : it} {...P} size={L.item} accent /> : null}
         </>
       );
     }
@@ -335,6 +380,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
           <div style={{ position: "absolute", left: W / 2 - 2, top: L.lineTop, width: 4, height: (G.ground - L.lineTop + L.lineBelow) * lp, background: `repeating-linear-gradient(${T.ink} 0 8px, transparent 8px 26px)`, filter: T.glow }} />
           <div style={{ position: "absolute", left: W / 2, top: L.vsY, transform: `translate(-50%,-50%) scale(${lp})`, width: 96, height: 96, borderRadius: 99,
             border: `3px solid ${T.accent}`, background: T.base, color: T.accent, fontFamily: FONT, fontSize: 34, display: "flex", alignItems: "center", justifyContent: "center", filter: T.glowAccent }}>VS</div>
+          {T.baseline ? <Baseline x0={L.ax - L.size * 0.8} x1={L.bx + L.size * 0.8} t={t} /> : null}
           {a ? <Standing x={L.ax} item={a} {...P} size={L.size} /> : null}
           {b ? <Standing x={L.bx} item={b} {...P} size={L.size} accent /> : null}
         </>
@@ -357,7 +403,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
                   <path d="M6.5 12.5 L10.5 16.5 L17.5 8" stroke={T.accent} strokeWidth={2.4} pathLength={1} strokeDasharray={1} strokeDashoffset={1 - c} />
                 </svg>
                 {it.kind === "icon" ? <Draw nodes={icons[it.icon] || icons.sparkles} size={86} p={p} /> : <Person kind={it.kind} height={110} p={p} bob={0} />}
-                <div style={{ fontFamily: FONT, fontSize: 50 * TS(), color: T.ink, filter: T.glow, textTransform: T.upper ? "uppercase" : "none", letterSpacing: T.upper ? 1.5 : 0, lineHeight: 1.1 }}>{it.label}</div>
+                <div style={{ fontFamily: FONT, fontSize: (T.quiet ? 36 : 50) * TS(), ...(T.quiet ? { letterSpacing: "0.18em" } : {}), color: T.ink, filter: T.glow, textTransform: T.upper ? "uppercase" : "none", letterSpacing: T.upper ? 1.5 : 0, lineHeight: 1.1 }}>{it.label}</div>
               </div>
             );
           })}
@@ -376,6 +422,15 @@ function SceneBody({ s, t, frame, fps, icons }) {
     case "stat": {
       const pct = String(s.number_suffix).includes("%"); const n = pct ? 100 : Math.max(1, Math.min(100, s.number)); const hl = s.highlight || (pct ? s.number : 0);
       const L = G.stat, cols = L.cols, gap = L.gap, gx = (W - (cols - 1) * gap) / 2, gy = L.gy;
+      if (T.statBar) {
+        return (
+          <>
+            <Heading text={s.heading} t={t} y={L.head} size={58} />
+            <Counter value={s.number} prefix={s.number_prefix} suffix={s.number_suffix} t={t} from={0} y={L.y} size={L.size} />
+            <StatBar s={s} t={t} W={W} y={gy + gap} />
+          </>
+        );
+      }
       return (
         <>
           <Heading text={s.heading} t={t} y={L.head} size={58} />
@@ -414,6 +469,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
       return (
         <>
           <Heading text={s.heading} t={t} />
+          {T.baseline && list.length ? <Baseline x0={W / (list.length + 1) * 0.55} x1={W - W / (list.length + 1) * 0.55} t={t} /> : null}
           {list.map((it, i) => <Standing key={i} x={(W / (list.length + 1)) * (i + 1)} item={it} {...P} size={size} room={W / (list.length + 1)} />)}
         </>
       );
@@ -556,7 +612,7 @@ export function Explainer(props) {
   T = THEMES[look] || THEMES.glow;
   G = Number(props.width) > Number(props.height) ? GEO.landscape : GEO.portrait;
   useFonts(props.assetBase);
-  const face = { hand: HAND, mono: MONO, serif: SERIF, comic: COMIC }[T.font];
+  const face = { hand: HAND, mono: MONO, serif: SERIF, comic: COMIC, light: LIGHT }[T.font];
   FONT = rtl ? `"${ARABIC}", "${face || LATIN}", sans-serif` : face ? `"${face}", "${LATIN}", "${ARABIC}", sans-serif` : `"${LATIN}", "${ARABIC}", sans-serif`;
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -593,6 +649,26 @@ export function Explainer(props) {
     );
   }
 
+  if (T.transition === "fade") {
+    const prev = idx > 0 ? scenes[idx - 1] : null;
+    const fade = idx === 0 ? 1 : interpolate(frame - cur.from, [0, 12], [0, 1], { ...clamp, easing: ease });
+    const layer = (s, o, k) => (
+      <div key={k} style={{ position: "absolute", left: 0, top: 0, width: G.W, height: G.H, opacity: o, direction: rtl ? "rtl" : "ltr",
+        transform: `scale(${interpolate(o, [0, 1], [k === "cur" ? 1.025 : 0.985, 1])})` }}>
+        <SceneBody s={s} t={(frame - s.from) / fps} frame={frame - s.from} fps={fps} icons={icons} />
+      </div>
+    );
+    return (
+      <AbsoluteFill style={{ background: T.background, direction: "ltr" }}>
+        <Overlay camX={0} />
+        <Dust camX={0} total={G.W} />
+        {prev && fade < 1 ? layer(prev, 1 - fade, "prev") : null}
+        {layer(cur, fade, "cur")}
+        {T.captions ? <div style={{ direction: rtl ? "rtl" : "ltr" }}><Captions words={cur.words} t={(frame - cur.from) / fps} /></div> : null}
+        {audio}
+      </AbsoluteFill>
+    );
+  }
   const mp = idx === 0 ? 1 : interpolate(frame - cur.from, [0, MOVE], [0, 1], { ...clamp, easing: ease });
   const W = G.W;
   const camX = (idx - 1 + mp) * W;
@@ -612,7 +688,7 @@ export function Explainer(props) {
           );
         })}
       </AbsoluteFill>
-      <div style={{ direction: rtl ? "rtl" : "ltr" }}><Captions words={cur.words} t={(frame - cur.from) / fps} /></div>
+      {T.captions ? <div style={{ direction: rtl ? "rtl" : "ltr" }}><Captions words={cur.words} t={(frame - cur.from) / fps} /></div> : null}
       {audio}
     </AbsoluteFill>
   );
