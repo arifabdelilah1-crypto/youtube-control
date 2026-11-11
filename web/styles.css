@@ -895,6 +895,13 @@ button.tr-q:hover { color: var(--signal); }
 .key-row { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; border-top: 1px solid var(--line-soft); }
 .key-row:first-of-type { border-top: 0; }
 .key-name { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* AI connection (MCP) */
+#ai-connection > .row { padding: 14px 0 4px; }
+.mcp-reveal { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; padding: 14px 16px; border-radius: var(--r-lg); background: var(--preview-soft); border: 1px solid var(--line); }
+.mcp-reveal p { margin: 0; }
+.mcp-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mcp-copy-row { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.mcp-code { flex: 1; min-width: 0; font: 400 12px/1.5 var(--mono); background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; overflow-wrap: anywhere; user-select: all; }
 .brain { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 20px; align-items: start; }
 .brain-chat { display: flex; flex-direction: column; gap: 12px; height: calc(100vh - 210px); min-height: 460px; padding: 0; overflow: hidden; }
 .brain-thread { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 20px 20px 4px; }

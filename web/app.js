@@ -3882,8 +3882,57 @@ VIEWS.settings = async (route) => {
     keyRow("openai", "OpenAI", "Paste an OpenAI key (sk-…)", "https://platform.openai.com/api-keys"),
     keyRow("anthropic", "Claude", "Paste a Claude key (sk-ant-…)", "https://console.anthropic.com/settings/keys"));
 
-  return [pageHead("Settings", "AI keys, niches, channels, music and background jobs."), keysBox, nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
+  return [pageHead("Settings", "AI keys, AI connection, niches, channels, music and background jobs."), keysBox, await mcpBox(), nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
 };
+
+// The AI connection (MCP): tokens that let Claude or another AI app use the app from outside (supabase/functions/mcp).
+// A token is shown once, right after it's made; the server keeps only its hash.
+const MCP_URL = `${SUPABASE_URL}/functions/v1/mcp`;
+let mcpJustMade = null;
+async function mcpBox() {
+  const tokens = await q(sb.rpc("mcp_token_list")).catch(() => null);
+  const made = mcpJustMade; mcpJustMade = null;
+  const copyLine = (label, text) => h("div", { class: "mcp-copy" },
+    h("div", { class: "small muted", text: label }),
+    h("div", { class: "mcp-copy-row" }, h("code", { class: "mcp-code", text }),
+      h("button", { class: "btn small", type: "button", text: "Copy", "aria-label": `Copy: ${label}`, onclick: async () => {
+        try { await navigator.clipboard.writeText(text); toast("Copied"); } catch { toast("Copy isn't allowed here: select the text instead"); }
+      } })));
+  const reveal = made ? h("div", { class: "mcp-reveal", role: "status" },
+    h("div", { style: "font-weight:600", text: `Your token "${made.name}": copy it now, it won't be shown again.` }),
+    copyLine("Claude Code: run this once in a terminal", `claude mcp add --scope user --transport http short-viral ${MCP_URL} --header "Authorization: Bearer ${made.token}"`),
+    copyLine("claude.ai or Claude Desktop: Customize → Connectors → Add custom connector, paste this URL, Authentication: No sign-in", `${MCP_URL}/${made.token}`),
+    copyLine("Another AI app: this URL, and this header", MCP_URL),
+    copyLine("Header", `Authorization: Bearer ${made.token}`),
+    h("p", { class: "small muted", text: "Anyone with this token can read the app, add ideas and memories, and propose videos. It can't make, publish or delete anything: videos wait for a yes on the Brain page. Revoke it below if it leaks." })) : null;
+
+  const name = h("input", { class: "field", maxlength: "60", autocomplete: "off", "aria-label": "Token name", placeholder: "Name it, e.g. Claude Code on my Mac", style: "flex:1 1 240px" });
+  const msg = h("span", { class: "small idea-error", role: "status" });
+  const form = h("form", { class: "row", onsubmit: async (e) => {
+    e.preventDefault();
+    const v = name.value.trim();
+    if (!v) { name.focus(); return; }
+    msg.textContent = "";
+    try { mcpJustMade = { name: v, token: await q(sb.rpc("create_mcp_token", { p_name: v })) }; render(); }
+    catch (err) { msg.textContent = err.message; }
+  } }, name, h("button", { class: "btn small primary", type: "submit", text: "Make a token" }), msg);
+
+  const list = tokens === null ? h("p", { class: "small idea-error", text: "The AI connection isn't set up on the server yet." })
+    : tokens.length ? h("div", {}, ...tokens.map((t) => h("div", { class: "listrow" },
+      h("div", { style: "flex:1 1 220px;min-width:0" },
+        h("div", { class: "row", style: "gap:8px" }, h("strong", { text: t.name }), h("span", { class: "pill short mono", text: `${t.prefix}…` })),
+        h("div", { class: "muted small", text: `made by ${t.email} ${ago(t.created_at)} · ${t.last_used_at ? `last used ${ago(t.last_used_at)} (${fmt(t.uses)} call${Number(t.uses) === 1 ? "" : "s"})` : "never used"}` })),
+      h("button", { class: "btn small ghost", type: "button", text: "Revoke", onclick: async () => {
+        if (!confirm(`Revoke "${t.name}"? Every AI app that uses it loses access at once.`)) return;
+        try { await q(sb.rpc("revoke_mcp_token", { p_id: t.id })); toast("Token revoked"); render(); } catch (err) { toast(err.message); }
+      } }))))
+    : h("p", { class: "muted small", text: "No token yet." });
+
+  return h("section", { class: "card", id: "ai-connection" },
+    h("div", { class: "card-head" }, h("h2", { text: "AI connection (MCP)" }),
+      h("span", { class: "muted small", text: "Let Claude or another AI app use Short Viral from outside: read networks, ideas, videos, stats and memory, add ideas, and propose videos that wait for your yes on the Brain page." })),
+    reveal, form, list);
+}
 
 // ==================================================================
 // Actions
