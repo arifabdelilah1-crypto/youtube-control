@@ -267,6 +267,8 @@ async function waitForVoice(projectId) {
   const deadline = Date.now() + 25 * 60e3;
   let retried = false;
   while (Date.now() < deadline) {
+    // a stopped video frees its GitHub slot at once: the voice job may be waiting for that slot
+    if ((await one("video_runs", run.id))?.status === "cancelled") throw new Stopped();
     const project = await one("video_projects", projectId);
     if (project.status === "ready") return "Voice ready";
     if (project.status === "failed") {
