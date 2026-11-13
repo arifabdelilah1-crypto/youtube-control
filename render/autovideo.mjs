@@ -353,9 +353,10 @@ async function renderVideo(projectId, ideaId) {
   const scenes = await sceneRows(projectId);
   const blocks = preRenderCheck(project, scenes).filter((x) => x.level === "block");
   if (blocks.length) throw new Error(blocks.map((b) => b.text).join(" "));
-  // the licences need these lines in the description
+  // the licences need these lines in the description (a drawn Explainer shows no footage or photo: only the music is credited)
+  const drawnOnly = project.settings?.style === "explainer";
   const idea = await one("ideas", ideaId);
-  await rest("PATCH", "ideas", `?id=eq.${ideaId}`, { video_description: withCredits(idea.video_description || "", creditsText(scenes, project.settings?.music, project.settings?.thumbnail)) });
+  await rest("PATCH", "ideas", `?id=eq.${ideaId}`, { video_description: withCredits(idea.video_description || "", creditsText(drawnOnly ? [] : scenes, project.settings?.music, drawnOnly ? null : project.settings?.thumbnail)) });
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const started = await call("studio", { action: "render", project_id: projectId });
