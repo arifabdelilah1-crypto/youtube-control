@@ -6,6 +6,8 @@
 //   and ten more themes of the same scenes (THEMES): blueprint, chalkboard, neon, comic, terminal, vintage, clean, sunset,
 //   badges (icons on flat colour discs), notes (sticky notes on a cork board), minimal (thin white lines on pure black, one
 //   key phrase per scene in spaced capitals at the bottom, concentric rings, progress bars, soft fades instead of the camera)
+//   and three stickman looks, where people are moving stick figures (StickPerson: they wave, point, think, cheer or walk):
+//   stick (black ink on white paper), stickcolor (coloured figures on warm yellow, speech-bubble labels), stickdoodle (blue pen on lined notebook paper)
 import React from "react";
 import { AbsoluteFill, Easing, Html5Audio, Sequence, interpolate, random, spring, useCurrentFrame, useVideoConfig } from "remotion";
 import { ARABIC, COMIC, HAND, LATIN, LIGHT, MONO, SERIF, useFonts } from "./fonts.js";
@@ -102,6 +104,19 @@ Object.assign(THEMES, {
     shadow: "radial-gradient(closest-side, rgba(0,0,0,.22), rgba(0,0,0,0))", iconW: 1.7, personW: 3.6, dust: null, font: "hand", upper: false, hand: true,
     pill: "note", overlay: "cork", tilt: -2 },
 });
+Object.assign(THEMES, {
+  stick: { background: "radial-gradient(ellipse at 50% 42%, #FFFFFF 0%, #F7F5EF 70%, #ECE8DE 100%)", base: "#F7F5EF", ink: "#141414", accent: "#E63946",
+    dim: "rgba(20,20,20,.3)", pillBg: "rgba(255,255,255,.92)", glow: "none", glowAccent: "none",
+    shadow: "radial-gradient(closest-side, rgba(20,20,20,.16), rgba(20,20,20,0))", iconW: 1.7, personW: 4.2, dust: null, font: "hand", upper: false, hand: true,
+    pill: "marker", underline: true, overlay: "grain", tilt: -1, stick: true },
+  stickcolor: { background: "radial-gradient(ellipse at 50% 42%, #FFF6D6 0%, #FFE9A8 75%, #FFD970 100%)", base: "#FFE9A8", ink: "#1D1A2F", accent: "#E63946",
+    dim: "rgba(29,26,47,.3)", pillBg: "#FFFFFF", glow: "none", glowAccent: "none",
+    shadow: "radial-gradient(closest-side, rgba(29,26,47,.18), rgba(29,26,47,0))", iconW: 2, personW: 5, dust: null, font: "hand", upper: false, hand: true,
+    pill: "bubble", tilt: 0, stick: true, people: ["#E63946", "#1D7AE0", "#2A9D8F", "#F08A24", "#8E44AD", "#1D1A2F"] },
+  stickdoodle: { background: "#FDFCF7", base: "#FDFCF7", ink: "#1F3FA6", accent: "#D62828", dim: "rgba(31,63,166,.3)", pillBg: "rgba(253,252,247,.95)",
+    glow: "none", glowAccent: "none", shadow: "radial-gradient(closest-side, rgba(31,63,166,.14), rgba(31,63,166,0))", iconW: 1.6, personW: 3.8, dust: null,
+    font: "hand", upper: false, hand: true, pill: "marker", underline: true, overlay: "lined", tilt: -1.5, stick: true },
+});
 for (const k of Object.keys(THEMES)) THEMES[k] = { ...BASE, ...(k === "whiteboard" ? { font: "hand", upper: false, underline: true, tilt: -1.5, pill: "marker" } : {}), ...THEMES[k] };
 let T = THEMES.glow;
 const TS = () => ({ hand: 1.12, comic: 1.3, mono: 0.9, serif: 1.04 }[T.font] || 1);
@@ -137,7 +152,54 @@ const PERSON = [
 ];
 const HAT = [["path", { d: "M15 5 H45" }], ["path", { d: "M21 5 V-9 H39 V5" }]];
 
-function Person({ kind, height, p, bob, color }) {
+// ---------- stick figures (the stickman looks): a pose per figure, chosen from its label so it stays the same all scene ----------
+const POSES = ["wave", "point", "think", "cheer", "walk"];  // every figure acts; "idle" is only while it is being drawn
+const hashOf = (seed, salt = 0) => { let x = 2166136261 ^ salt; for (const ch of String(seed || "")) { x ^= ch.charCodeAt(0); x = Math.imul(x, 16777619); } return x >>> 0; };
+const poseOf = (seed) => POSES[hashOf(seed) % POSES.length];
+/** A limb from (x, y): two segments of `len`, angles in degrees from straight down (positive = to the viewer's right). */
+function limb(x, y, a1, a2, len) {
+  const r = (d) => (d * Math.PI) / 180;
+  const ex = x + Math.sin(r(a1)) * len, ey = y + Math.cos(r(a1)) * len;
+  const hx = ex + Math.sin(r(a1 + a2)) * len, hy = ey + Math.cos(r(a1 + a2)) * len;
+  return `M${x} ${y} L${ex.toFixed(1)} ${ey.toFixed(1)} L${hx.toFixed(1)} ${hy.toFixed(1)}`;
+}
+function StickPerson({ kind, height, p, color, pose, frame, seed }) {
+  const h = (kind === "child" ? height * 0.68 : height) * 1.3;  // thin figures need more room than the filled silhouettes
+  const t = (frame + seed * 13) / 30;  // seconds, offset per figure so groups don't move in step
+  const sw = Math.sin(t * 2.2), wv = Math.sin(t * 9);
+  const live = p >= 0.98;               // drawn first, then it moves
+  const P = live ? pose : "idle";
+  let L = [-38, 14], R = [38, -14], LL = [-16, 6], RL = [16, -6], lean = 0, jump = 0;
+  if (P === "idle") { L = [-36 - sw * 5, 16]; R = [36 + sw * 5, -16]; }
+  if (P === "wave") { L = [-36, 14]; R = [140, 30 + wv * 30]; }
+  if (P === "point") { L = [-30, 12]; R = [95, -4]; lean = 4; }
+  if (P === "think") { L = [-30, 20]; R = [35, 140]; }
+  if (P === "cheer") { L = [-125 - wv * 8, -25]; R = [125 + wv * 8, 25]; jump = Math.max(0, Math.sin(t * 6)) * 7; }
+  if (P === "walk") { L = [-22 + sw * 30, 18]; R = [22 + sw * 30, -18]; LL = [-sw * 24, Math.max(0, sw) * 20]; RL = [sw * 24, Math.max(0, -sw) * 20]; }
+  const c = color || T.ink;
+  const nodes = [
+    ["circle", { cx: 30, cy: 11, r: 12 }],
+    ["path", { d: `M30 23 L${30 + lean} 64` }],
+    ["path", { d: limb(30 + lean * 0.3, 32, L[0], L[1], 15) }],
+    ["path", { d: limb(30 + lean * 0.3, 32, R[0], R[1], 15) }],
+    ["path", { d: limb(30 + lean, 64, LL[0], LL[1], 24) }],
+    ["path", { d: limb(30 + lean, 64, RL[0], RL[1], 24) }],
+    ...(kind === "person_hat" ? [["path", { d: "M16 2 H44" }], ["path", { d: "M21 2 V-12 H39 V2" }]] : []),
+  ];
+  const face = p > 0.6 && h > 120;
+  return (
+    <div style={{ transform: `translateY(${-jump}px)`, height: h, width: h * 0.5, display: "flex", alignItems: "flex-end" }}>
+      <svg width={h * 0.5} height={h} viewBox="0 -14 60 128" fill="none" stroke={c} strokeWidth={T.personW} strokeLinecap="round" strokeLinejoin="round" style={{ filter: T.glow, overflow: "visible" }}>
+        {nodes.map(([tag, attrs], i) => React.createElement(tag, { key: i, ...attrs, pathLength: 1, strokeDasharray: 1, strokeDashoffset: i < 2 ? 1 - p : live ? 0 : 1 - p }))}
+        {face ? <g stroke="none" fill={c} opacity={Math.min(1, (p - 0.6) * 3)}><circle cx={26} cy={9.5} r={2} /><circle cx={34} cy={9.5} r={2} /></g> : null}
+        {face ? <path d={P === "think" ? "M26 16.5 H34" : P === "cheer" ? "M25 14.5 Q30 21 35 14.5" : "M25.5 15 Q30 19 34.5 15"} stroke={c} strokeWidth={T.personW * 0.45} opacity={Math.min(1, (p - 0.6) * 3)} /> : null}
+      </svg>
+    </div>
+  );
+}
+
+function Person({ kind, height, p, bob, color, pose, frame = 0, seed = 0 }) {
+  if (T.stick) return <StickPerson kind={kind} height={height} p={p} color={color} pose={pose || "idle"} frame={frame} seed={seed} />;
   const nodes = kind === "person_hat" ? [...PERSON, ...HAT] : PERSON;
   const h = kind === "child" ? height * 0.66 : height;
   return (
@@ -163,6 +225,7 @@ const PILLS = {
   solid: () => ({ border: "none", borderRadius: 999, color: "#FFFFFF" }),
   note: () => ({ border: "none", borderRadius: 2, boxShadow: "0 8px 14px rgba(0,0,0,.28)", color: "#2B2B2B", padding: "16px 26px 18px" }),
   plain: () => ({ border: "none", padding: "2px 4px", fontSize: 22, letterSpacing: 5, opacity: 0.8 }),
+  bubble: (c) => ({ border: `4px solid ${T.ink}`, borderRadius: "28px 28px 28px 6px", color: T.ink, boxShadow: `4px 4px 0 ${T.ink}` }),
 };
 function Pill({ text, s, accent, room }) {
   if (!text) return null;
@@ -202,7 +265,8 @@ function Thing({ item, t, frame, fps, icons, size = 230, accent }) {
       <div style={{ display: "flex", alignItems: "flex-end" }}>
         {Array.from({ length: n }, (_, i) => (
           <div key={i} style={{ marginLeft: i ? -h * 0.16 : 0, opacity: n > 1 && i % 2 ? 0.75 : 1 }}>
-            <Person kind={item.kind} height={h} p={progress(t, item.at + i * 0.12, 0.8)} bob={Math.sin((frame + i * 9) / 11) * 2.5} />
+            <Person kind={item.kind} height={h} p={progress(t, item.at + i * 0.12, 0.8)} bob={Math.sin((frame + i * 9) / 11) * 2.5}
+              frame={frame} seed={i} pose={poseOf(`${item.who ?? item.label}${i}`)} color={T.people ? T.people[hashOf(`${item.who ?? item.label}${i}`, 3) % T.people.length] : undefined} />
           </div>
         ))}
       </div>
@@ -224,7 +288,7 @@ function Standing({ x, item, room, ...rest }) {
     <div style={{ position: "absolute", left: x, top: G.ground - 2, transform: "translateX(-50%)" }}>
       <div style={{ position: "absolute", top: -14, left: "50%", width: wide, height: 28, transform: `translateX(-50%) scaleX(${p})`, background: T.shadow }} />
       <div style={{ position: "absolute", bottom: 0, left: "50%", transform: "translateX(-50%)" }}>
-        <Thing {...rest} item={{ ...item, label: "" }} />
+        <Thing {...rest} item={{ ...item, label: "", who: item.label }} />
       </div>
       <div style={{ position: "absolute", top: 40, left: "50%", transform: "translateX(-50%)" }}>
         <Pill text={item.label} s={pop(rest.frame, rest.fps, item.at + 0.25)} accent={rest.accent} room={room} />
@@ -402,7 +466,7 @@ function SceneBody({ s, t, frame, fps, icons }) {
                   <rect x={2} y={2} width={20} height={20} rx={5} stroke={c > 0.99 ? T.accent : T.ink} strokeWidth={1.6} />
                   <path d="M6.5 12.5 L10.5 16.5 L17.5 8" stroke={T.accent} strokeWidth={2.4} pathLength={1} strokeDasharray={1} strokeDashoffset={1 - c} />
                 </svg>
-                {it.kind === "icon" ? <Draw nodes={icons[it.icon] || icons.sparkles} size={86} p={p} /> : <Person kind={it.kind} height={110} p={p} bob={0} />}
+                {it.kind === "icon" ? <Draw nodes={icons[it.icon] || icons.sparkles} size={86} p={p} /> : <Person kind={it.kind} height={110} p={p} bob={0} frame={frame} pose="idle" />}
                 <div style={{ fontFamily: FONT, fontSize: (T.quiet ? 36 : 50) * TS(), ...(T.quiet ? { letterSpacing: "0.18em" } : {}), color: T.ink, filter: T.glow, textTransform: T.upper ? "uppercase" : "none", letterSpacing: T.upper ? 1.5 : 0, lineHeight: 1.1 }}>{it.label}</div>
               </div>
             );
@@ -510,6 +574,9 @@ function Overlay({ camX }) {
         backgroundSize: "200px 200px, 200px 200px, 40px 40px, 40px 40px", backgroundPosition: `${-camX}px 0, ${-camX}px 0, ${-camX}px 0, ${-camX}px 0` }} />;
     case "scan":
       return <AbsoluteFill style={{ background: "repeating-linear-gradient(0deg, rgba(0,0,0,.28) 0 2px, transparent 2px 5px), radial-gradient(ellipse at 50% 50%, transparent 55%, rgba(0,0,0,.55) 100%)" }} />;
+    case "lined":
+      return <AbsoluteFill style={{ backgroundImage: "linear-gradient(90deg, transparent 118px, rgba(214,40,40,.45) 118px, rgba(214,40,40,.45) 121px, transparent 121px), repeating-linear-gradient(180deg, transparent 0 62px, rgba(31,63,166,.16) 62px 64px)",
+        backgroundPosition: `${-camX}px 0, 0 0` }} />;
     case "halftone":
       return <AbsoluteFill style={{ backgroundImage: "radial-gradient(rgba(17,17,17,.13) 2.4px, transparent 2.8px)", backgroundSize: "18px 18px", backgroundPosition: `${-camX * 0.5}px 0` }} />;
     case "grain":

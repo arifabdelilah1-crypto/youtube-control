@@ -53,7 +53,7 @@ export function toolDefs(ctx: Ctx): ToolDef[] {
       parameters: obj({
         kind: { type: "string", enum: ["animation", "clips"] },
         idea_id: { type: "string" }, title: { type: "string" },
-        look: { type: "string", enum: ["glow", "whiteboard", "kinetic", "blueprint", "chalkboard", "neon", "comic", "terminal", "vintage", "clean", "sunset", "badges", "notes", "minimal"] },
+        look: { type: "string", enum: ["glow", "whiteboard", "kinetic", "blueprint", "chalkboard", "neon", "comic", "terminal", "vintage", "clean", "sunset", "badges", "notes", "minimal", "stick", "stickcolor", "stickdoodle"] },
         aspect: { type: "string", enum: ["9:16", "16:9"] },
         length: { type: "string", enum: ["short45", "short60", "short120", "long3", "long5", "long8", "long10"] },
         why: { type: "string", description: "One sentence: why this video now." },

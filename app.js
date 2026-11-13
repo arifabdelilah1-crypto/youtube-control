@@ -1119,6 +1119,9 @@ const ANIM_LOOKS = {
   sunset: { label: "Sunset", text: "Soft white lines on a purple-to-orange sky." },
   badges: { label: "Flat badges", text: "Each icon on a bright colour disc, navy labels." },
   notes: { label: "Sticky notes", text: "Hand-drawn on a cork board, labels on yellow sticky notes." },
+  stick: { label: "Stickman", text: "Moving stick figures in black ink on white paper: they wave, point, think and walk." },
+  stickcolor: { label: "Stickman colour", text: "Bold stick figures in bright colours on warm yellow, labels in speech bubbles." },
+  stickdoodle: { label: "Stickman notebook", text: "Blue-pen stick figures and doodles on lined notebook paper." },
 };
 for (const k of Object.keys(ANIM_LOOKS)) ANIM_LOOKS[k].img = `anim/${k}.jpg`;
 // a Short stays under 3 minutes; a YouTube video past 3 minutes is written chapter by chapter
