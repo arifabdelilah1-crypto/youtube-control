@@ -49,10 +49,15 @@ function artifactInputs(job: any): Record<string, string> {
 }
 
 /** Where a channel posts. A schedule saved before targets existed posts to YouTube with its one method. */
-function targetsOf(schedule: any): { platform: string; method: string; account_id: string | null }[] {
+function targetsOf(schedule: any): { platform: string; method: string; account_id: string | null; page_id?: string | null }[] {
   if (!Array.isArray(schedule.targets)) return [{ platform: "youtube", method: schedule.method, account_id: schedule.blotato_account_id || null }];
   return schedule.targets.filter((x: any) => PLATFORMS.has(x?.platform))
-    .map((x: any) => ({ platform: x.platform, method: x.platform === "youtube" && x.method !== "blotato" ? "youtube" : "blotato", account_id: x.account_id ? String(x.account_id) : null }));
+    .map((x: any) => ({
+      platform: x.platform,
+      // "meta": a Facebook Page connected directly (Connect Facebook), posted by the publish job with the Page's own token
+      method: x.platform === "youtube" ? (x.method !== "blotato" ? "youtube" : "blotato") : x.platform === "facebook" && x.method === "meta" ? "meta" : "blotato",
+      account_id: x.account_id ? String(x.account_id) : null, page_id: x.page_id ? String(x.page_id) : null,
+    }));
 }
 
 async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatform?: string) {
@@ -75,6 +80,7 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   const targets = targetsOf(schedule).filter((x) => !excluded.has(x.platform));
   if (!targets.length) return { error: excluded.size ? "Every account is switched off for this video. Turn one on in its Publish tab." : "This network posts nowhere yet. Pick its accounts on its Networks page.", status: 400 };
   if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account on this network's page.", status: 400 };
+  if (targets.some((x) => x.method === "meta" && !x.page_id)) return { error: "Pick the Facebook Page on this network's page.", status: 400 };
   if (targets.some((x) => x.method === "youtube")) {
     const { count } = await db.from("channel_tokens").select("channel_id", { count: "exact", head: true }).eq("channel_id", channelId);
     if (!count) return { error: "This network's YouTube channel isn't connected. Connect it on its Networks page first.", status: 400 };

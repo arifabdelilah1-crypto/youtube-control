@@ -1,6 +1,6 @@
 // Publishing (GitHub Actions).
 //   node render/publish.mjs --auto <render_job_id>   after a final render: queue it if the channel's auto-publish is on
-//   node render/publish.mjs <queue_id>               upload one queued video to YouTube (or send it to Blotato)
+//   node render/publish.mjs <queue_id>               upload one queued video to YouTube, a Facebook Page (direct), or send it to Blotato
 // YouTube: resumable upload with the channel's own Google connection; a future slot is sent as status.publishAt
 // (the video stays private until then and YouTube publishes it at that time).
 import fs from "node:fs";
@@ -159,6 +159,52 @@ async function toBlotato(row, sched, job) {
   return { blotato_post_id: id, ...(await waitForPost(BLOTATO, id)), warning };
 }
 
+// ---------- Facebook Pages, directly (Connect Facebook on a network's page; no Blotato) ----------
+const FB_GRAPH = "https://graph.facebook.com/v27.0";
+async function fbPost(url, form) {
+  const r = await fetch(url, { method: "POST", body: form });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.error) throw new Error(`Facebook: ${data.error?.error_user_msg || data.error?.message || r.status}`);
+  return data;
+}
+const formOf = (fields) => { const f = new FormData(); for (const [k, v] of Object.entries(fields)) if (v !== undefined && v !== null && v !== "") f.append(k, String(v)); return f; };
+
+/** A vertical Short of 90 s or less goes up as a Reel; anything else as a Page video. A future slot is scheduled by Facebook itself. */
+async function toFacebook(row, sched, job) {
+  const saved = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === "facebook") || {};
+  const pageId = String(saved.page_id || "");
+  if (!/^\d+$/.test(pageId)) throw new Error("Pick the Facebook Page for this network (Connect Facebook on its page).");
+  const tr = await fetch(`${URL_}/rest/v1/rpc/get_meta_page_token`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_page_id: pageId }) });
+  const token = tr.ok ? await tr.json() : null;
+  if (!token) throw new Error("This Facebook Page isn't connected any more. Click Connect Facebook on the network's page.");
+  const file = await videoFile(job);
+  const size = fs.statSync(file).size;
+  // Facebook schedules from 10 minutes ahead; a slot closer than that goes out now
+  const at = row.slot_at ? Math.floor(Date.parse(row.slot_at) / 1000) : 0;
+  const future = at > Date.now() / 1000 + 11 * 60;
+  const caption = [row.title, row.description].filter(Boolean).join("\n\n").slice(0, 5000);
+  const vertical = (job.params?.aspect || "9:16") === "9:16";
+  if (vertical && Number(job.duration_s || 0) <= 90) {
+    const start = await fbPost(`${FB_GRAPH}/${pageId}/video_reels`, formOf({ upload_phase: "start", access_token: token }));
+    const up = await fetch(`https://rupload.facebook.com/video-upload/v27.0/${start.video_id}`, {
+      method: "POST", headers: { Authorization: `OAuth ${token}`, offset: "0", file_size: String(size) }, body: fs.readFileSync(file),
+    });
+    const upData = await up.json().catch(() => ({}));
+    if (!up.ok || upData.success === false) throw new Error(`Facebook upload: ${upData.debug_info?.message || upData.error?.message || up.status}`);
+    await fbPost(`${FB_GRAPH}/${pageId}/video_reels`, formOf({
+      upload_phase: "finish", video_id: start.video_id, access_token: token, description: caption, title: row.title,
+      video_state: future ? "SCHEDULED" : "PUBLISHED", scheduled_publish_time: future ? at : null,
+    }));
+    log(`Facebook Reel ${future ? `scheduled for ${row.slot_at}` : "published"}: ${start.video_id}`);
+    return { status: future ? "scheduled" : "published", public_url: `https://www.facebook.com/reel/${start.video_id}` };
+  }
+  const form = formOf({ access_token: token, title: row.title, description: caption, published: future ? "false" : "true", scheduled_publish_time: future ? at : null });
+  form.append("source", new Blob([fs.readFileSync(file)], { type: "video/mp4" }), "video.mp4");
+  const out = await fbPost(`https://graph-video.facebook.com/v27.0/${pageId}/videos`, form);
+  log(`Facebook video ${future ? `scheduled for ${row.slot_at}` : "published"}: ${out.id}`);
+  return { status: future ? "scheduled" : "published", public_url: `https://www.facebook.com/${pageId}/videos/${out.id}` };
+}
+
 async function main() {
   if (!URL_ || !KEY) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
   if (process.argv[2] === "--auto") {
@@ -179,7 +225,9 @@ async function main() {
     const [job] = await rest("GET", "render_jobs", `?id=eq.${row.render_job_id}&select=*`);
     const [sched] = await rest("GET", "publish_schedules", `?channel_id=eq.${row.channel_id}&select=*`);
     const settings = sched || { method: "youtube", privacy: "public", notify_subscribers: true, category_id: "22" };
-    const result = row.method === "blotato" ? await toBlotato(row, settings, job) : await toYouTube(row, settings, await videoFile(job), job);
+    const result = row.method === "blotato" ? await toBlotato(row, settings, job)
+      : row.method === "meta" ? await toFacebook(row, settings, job)
+      : await toYouTube(row, settings, await videoFile(job), job);
     const { warning, ...saved } = result;
     await rest("PATCH", "publish_queue", `?id=eq.${queueId}`, { ...saved, error: warning || null });
     if (row.idea_id) await rest("PATCH", "ideas", `?id=eq.${row.idea_id}`, { stage: result.status === "published" ? "published" : "scheduled" });

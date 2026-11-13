@@ -3297,7 +3297,7 @@ VIEWS.channels = async () => {
 };
 
 /** The accounts of one network, and where its videos start from. */
-function networkPanels(chRow, sc, blotato) {
+function networkPanels(chRow, sc, blotato, metaPages = []) {
   const id = chRow.id;
   const hasYoutube = !!chRow.youtube_channel_id;
   const saved = targetsOfSchedule(sc || (hasYoutube ? { channel_id: id, method: "youtube" } : null));
@@ -3335,7 +3335,22 @@ function networkPanels(chRow, sc, blotato) {
   const ttAi = h("input", { type: "checkbox", checked: savedOf("tiktok")?.ai !== false });
   const instagram = menu("instagram", "Don't post");
   const x = menu("twitter", "Don't post");
-  const facebook = menu("facebook", "Don't post");
+  // Facebook: a Page connected directly (Connect Facebook), or one through Blotato
+  const fbSaved = savedOf("facebook");
+  const fbCurrent = fbSaved?.method === "meta" && fbSaved.page_id ? `meta:${fbSaved.page_id}` : fbSaved?.account_id ? (fbSaved.page_id ? `${fbSaved.account_id}:${fbSaved.page_id}` : String(fbSaved.account_id)) : "";
+  const fbBlotato = accountsFor("facebook");
+  const facebook = h("select", { class: "field", "aria-label": "Facebook Page" }, h("option", { value: "", text: "Don't post" }),
+    metaPages.length ? h("optgroup", { label: "Direct (Connect Facebook)" }, metaPages.map((pg) => h("option", { value: `meta:${pg.page_id}`, selected: fbCurrent === `meta:${pg.page_id}`, text: pg.name }))) : null,
+    fbBlotato.length ? h("optgroup", { label: "Through Blotato" }, fbBlotato.map((a) => h("option", { value: keyOf(a), selected: keyOf(a) === fbCurrent, text: a.name }))) : null,
+    fbCurrent && !metaPages.some((pg) => `meta:${pg.page_id}` === fbCurrent) && !fbBlotato.some((a) => keyOf(a) === fbCurrent) ? h("option", { value: fbCurrent, selected: true, text: "Saved Page (not found)" }) : null);
+  const fbPill = h("span", {});
+  const showFb = () => {
+    const v = facebook.value;
+    const [cls, text] = !v ? ["short", "Off"] : v.startsWith("meta:") ? (metaPages.some((pg) => `meta:${pg.page_id}` === v) ? ["ok", "Connected"] : ["crit", "Not found"])
+      : blotato.error ? ["warn", "Can't check"] : fbBlotato.some((a) => keyOf(a) === v) ? ["ok", "Through Blotato"] : ["crit", "Not found"];
+    fbPill.className = `pill ${cls}`; fbPill.textContent = text;
+  };
+  facebook.addEventListener("change", showFb); showFb();
   const row = (platform, pill, ...controls) => h("div", { class: "net-row" }, h("strong", { text: PLATFORM_NAMES[platform] }), pill, h("div", { class: "net-controls" }, controls));
   const name = h("input", { id: `net-name-${id}`, class: "field", maxlength: 60, value: chRow.title });
   const save = h("button", { class: "btn primary", type: "button", text: "Save accounts", onclick: async () => {
@@ -3343,7 +3358,8 @@ function networkPanels(chRow, sc, blotato) {
     const blotatoTarget = (platform, select, extra = {}) => { if (!select.value) return []; const [account_id, page_id] = select.value.split(":"); return [{ platform, method: "blotato", account_id, ...(page_id ? { page_id } : {}), ...extra }]; };
     const targets = [
       ...(ytMethod.value === "off" ? [] : [{ platform: "youtube", method: ytMethod.value, account_id: ytMethod.value === "blotato" ? ytBlotato.value : null }]),
-      ...blotatoTarget("tiktok", tiktok, { privacy: ttPrivacy.value, ai: ttAi.checked }), ...blotatoTarget("instagram", instagram), ...blotatoTarget("twitter", x), ...blotatoTarget("facebook", facebook),
+      ...blotatoTarget("tiktok", tiktok, { privacy: ttPrivacy.value, ai: ttAi.checked }), ...blotatoTarget("instagram", instagram), ...blotatoTarget("twitter", x),
+      ...(facebook.value.startsWith("meta:") ? [{ platform: "facebook", method: "meta", page_id: facebook.value.slice(5) }] : blotatoTarget("facebook", facebook)),
     ];
     try {
       await q(sb.from("publish_schedules").upsert({ channel_id: id, targets, method: ytMethod.value === "blotato" ? "blotato" : "youtube", blotato_account_id: ytMethod.value === "blotato" ? ytBlotato.value : null }, { onConflict: "channel_id" }));
@@ -3362,7 +3378,9 @@ function networkPanels(chRow, sc, blotato) {
     row("tiktok", status("tiktok", tiktok), tiktok, ttPrivacy, h("label", { class: "pub-check small" }, ttAi, "Mark as AI-generated")),
     row("instagram", status("instagram", instagram), instagram),
     row("twitter", status("twitter", x), x, h("span", { class: "muted small", text: "Posts the title, 280 characters at most." })),
-    row("facebook", status("facebook", facebook), facebook, h("span", { class: "muted small", text: "Pages only, not personal profiles." })),
+    row("facebook", fbPill, facebook, h("button", { class: `btn small${metaPages.length ? "" : " primary"}`, type: "button", text: metaPages.length ? "Reconnect Facebook" : "Connect Facebook",
+      title: "Log in with the Facebook profile that manages your Pages: they all appear in this list", onclick: (e) => { e.currentTarget.disabled = true; startMetaOAuth(id); } }),
+      h("span", { class: "muted small", text: "Pages only. Shorts go up as Reels." })),
     h("div", { class: "row" }, save));
 
   const style = chRow.video_style || {};
@@ -3404,7 +3422,8 @@ VIEWS.channel = async (route) => {
     q(sb.from("publish_schedules").select("*").eq("channel_id", id)),
     publishCall({ action: "blotato_accounts" }).catch((e) => ({ accounts: [], error: e.message })),
   ]);
-  const panels = networkPanels(chRow, scheds[0], blotato);
+  const metaPages = await q(sb.from("meta_pages").select("page_id,name,picture_url,ig_username").order("name")).catch(() => []);
+  const panels = networkPanels(chRow, scheds[0], blotato, metaPages);
   const header = h("header", { class: "head" },
     h("div", { class: "row", style: "gap:16px;flex-wrap:nowrap" }, ch.thumbnail_url ? h("img", { class: "avatar", src: ch.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
       h("div", { class: "head-text" }, h("a", { href: "#/channels", class: "small", text: "← Networks" }), h("h1", { style: "font-size:26px", text: ch.title }),
@@ -3417,6 +3436,8 @@ VIEWS.channel = async (route) => {
       h("a", { class: "btn", href: link("research", { scope: chRow?.niche_id || "global" }), text: "Research for this network" })));
   if (route.params.get("connected")) toast("YouTube reconnected. Stats are loading.");
   if (route.params.get("error")) toast(`Google connection failed: ${route.params.get("error")}`);
+  if (route.params.get("fb_connected")) toast(`Facebook connected: ${route.params.get("fb_connected")} Pages. Pick this network's Page under Accounts, then Save accounts.`);
+  if (route.params.get("fb_error")) toast(`Facebook connection failed: ${route.params.get("fb_error")}`);
   if (!chRow?.youtube_channel_id) return [header, ...panels];
   const statLine = (v) => [`${fmtc(v.views)} views`, `${fmtc(v.likes)} likes`, v.impressions_28d !== null && v.impressions_28d !== undefined ? `${fmtc(v.impressions_28d)} impr.` : null].filter(Boolean).join(" · ");
   const tabs = h("div", { class: "tabs", role: "tablist" },
@@ -3956,6 +3977,15 @@ async function startOAuth(networkId) {
     if (error) throw error;
     location.href = data.url;
   } catch (e) { toast(`Google connection isn’t ready: ${e.message || e}`); }
+}
+
+async function startMetaOAuth(networkId) {
+  try {
+    const { data, error } = await sb.functions.invoke("meta-oauth", { body: { action: "start", return_to: location.origin + location.pathname, channel_id: networkId } });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    location.href = data.url;
+  } catch (e) { toast(`Facebook connection isn’t ready: ${e.message || e}`); }
 }
 
 // ==================================================================
