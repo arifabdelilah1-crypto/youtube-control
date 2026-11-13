@@ -42,17 +42,21 @@ svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor;
 /* ---------- Shell: rail, top bar with the channel bus, content ---------- */
 .shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: auto 1fr; }
 .side { grid-row: 1 / span 2; position: sticky; top: 0; height: 100vh; background: transparent; border-right: 1px solid var(--line-soft);
-  display: flex; flex-direction: column; gap: 26px; padding: 18px 12px; z-index: 40; }
+  display: flex; flex-direction: column; gap: 14px; padding: 16px 12px 12px; z-index: 40; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: var(--ink); text-decoration: none; white-space: nowrap;
   font: 600 17px/1 var(--display); letter-spacing: -.02em; }
 .brand svg { width: 30px; height: 30px; flex: none; }
-.side-links { display: flex; flex-direction: column; gap: 2px; }
-.side-links a { position: relative; display: flex; align-items: center; gap: 11px; padding: 9px 11px; border-radius: var(--r);
+/* the list scrolls inside the rail when the window is short, so the last links are never cut off */
+.side-links { display: flex; flex-direction: column; gap: 1px; flex: 1 1 auto; min-height: 0; overflow-y: auto; margin: 0 -4px; padding: 0 4px;
+  scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.side-group { padding: 10px 11px 3px; font: 600 10.5px/1 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.side-links a { position: relative; display: flex; align-items: center; gap: 11px; padding: 6px 11px; border-radius: var(--r); flex: none;
   color: var(--graphite); text-decoration: none; font-weight: 500; }
 .side-links a:hover { background: var(--panel-2); color: var(--ink); }
 .side-links a[aria-current="page"] { background: rgba(255, 122, 26, .14); color: var(--action); font-weight: 500; }
 .side-links a[aria-current="page"]::before { content: none; }
-.side-foot { margin-top: auto; padding: 0 10px; font: 400 11px/1.4 var(--display); color: var(--faint); }
+.side-foot { flex: none; padding: 0 10px; font: 400 11px/1.4 var(--display); color: var(--faint); }
+@media (max-height: 980px) { .side-foot { display: none; } }
 
 .topbar { grid-column: 2; position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; padding: 10px 28px;
   background: rgba(9, 9, 11, .72); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line-soft); }
@@ -486,8 +490,8 @@ details.card > summary { cursor: pointer; font-weight: 600; font-size: 15px; }
   .side { position: fixed; top: auto; bottom: 0; left: 0; right: 0; height: auto; grid-row: auto; flex-direction: row; gap: 0;
     padding: 4px 4px calc(4px + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line); background: rgba(18, 19, 22, .9);
     -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); }
-  .side .brand, .side-foot { display: none; }
-  .side-links { flex: 1 1 auto; flex-direction: row; justify-content: flex-start; gap: 0; overflow-x: auto; scrollbar-width: none; }
+  .side .brand, .side-foot, .side-group { display: none; }
+  .side-links { flex: 1 1 auto; flex-direction: row; justify-content: flex-start; gap: 0; overflow-x: auto; overflow-y: hidden; margin: 0; padding: 0; scrollbar-width: none; }
   .side-links::-webkit-scrollbar { display: none; }
   .side-links a { flex: 0 0 64px; min-width: 0; flex-direction: column; gap: 3px; padding: 7px 2px 6px; font-size: 10.5px; font-weight: 500; border-radius: 12px; text-align: center; }
   .side-links a span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
