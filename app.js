@@ -3169,6 +3169,7 @@ const money = (v) => (v === null || v === undefined || v === "" ? "—" : `$${Nu
 
 VIEWS.campaigns = async () => {
   const rows = await q(sb.from("campaigns").select("id,title,brand,status,risk,rate_per_1k,cap_per_post,deadline,platforms,content_type,matches,created_at").order("created_at", { ascending: false }).limit(100));
+  const waitingRows = rows.length ? await q(sb.from("campaign_posts").select("campaign_id").eq("status", "awaiting_approval").in("campaign_id", rows.map((r) => r.id))) : [];
   const text = h("textarea", { class: "field", id: "camp-text", rows: 8, placeholder: "Paste everything from the campaign page: pay, rules, requirements…" });
   const url = h("input", { class: "field", id: "camp-url", type: "url", placeholder: "…or a link: Google Doc, Whop page, Notion, any page", autocomplete: "off" });
   const status = h("p", { class: "muted small", style: "margin:0", hidden: true });
@@ -3200,7 +3201,8 @@ VIEWS.campaigns = async () => {
         h("div", { style: "font-weight:500", text: c.title }),
         h("div", { class: "muted small", text: [c.brand, c.rate_per_1k ? `${money(c.rate_per_1k)} / 1k views` : null, c.cap_per_post ? `max ${money(c.cap_per_post)} / post` : null,
           (c.platforms || []).join(", "), c.deadline ? `ends ${c.deadline}` : null, ago(c.created_at)].filter(Boolean).join(" · ") }),
-        h("div", { class: "muted small", text: best ? `Best fit: ${channelById(best.channel_id)?.title || best.title} (${best.score})` : c.matches ? "No network fits: a new account is suggested" : "Not matched yet" })),
+        h("div", { class: "muted small", text: best ? `Best fit: ${channelById(best.channel_id)?.title || best.title} (${best.score})` : c.matches ? "No network fits: a new account is suggested" : "Not matched yet" }),
+        (() => { const n = waitingRows.filter((w) => w.campaign_id === c.id).length; return n ? h("div", { class: "small", style: "color:var(--cue)", text: `${n} video${n === 1 ? "" : "s"} waiting for your approval` }) : null; })()),
       h("span", { class: `pill ${rcls}`, text: rlabel }));
   };
   return [pageHead("Campaigns", "Paid campaigns (Whop and similar): paste one, see the rules, the risk, and which network should make it."),
@@ -3349,12 +3351,188 @@ VIEWS.campaign = async (route) => {
     c.source_url ? h("p", {}, h("a", { href: c.source_url, target: "_blank", rel: "noopener", text: c.source_url })) : null,
     h("pre", { style: "white-space:pre-wrap;max-height:420px;overflow:auto;font-size:12.5px", text: c.source_text || "" }));
 
-  const next = h("section", { class: "card" }, h("h2", { text: "Next" }),
-    h("p", { class: "muted", text: c.content_type === "clipping"
-      ? "Making the videos comes in Phase 2: their long videos go into the Clipper with these rules, and every Short waits for your approval."
-      : "Making the videos comes in Phase 2: DeepSeek brainstorms angles and writes the scripts with these rules, and every video waits for your approval." }));
+  // ================= Phase 2: making the videos =================
+  const eligible = ms.filter((m) => m.eligible).map((m) => m.channel_id);
+  const netOptions = [...state.channels].sort((a, b) => Number(eligible.includes(b.id)) - Number(eligible.includes(a.id)));
+  const defaultNet = c.angles?.channel_id || eligible[0] || (state.channel !== "all" ? state.channel : netOptions[0]?.id);
+  const netSelect = (id) => h("select", { class: "field", id }, netOptions.map((ch) => h("option", { value: ch.id, selected: ch.id === defaultNet,
+    text: `${ch.title}${eligible.includes(ch.id) ? " ✓" : ""}` })));
+  const confirmRed = () => c.risk !== "red" || confirm("This campaign is high risk for your channels. Make videos anyway?");
 
-  return [head, pills, risk, numbers, rules, networks, newAcc, edit, source, next];
+  // ---- promo: brainstorm, pick, make ----
+  const mkNet = netSelect("cm-net");
+  let mkLen = "short45";
+  const lenBox = h("div", {});
+  const pickLen = (v) => { mkLen = v; lenBox.replaceChildren(seg([["short30", "30 s"], ["short45", "45 s"], ["short60", "60 s"]], mkLen, pickLen, "Length")); };
+  pickLen(c.card?.length?.max_s && c.card.length.max_s <= 35 ? "short30" : "short45");
+  const mkStatus = h("p", { class: "muted small", style: "margin:0", hidden: true });
+  const items = c.angles?.items || [];
+  const picks = items.map((a, i) => h("input", { type: "checkbox", value: String(i), checked: i < 3, "aria-label": a.title }));
+  const angleList = items.length ? h("div", {}, items.map((a, i) => h("label", { class: "listrow", style: "align-items:flex-start;cursor:pointer" }, picks[i],
+    h("div", { style: "flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:3px" },
+      h("div", { style: "font-weight:500", text: `${i + 1}. ${a.title}` }),
+      h("div", { class: "small", text: `Hook: ${a.hook}` }),
+      h("div", { class: "muted small", text: a.idea }),
+      a.brand_moment ? h("div", { class: "muted small", text: `Brand: ${a.brand_moment}` }) : null)))) : null;
+  const brainstorm = h("button", { class: items.length ? "btn" : "btn primary", type: "button", text: items.length ? "Brainstorm again" : "Brainstorm 10 angles", onclick: async (e) => {
+    const b = e.currentTarget; b.disabled = true; mkStatus.hidden = false; mkStatus.textContent = "DeepSeek is brainstorming… (about 20–40 s)";
+    try { await campaignCall({ action: "angles", campaign_id: c.id, channel_id: mkNet.value }); render(); }
+    catch (err) { toast(err.message); mkStatus.textContent = err.message; b.disabled = false; }
+  } });
+  const makeBtn = items.length ? h("button", { class: "btn primary", type: "button", text: "Make the ticked videos", onclick: async (e) => {
+    const chosen = picks.filter((p) => p.checked).map((p) => items[Number(p.value)]);
+    if (!chosen.length) return toast("Tick at least one angle");
+    if (chosen.length > 5) return toast("5 videos at a time at most");
+    if (!confirmRed()) return;
+    const b = e.currentTarget; b.disabled = true; brainstorm.disabled = true; mkStatus.hidden = false;
+    let ok = 0;
+    for (const [i, angle] of chosen.entries()) {
+      mkStatus.textContent = `Writing script ${i + 1} of ${chosen.length}: ${angle.title}…`;
+      try { await campaignCall({ action: "make", campaign_id: c.id, channel_id: mkNet.value, angle, length: mkLen, confirm_red: c.risk === "red" }); ok++; }
+      catch (err) { toast(`${angle.title}: ${err.message}`); }
+    }
+    toast(`${ok} video${ok === 1 ? "" : "s"} started. They show below and wait for your approval.`);
+    render();
+  } }) : null;
+  const makeCard = c.content_type !== "clipping" ? h("section", { class: "card" }, h("h2", { text: "Make videos" }),
+    h("p", { class: "muted small", text: "DeepSeek brainstorms angles for the network, then writes each script with the campaign's rules. Videos use stock footage and a narrator, no music. Nothing is published: every video waits for your approval below." }),
+    h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: "cm-net", text: "Network" }), mkNet),
+      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Length" }), lenBox)),
+    h("div", { class: "row" }, brainstorm, makeBtn, items.length ? h("span", { class: "muted small", text: `${items.length} angles for ${channelById(c.angles.channel_id)?.title || "a network"} · ${ago(c.angles.at)}` }) : null),
+    mkStatus, angleList) : null;
+
+  // ---- their long videos: into the Clipper with the campaign's rules ----
+  const sources = await q(sb.from("clip_sources").select("id,title,status,progress,step,error,created_at").eq("settings->>campaign_id", c.id).order("created_at", { ascending: false }));
+  const lvNet = netSelect("cl-camp-net");
+  const lvLink = h("input", { class: "field", id: "cl-camp-link", type: "url", placeholder: "Their Google Drive, Dropbox or direct .mp4 link", autocomplete: "off" });
+  const lvStatus = h("p", { class: "muted small", style: "margin:0", hidden: true });
+  const lvSettings = () => ({ count: 3, min_s: Math.max(10, c.card?.length?.min_s || 20), max_s: Math.min(90, c.card?.length?.max_s || 55), language: "auto", channel_id: lvNet.value, campaign_id: c.id });
+  const lvTitle = () => `${c.brand || c.title} · ${new Date().toLocaleDateString("en-GB")}`;
+  const lvFile = h("input", { type: "file", accept: "video/*", hidden: true, onchange: async () => {
+    const f = lvFile.files[0]; if (!f) return;
+    if (f.size > 5 * 1024 ** 3) return toast("Files up to 5 GB");
+    lvStatus.hidden = false; lvStatus.textContent = "Preparing the upload…";
+    try {
+      const r = await clipperCall({ action: "upload_start", title: f.name.replace(/\.[^.]+$/, ""), settings: lvSettings(), size: f.size });
+      await uploadToServer(f, r.put_url, (pct) => { lvStatus.textContent = `Uploading to your server: ${pct}%`; });
+      await clipperCall({ action: "uploaded", source_id: r.source_id });
+      toast("Sent to the Clipper"); render();
+    } catch (err) { toast(err.message); lvStatus.textContent = err.message; }
+  } });
+  const longCard = h(c.content_type === "clipping" ? "section" : "details", { class: "card" },
+    c.content_type === "clipping" ? h("h2", { text: "Their long videos → Shorts" }) : h("summary", { text: "They gave a long video? Cut it into Shorts" }),
+    h("p", { class: "muted small", text: "The Clipper finds the best moments and writes the hooks and captions with the campaign's rules. Review and render the Shorts in the Clipper; finished ones come back here for your approval. Only use videos the brand gave you." }),
+    h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: "cl-camp-link", text: "Video link" }), lvLink),
+      h("div", { class: "field-wrap" }, h("label", { for: "cl-camp-net", text: "For network" }), lvNet)),
+    h("div", { class: "row" },
+      h("button", { class: "btn primary", type: "button", text: "Find the Shorts", onclick: async (e) => {
+        if (!lvLink.value.trim()) return toast("Paste the link to their video file, or upload it");
+        const b = e.currentTarget; b.disabled = true;
+        try { const r = await clipperCall({ action: "start", title: lvTitle(), source_url: lvLink.value.trim(), settings: lvSettings() }); toast("Sent to the Clipper"); go(`#/clipper/${r.source_id}`); }
+        catch (err) { toast(err.message); b.disabled = false; }
+      } }),
+      h("button", { class: "btn", type: "button", text: "Upload a file", onclick: () => lvFile.click() }), lvFile),
+    lvStatus,
+    sources.length ? sources.map((x) => { const [cls, label] = CLIP_STATUS[x.status] || ["info", x.status];
+      return h("a", { class: "listrow link", href: `#/clipper/${x.id}` }, h("span", { class: `pill ${cls}`, text: label }),
+        h("div", { style: "flex:1 1 200px;min-width:0" }, h("div", { text: x.title }), h("div", { class: "muted small", text: x.status === "failed" ? x.error || "" : x.step || ago(x.created_at) }))); }) : null);
+
+  // ---- their files (logos, images, short clips) ----
+  const folder = `materials/campaigns/${c.id}`;
+  const { data: stored } = await sb.storage.from("renders").list(folder, { limit: 100, sortBy: { column: "created_at", order: "desc" } });
+  const files = (stored || []).filter((f) => f.name && f.id);
+  const signedFiles = files.length ? ((await sb.storage.from("renders").createSignedUrls(files.map((f) => `${folder}/${f.name}`), 6 * 3600)).data || []) : [];
+  const upIn = h("input", { type: "file", multiple: true, hidden: true, onchange: async () => {
+    for (const f of upIn.files) {
+      if (f.size > 50 * 1024 ** 2) { toast(`${f.name}: files here are 50 MB at most. Long videos go to the Clipper above.`); continue; }
+      const name = `${Date.now().toString(36)}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
+      const { error } = await sb.storage.from("renders").upload(`${folder}/${name}`, f, { contentType: f.type || undefined });
+      if (error) toast(`${f.name}: ${error.message}`);
+    }
+    toast("Uploaded"); render();
+  } });
+  const filesCard = h("details", { class: "card", ...(files.length ? { open: true } : {}) }, h("summary", { text: `Their files${files.length ? ` (${files.length})` : ""}` }),
+    h("p", { class: "muted small", text: "Logos, images, short clips or a song the brand gave you, up to 50 MB each. Kept here for the videos you make for them." }),
+    h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Upload files", onclick: () => upIn.click() }), upIn),
+    files.map((f) => {
+      const url = signedFiles.find((s) => s.path === `${folder}/${f.name}`)?.signedUrl;
+      return h("div", { class: "listrow" }, h("a", { href: url || "#", target: "_blank", rel: "noopener", text: f.name.replace(/^[a-z0-9]+-/, "") }),
+        h("span", { class: "muted small", text: f.metadata?.size ? `${fmtc(f.metadata.size)}B` : "" }),
+        h("button", { class: "btn ghost", type: "button", text: "Delete", onclick: async () => {
+          if (!confirm("Delete this file?")) return;
+          await sb.storage.from("renders").remove([`${folder}/${f.name}`]); render();
+        } }));
+    }));
+
+  // ---- the videos, and your approval ----
+  const { posts } = await campaignCall({ action: "sync", campaign_id: c.id }).catch(() => ({ posts: [] }));
+  const runIds = posts.filter((p) => p.status === "rendering" && p.video_run_id).map((p) => p.video_run_id);
+  const runs = runIds.length ? await q(sb.from("video_runs").select("id,status,steps").in("id", runIds)) : [];
+  const ideas = posts.length ? await q(sb.from("ideas").select("id,script,video_title,video_description").in("id", posts.map((p) => p.idea_id).filter(Boolean))) : [];
+  const POST_STATUS = { rendering: ["info", "Making"], failed: ["crit", "Failed"], awaiting_approval: ["warn", "Waiting for you"], approved: ["ok", "Approved"],
+    rejected: ["short", "Rejected"], scheduled: ["ok", "Scheduled"], live: ["ok", "Live"], submitted: ["ok", "Submitted"], paid: ["ok", "Paid"], draft: ["short", "Draft"] };
+  const setPost = async (p, patch, msg) => { await q(sb.from("campaign_posts").update(patch).eq("id", p.id)); toast(msg); render(); };
+  const postCard = (p) => {
+    const [cls, label] = POST_STATUS[p.status] || ["short", p.status];
+    const idea = ideas.find((i) => i.id === p.idea_id);
+    const run = runs.find((r) => r.id === p.video_run_id);
+    const step = run?.steps?.find((s) => s.status === "running") || run?.steps?.filter((s) => s.status === "done").pop();
+    const body = h("div", { style: "display:flex;flex-direction:column;gap:10px;min-width:0;flex:1 1 300px" });
+    body.append(h("div", { class: "row", style: "gap:8px" }, h("span", { class: `pill ${cls}`, text: label }), h("strong", { text: p.title || "Untitled" })),
+      h("div", { class: "muted small", text: [channelById(p.channel_id)?.title, p.angle, ago(p.created_at)].filter(Boolean).join(" · ") }));
+    if (p.status === "rendering") body.append(h("div", { class: "muted small", text: step ? `${step.status === "running" ? "Now" : "Done"}: ${step.key}${step.detail ? ` (${step.detail})` : ""}` : "Starting on GitHub…" }));
+    if (p.note && ["failed", "rejected"].includes(p.status)) body.append(h("div", { class: "down small", text: p.note }));
+    if (p.checks?.length && p.status !== "rendering") body.append(h("ul", { style: "margin:0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:3px" },
+      p.checks.map((k) => h("li", { class: k.ok ? "small" : "down small", text: `${k.ok ? "✓" : "✕"} ${k.name}: ${k.detail}` }))));
+    const player = h("div", { style: "flex:0 0 200px;max-width:200px" });
+    if (p.render_job_id && !["rendering", "failed"].includes(p.status)) {
+      const btn = h("button", { class: "btn", type: "button", text: "▶ Watch", onclick: async () => {
+        btn.disabled = true;
+        const { data, error } = await sb.functions.invoke("studio", { body: { action: "video_link", job_id: p.render_job_id } });
+        if (error || !data?.url) { toast("The video couldn't be loaded"); btn.disabled = false; return; }
+        player.replaceChildren(h("video", { src: data.url, controls: true, autoplay: true, playsinline: true, style: "width:100%;border-radius:12px;background:#000;aspect-ratio:9/16" }));
+      } });
+      player.append(btn);
+    }
+    const edit = idea && !p.clip_id ? h("details", {}, h("summary", { class: "small", text: "Edit the script and render again" }), (() => {
+      const t = h("input", { class: "field", value: idea.video_title || p.title || "", "aria-label": "Title" });
+      const d = h("textarea", { class: "field", rows: 4, value: idea.video_description || "", "aria-label": "Description" });
+      const s = h("textarea", { class: "field", rows: 10, value: idea.script || "", "aria-label": "Script", style: "font:12.5px/1.45 var(--mono, monospace)" });
+      return h("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" }, t, d, s,
+        h("button", { class: "btn", type: "button", text: "Save and render again", onclick: async (e) => {
+          e.currentTarget.disabled = true;
+          try { await campaignCall({ action: "rerender", post_id: p.id, title: t.value, description: d.value, script: s.value }); toast("Rendering again"); render(); }
+          catch (err) { toast(err.message); e.currentTarget.disabled = false; }
+        } }));
+    })()) : null;
+    if (edit && ["awaiting_approval", "failed", "rejected"].includes(p.status)) body.append(edit);
+    const actions = h("div", { class: "row" });
+    if (p.status === "awaiting_approval") actions.append(
+      h("button", { class: "btn primary", type: "button", text: "Approve", onclick: () => {
+        const bad = (p.checks || []).filter((k) => !k.ok).length;
+        if (bad && !confirm(`${bad} check${bad === 1 ? "" : "s"} failed. Approve anyway?`)) return;
+        setPost(p, { status: "approved", note: null }, "Approved");
+      } }),
+      h("button", { class: "btn ghost", type: "button", text: "Reject", onclick: () => { const why = prompt("Why? (optional)"); if (why === null) return; setPost(p, { status: "rejected", note: why || "Rejected" }, "Rejected"); } }));
+    if (p.status === "failed" && !p.clip_id) actions.append(h("button", { class: "btn", type: "button", text: "Try again", onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      try { await campaignCall({ action: "rerender", post_id: p.id }); toast("Started again"); render(); } catch (err) { toast(err.message); }
+    } }));
+    if (p.status === "approved") body.append(h("div", { class: "muted small", text: "Approved. Scheduling and the paid-promotion label come with Phase 3." }));
+    if (actions.childNodes.length) body.append(actions);
+    return h("div", { class: "listrow", style: "align-items:flex-start;gap:16px" }, player, body);
+  };
+  const waiting = posts.filter((p) => p.status === "awaiting_approval").length;
+  const videosCard = h("section", { class: "card" }, h("h2", { text: `Videos${waiting ? ` · ${waiting} waiting for you` : ""}` }),
+    posts.length ? posts.map(postCard) : empty(c.content_type === "clipping" ? "No Shorts yet. Send their long video to the Clipper above." : "No videos yet. Brainstorm angles above, tick the best ones and make them."));
+  if (posts.some((p) => p.status === "rendering")) state.timer = setInterval(async () => {
+    if (parseRoute().name !== "campaign" || document.querySelector(".card details[open] textarea:focus")) return;
+    const { posts: now } = await campaignCall({ action: "sync", campaign_id: c.id }).catch(() => ({ posts }));
+    const runsNow = runIds.length ? await q(sb.from("video_runs").select("id,status,steps").in("id", runIds)).catch(() => runs) : [];
+    if (JSON.stringify(now.map((p) => p.status)) !== JSON.stringify(posts.map((p) => p.status)) || JSON.stringify(runsNow) !== JSON.stringify(runs)) render();
+  }, 30000);
+
+  return [head, pills, risk, numbers, rules, networks, newAcc, videosCard, makeCard, longCard, filesCard, edit, source];
 };
 
 VIEWS.calendar = async () => {
