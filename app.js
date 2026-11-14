@@ -251,7 +251,7 @@ async function render() {
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
   if (state.unmount) { state.unmount(); state.unmount = null; }
   const route = parseRoute();
-  const section = { keyword: "research", channel: "channels", edit: "studio" }[route.name] || route.name;  // "automation" = Publishing
+  const section = { keyword: "research", channel: "channels", edit: "studio", campaign: "campaigns" }[route.name] || route.name;  // "automation" = Publishing
   document.querySelectorAll(".side-links a").forEach((a) =>
     a.dataset.route === section ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current"));
   document.querySelector(".side-links a[aria-current]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -3151,6 +3151,211 @@ const postStatus = (r) => (r.status === "scheduled" && r.method !== "blotato" &&
 const postLink = (r) => r.public_url || (r.youtube_video_id ? `https://www.youtube.com/shorts/${r.youtube_video_id}` : null);
 /** Monday of the week d is in. */
 const weekStart = (d) => { const x = new Date(d.getFullYear(), d.getMonth(), d.getDate()); x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); return x; };
+
+// ==================================================================
+// Campaigns (paid "content rewards" campaigns: Whop and similar)
+// ==================================================================
+async function campaignCall(body) {
+  const { data, error } = await sb.functions.invoke("campaigns", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+const CAMP_STATUS = { draft: ["short", "Draft"], active: ["ok", "Active"], paused: ["warn", "Paused"], ended: ["short", "Ended"], skipped: ["short", "Skipped"] };
+const CAMP_RISK = { green: ["ok", "Low risk"], orange: ["warn", "Be careful"], red: ["crit", "High risk"] };
+const CAMP_TYPES = [["promo", "Promo: we make our own videos"], ["clipping", "Clipping: they give long videos to cut"], ["assets", "Assets: they give clips, logos or a song"]];
+const CAMP_PLATS = [["youtube", "YouTube Shorts"], ["tiktok", "TikTok"], ["instagram", "Instagram Reels"], ["facebook", "Facebook Reels"], ["x", "X"]];
+const money = (v) => (v === null || v === undefined || v === "" ? "—" : `$${Number(v).toLocaleString("en", Number(v) % 1 ? { minimumFractionDigits: 2, maximumFractionDigits: 2 } : {})}`);
+
+VIEWS.campaigns = async () => {
+  const rows = await q(sb.from("campaigns").select("id,title,brand,status,risk,rate_per_1k,cap_per_post,deadline,platforms,content_type,matches,created_at").order("created_at", { ascending: false }).limit(100));
+  const text = h("textarea", { class: "field", id: "camp-text", rows: 8, placeholder: "Paste everything from the campaign page: pay, rules, requirements…" });
+  const url = h("input", { class: "field", id: "camp-url", type: "url", placeholder: "…or a link: Google Doc, Whop page, Notion, any page", autocomplete: "off" });
+  const status = h("p", { class: "muted small", style: "margin:0", hidden: true });
+  const btn = h("button", { class: "btn primary", type: "submit", text: "Read the campaign" });
+  const form = h("form", { class: "card", onsubmit: async (e) => {
+    e.preventDefault();
+    if (!text.value.trim() && !url.value.trim()) return toast("Paste the campaign text or a link");
+    btn.disabled = true; status.hidden = false;
+    try {
+      status.textContent = "Reading the campaign… (about 20–40 s)";
+      const { campaign } = await campaignCall({ action: "parse", text: text.value.trim(), url: url.value.trim() });
+      status.textContent = "Finding the networks that fit… (about 20–40 s)";
+      await campaignCall({ action: "match", campaign_id: campaign.id }).catch((err) => toast(`Matching failed: ${err.message}`));
+      go(`#/campaign/${campaign.id}`);
+    } catch (err) { status.textContent = err.message; toast(err.message); btn.disabled = false; }
+  } },
+    h("h2", { text: "New campaign" }),
+    h("div", { class: "field-wrap" }, h("label", { for: "camp-text", text: "Campaign text" }), text),
+    h("div", { class: "field-wrap" }, h("label", { for: "camp-url", text: "Or a link" }), url),
+    h("div", { class: "row" }, btn, h("span", { class: "muted small", text: "Claude reads the rules, checks the risk and ranks your networks. Nothing is posted." })),
+    status);
+  const row = (c) => {
+    const [scls, slabel] = CAMP_STATUS[c.status] || ["short", c.status];
+    const [rcls, rlabel] = CAMP_RISK[c.risk] || ["short", c.risk];
+    const best = (c.matches || []).find((m) => m.eligible);
+    return h("a", { class: "listrow link", href: `#/campaign/${c.id}`, style: "align-items:flex-start" },
+      h("span", { class: `pill ${scls}`, text: slabel }),
+      h("div", { style: "flex:1 1 240px;min-width:0;display:flex;flex-direction:column;gap:4px" },
+        h("div", { style: "font-weight:500", text: c.title }),
+        h("div", { class: "muted small", text: [c.brand, c.rate_per_1k ? `${money(c.rate_per_1k)} / 1k views` : null, c.cap_per_post ? `max ${money(c.cap_per_post)} / post` : null,
+          (c.platforms || []).join(", "), c.deadline ? `ends ${c.deadline}` : null, ago(c.created_at)].filter(Boolean).join(" · ") }),
+        h("div", { class: "muted small", text: best ? `Best fit: ${channelById(best.channel_id)?.title || best.title} (${best.score})` : c.matches ? "No network fits: a new account is suggested" : "Not matched yet" })),
+      h("span", { class: `pill ${rcls}`, text: rlabel }));
+  };
+  return [pageHead("Campaigns", "Paid campaigns (Whop and similar): paste one, see the rules, the risk, and which network should make it."),
+    form,
+    h("section", { class: "card" }, h("h2", { text: "Your campaigns" }), rows.length ? rows.map(row) : empty("No campaign yet. Paste your first one above."))];
+};
+
+VIEWS.campaign = async (route) => {
+  const [c] = await q(sb.from("campaigns").select("*").eq("id", route.id));
+  if (!c) return [pageHead("Campaigns"), empty("This campaign was deleted.", h("a", { class: "btn", href: "#/campaigns", text: "Back" }))];
+  const card = c.card || {};
+  const [scls, slabel] = CAMP_STATUS[c.status] || ["short", c.status];
+  const [rcls, rlabel] = CAMP_RISK[c.risk] || ["short", c.risk];
+  const setStatus = async (s) => { await q(sb.from("campaigns").update({ status: s }).eq("id", c.id)); toast(`Campaign ${CAMP_STATUS[s][1].toLowerCase()}`); render(); };
+  const rematch = async (e) => {
+    const b = e?.currentTarget; if (b) { b.disabled = true; b.textContent = "Matching…"; }
+    try { await campaignCall({ action: "match", campaign_id: c.id }); toast("Networks ranked again"); render(); }
+    catch (err) { toast(err.message); if (b) { b.disabled = false; b.textContent = "Match again"; } }
+  };
+  const head = pageHead(c.title, [c.brand, card.product].filter(Boolean).join(" · ") || null,
+    h("a", { class: "btn ghost", href: "#/campaigns", text: "← All campaigns" }),
+    h("button", { class: "btn", type: "button", text: "Match again", onclick: rematch }),
+    c.status !== "active" ? h("button", { class: "btn primary", type: "button", text: "Activate", onclick: () => {
+      if (c.risk === "red" && !confirm("This campaign is high risk for your channels. Activate it anyway?")) return;
+      setStatus("active");
+    } }) : h("button", { class: "btn", type: "button", text: "Pause", onclick: () => setStatus("paused") }),
+    c.status !== "skipped" ? h("button", { class: "btn ghost", type: "button", text: "Skip", onclick: () => setStatus("skipped") }) : null,
+    h("button", { class: "btn ghost", type: "button", text: "Delete", onclick: async () => {
+      if (!confirm("Delete this campaign?")) return;
+      await q(sb.from("campaigns").delete().eq("id", c.id)); toast("Deleted"); go("#/campaigns");
+    } }));
+
+  const pills = h("div", { class: "row" }, h("span", { class: `pill ${scls}`, text: slabel }), h("span", { class: `pill ${rcls}`, text: rlabel }),
+    h("span", { class: "pill short", text: (CAMP_TYPES.find(([v]) => v === c.content_type) || [, c.content_type])[1] }));
+  const risk = c.risk !== "green" || (c.risk_notes || []).length ? h("section", { class: "card", style: `border-color:var(--${c.risk === "red" ? "crit" : c.risk === "orange" ? "cue" : "line"})` },
+    h("h2", { text: c.risk === "red" ? "High risk: we recommend skipping it" : c.risk === "orange" ? "Allowed, but be careful" : "Risk check" }),
+    (c.risk_notes || []).length ? h("ul", {}, c.risk_notes.map((n) => h("li", { text: n }))) : h("p", { class: "muted", text: "Nothing flagged." })) : null;
+
+  const stat = (label, value, sub) => h("div", { class: "stat" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), sub ? h("div", { class: "muted small", text: sub }) : null);
+  const geo = (card.audience?.countries || []).map((g) => `${g.codes.join("+")}${g.min_pct ? ` ≥ ${g.min_pct}%` : ""}`).join(", ");
+  const numbers = h("section", { class: "stats" },
+    stat("Pay", c.rate_per_1k ? `${money(c.rate_per_1k)} / 1k` : "—", card.min_views_to_pay ? `paid from ${fmt(card.min_views_to_pay)} views` : "per 1,000 views"),
+    stat("Max per post", money(c.cap_per_post), c.rate_per_1k && c.cap_per_post ? `reached at ${fmtc((c.cap_per_post / c.rate_per_1k) * 1000)} views` : null),
+    stat("Budget", money(c.budget), c.deadline ? `ends ${c.deadline}` : "no end date given"),
+    stat("Platforms", (c.platforms || []).length ? c.platforms.map((p) => ({ youtube: "YT", tiktok: "TikTok", instagram: "IG", facebook: "FB", x: "X" })[p] || p).join(" · ") : "Any", [card.languages?.length ? card.languages.join("/").toUpperCase() : null, geo || null, card.min_followers ? `${fmt(card.min_followers)}+ followers` : null].filter(Boolean).join(" · ") || null));
+
+  const listBlock = (title, items, empty_) => h("div", { style: "display:flex;flex-direction:column;gap:6px;min-width:0" }, h("h3", { style: "margin:0;font-size:14px", text: title }),
+    items?.length ? h("ul", { style: "margin:0;padding-left:18px" }, items.map((x) => h("li", { text: x }))) : h("span", { class: "muted small", text: empty_ || "—" }));
+  const rules = h("section", { class: "card" }, h("h2", { text: "What they want" }),
+    card.summary ? h("p", { text: card.summary }) : null,
+    h("div", { class: "form-grid", style: "align-items:start" },
+      listBlock("Must include", [...(card.must_include || []), ...(card.hashtags?.length ? [`Hashtags: ${card.hashtags.join(" ")}`] : []), ...(card.tags_mentions?.length ? [`Tag: ${card.tags_mentions.join(" ")}`] : []),
+        ...(card.bio_link ? [`Link in bio: ${card.bio_link}`] : []), ...(card.links || []).map((l) => `Link: ${l}`)]),
+      listBlock("Gets rejected if", card.banned),
+      listBlock("Details", [card.page_type ? `Page type: ${card.page_type}` : null, card.audience?.min_age ? `Audience ${card.audience.min_age}+` : null, card.audience?.notes || null,
+        `AI content: ${card.ai_content || "unclear"}`, card.length?.min_s || card.length?.max_s ? `Length: ${card.length.min_s || "?"}–${card.length.max_s || "?"} s` : null,
+        card.submission ? `Submit: ${card.submission}` : null, ...(card.assets || []).map((a) => `Their files: ${a}`)].filter(Boolean))));
+
+  // ---- the networks, ranked ----
+  const ms = c.matches || [];
+  const matchRow = (m) => {
+    const ch = channelById(m.channel_id);
+    return h("tr", {},
+      h("td", {}, h("div", { class: "row", style: "gap:8px;flex-wrap:nowrap" }, ch?.thumbnail_url ? h("img", { src: ch.thumbnail_url, alt: "", width: 28, height: 28, style: "border-radius:50%" }) : null,
+        h("a", { href: `#/channel/${m.channel_id}`, text: ch?.title || m.title }))),
+      h("td", {}, scorePill(m.score)),
+      h("td", {}, h("span", { class: `pill ${m.eligible ? "ok" : "crit"}`, text: m.eligible ? "Eligible" : "Not eligible" })),
+      h("td", { class: "mono", text: m.avg_views ? fmtc(m.avg_views) : "—" }),
+      h("td", { class: "mono", text: m.est_payout === null || m.est_payout === undefined ? "—" : money(m.est_payout) }),
+      h("td", { style: "min-width:260px" },
+        [...(m.blockers || []).map((t) => h("div", { class: "down small", text: `✕ ${t}` })), ...(m.reasons || []).map((t) => h("div", { class: "small", text: `✓ ${t}` })),
+          ...(m.todo || []).map((t) => h("div", { class: "muted small", text: `• ${t}` })),
+          m.top_countries?.length ? h("div", { class: "muted small", text: `Top countries: ${m.top_countries.map(([k, v]) => `${k} ${v}%`).join(", ")}` }) : null]));
+  };
+  const goodFit = ms.some((m) => m.eligible && m.score >= 60);
+  const networks = h("section", { class: "card" }, h("h2", { text: "Which network should make it" }),
+    ms.length ? [h("p", { class: "muted small", text: `Score = topic fit 40 + language 15 + audience countries 20 + platform 10 + recent views 15. Estimated pay per post uses each network's average views per video over 28 days.${c.matched_at ? ` Matched ${ago(c.matched_at)}.` : ""}` }),
+      h("div", { class: "tablebox" }, h("table", { style: "min-width:760px" },
+        h("thead", {}, h("tr", {}, ["Network", "Score", "Eligible", "Avg views", "Est. per post", "Why"].map((t) => h("th", { text: t })))),
+        h("tbody", {}, ms.map(matchRow))))]
+      : empty("Not matched yet.", h("button", { class: "btn", type: "button", text: "Match now", onclick: rematch })));
+
+  const na = c.new_account;
+  const newAcc = na ? h(goodFit ? "details" : "section", { class: "card", ...(goodFit ? {} : { style: "border-color:var(--signal)" }) },
+    goodFit ? h("summary", { text: "Or open a new account just for it" }) : h("h2", { text: "No network fits well: open a new account" }),
+    h("div", { class: "form-grid", style: "align-items:start;margin-top:8px" },
+      h("div", {}, h("div", { class: "muted small", text: "Name" }), h("div", { style: "font-weight:600", text: na.name }), h("div", { class: "muted small", text: na.handle })),
+      h("div", {}, h("div", { class: "muted small", text: "Niche · language" }), h("div", { text: `${na.niche} · ${String(na.language || "").toUpperCase()}` })),
+      h("div", {}, h("div", { class: "muted small", text: "Open first on" }), h("div", { text: (na.platforms || []).join(", ") }))),
+    h("div", { style: "margin-top:10px" }, h("div", { class: "muted small", text: "Bio" }), h("div", { class: "row", style: "gap:8px" }, h("span", { text: na.bio }),
+      h("button", { class: "btn ghost", type: "button", text: "Copy", onclick: () => navigator.clipboard?.writeText(na.bio).then(() => toast("Bio copied")) }))),
+    na.angles?.length ? h("div", { style: "margin-top:10px" }, h("div", { class: "muted small", text: "First video angles" }), h("ol", { style: "margin:4px 0 0;padding-left:18px" }, na.angles.map((a) => h("li", { text: a })))) : null,
+    na.why ? h("p", { class: "muted small", text: na.why }) : null,
+    h("p", { class: "muted small", text: "Create the account, connect it in Networks, then press “Match again”. Ask Claude for its logo and banner." })) : null;
+
+  // ---- edit what was read ----
+  const lines = (a) => (a || []).join("\n");
+  const toList = (s) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+  const f = {
+    title: h("input", { class: "field", id: "ce-title", value: c.title }), brand: h("input", { class: "field", id: "ce-brand", value: c.brand || "" }),
+    rate: h("input", { class: "field", id: "ce-rate", type: "number", step: "0.01", min: 0, value: c.rate_per_1k ?? "" }),
+    cap: h("input", { class: "field", id: "ce-cap", type: "number", step: "1", min: 0, value: c.cap_per_post ?? "" }),
+    budget: h("input", { class: "field", id: "ce-budget", type: "number", step: "1", min: 0, value: c.budget ?? "" }),
+    deadline: h("input", { class: "field", id: "ce-deadline", type: "date", value: c.deadline || "" }),
+    type: h("select", { class: "field", id: "ce-type" }, CAMP_TYPES.map(([v, t]) => h("option", { value: v, selected: v === c.content_type, text: t }))),
+    langs: h("input", { class: "field", id: "ce-langs", value: (card.languages || []).join(", "), placeholder: "en, fr (empty = any)" }),
+    geo: h("input", { class: "field", id: "ce-geo", value: (card.audience?.countries || []).map((g) => `${g.codes.join("+")}:${g.min_pct ?? ""}`).join(", "), placeholder: "US:40, GB+CA:20" }),
+    followers: h("input", { class: "field", id: "ce-fol", type: "number", min: 0, value: card.min_followers ?? "" }),
+    must: h("textarea", { class: "field", id: "ce-must", rows: 4, value: lines(card.must_include) }),
+    banned: h("textarea", { class: "field", id: "ce-ban", rows: 4, value: lines(card.banned) }),
+    tags: h("input", { class: "field", id: "ce-tags", value: (card.hashtags || []).join(" ") }),
+    bio: h("input", { class: "field", id: "ce-bio", value: card.bio_link || "" }),
+    ai: h("select", { class: "field", id: "ce-ai" }, [["allowed", "Allowed"], ["banned", "Banned"], ["unclear", "Unclear"]].map(([v, t]) => h("option", { value: v, selected: v === (card.ai_content || "unclear"), text: t }))),
+  };
+  const plats = CAMP_PLATS.map(([v, t]) => h("label", { class: "row", style: "gap:6px" }, h("input", { type: "checkbox", value: v, checked: (c.platforms || []).includes(v) }), t));
+  const fld = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
+  const numOrNull = (el) => (el.value === "" ? null : Number(el.value));
+  const edit = h("details", { class: "card" }, h("summary", { text: "Fix what was read" }),
+    h("form", { style: "display:flex;flex-direction:column;gap:12px;margin-top:12px", onsubmit: async (e) => {
+      e.preventDefault();
+      const platforms = plats.map((l) => l.querySelector("input")).filter((i) => i.checked).map((i) => i.value);
+      const countries = f.geo.value.split(",").map((s) => s.trim()).filter(Boolean).map((s) => {
+        const [codes, pct] = s.split(":");
+        return { codes: codes.split("+").map((x) => x.trim().toUpperCase()).filter((x) => /^[A-Z]{2}$/.test(x)), min_pct: pct ? Number(pct) : null };
+      }).filter((g) => g.codes.length);
+      const next = { ...card, title: f.title.value.trim() || c.title, brand: f.brand.value.trim(), rate_per_1k: numOrNull(f.rate), cap_per_post: numOrNull(f.cap), budget: numOrNull(f.budget),
+        deadline: f.deadline.value || null, platforms, content_type: f.type.value, languages: f.langs.value.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+        audience: { ...(card.audience || {}), countries }, min_followers: numOrNull(f.followers), must_include: toList(f.must.value), banned: toList(f.banned.value),
+        hashtags: f.tags.value.split(/\s+/).filter(Boolean), bio_link: f.bio.value.trim() || null, ai_content: f.ai.value };
+      try {
+        await q(sb.from("campaigns").update({ card: next, title: next.title, brand: next.brand || null, rate_per_1k: next.rate_per_1k, cap_per_post: next.cap_per_post,
+          budget: next.budget, deadline: next.deadline, platforms, content_type: next.content_type }).eq("id", c.id));
+        toast("Saved. Matching again…");
+        await rematch();
+      } catch (err) { toast(err.message); }
+    } },
+      h("div", { class: "form-grid" }, fld("ce-title", "Name", f.title), fld("ce-brand", "Brand", f.brand), fld("ce-type", "Type", f.type)),
+      h("div", { class: "form-grid" }, fld("ce-rate", "$ per 1k views", f.rate), fld("ce-cap", "Max $ per post", f.cap), fld("ce-budget", "Budget $", f.budget), fld("ce-deadline", "Ends", f.deadline)),
+      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Platforms" }), h("div", { class: "row" }, plats)),
+      h("div", { class: "form-grid" }, fld("ce-langs", "Languages", f.langs), fld("ce-geo", "Audience countries (min %)", f.geo), fld("ce-fol", "Min followers", f.followers), fld("ce-ai", "AI content", f.ai)),
+      h("div", { class: "form-grid" }, fld("ce-must", "Must include (one per line)", f.must), fld("ce-ban", "Gets rejected if (one per line)", f.banned)),
+      h("div", { class: "form-grid" }, fld("ce-tags", "Hashtags", f.tags), fld("ce-bio", "Link in bio", f.bio)),
+      h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit", text: "Save and match again" }))));
+
+  const source = h("details", { class: "card" }, h("summary", { text: "Original brief" }),
+    c.source_url ? h("p", {}, h("a", { href: c.source_url, target: "_blank", rel: "noopener", text: c.source_url })) : null,
+    h("pre", { style: "white-space:pre-wrap;max-height:420px;overflow:auto;font-size:12.5px", text: c.source_text || "" }));
+
+  const next = h("section", { class: "card" }, h("h2", { text: "Next" }),
+    h("p", { class: "muted", text: c.content_type === "clipping"
+      ? "Making the videos comes in Phase 2: their long videos go into the Clipper with these rules, and every Short waits for your approval."
+      : "Making the videos comes in Phase 2: DeepSeek brainstorms angles and writes the scripts with these rules, and every video waits for your approval." }));
+
+  return [head, pills, risk, numbers, rules, networks, newAcc, edit, source, next];
+};
 
 VIEWS.calendar = async () => {
   await publishCall({ action: "blotato_sync" }).catch(() => {});  // a calendar without it still shows what the app knows
