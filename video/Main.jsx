@@ -5,6 +5,7 @@ import { ARABIC, LATIN, useFonts } from "./fonts.js";
 import { COVER_FRAMES, MUSIC_UNDER_VOICE } from "./layout.js";
 import { Thumbnail } from "./Thumbnail.jsx";
 import { Explainer } from "./Explainer.jsx";
+import { StoryFilm } from "./story/StoryFilm.jsx";
 
 // "static:sfx/x.mp3" = file shipped with the renderer bundle; anything else is a normal URL.
 const src = (u) => (u && u.startsWith("static:") ? staticFile(u.slice(7)) : u);
@@ -200,8 +201,9 @@ function Progress({ total, color }) {
   );
 }
 
-// The Explainer style draws its own scenes; every other video is footage + captions.
+// The Explainer style draws its own scenes, the Story style is a film drawn in code; every other video is footage + captions.
 export function Main(props) {
+  if (props.style === "story") return <StoryFilm {...props} />;
   return props.style === "explainer" ? <Explainer {...props} /> : <Footage {...props} />;
 }
 

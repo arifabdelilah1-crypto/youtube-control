@@ -213,6 +213,8 @@ export function buildProps(project, scenes, urls = {}) {
   const [width, height] = SIZES[project.aspect] || SIZES["9:16"];
   const ordered = [...scenes].sort((a, b) => a.idx - b.idx);
   const drawn = project.settings?.style === "explainer" ? (Array.isArray(project.settings.explainer?.scenes) ? project.settings.explainer.scenes : []) : null;
+  // the Story style: a film drawn in code (video/story), timed on the words; its subtitles are plain lines of ~6 words
+  const story = project.settings?.style === "story" && project.settings.story?.code ? project.settings.story : null;
   let from = 0;
   const out = ordered.map((s, i) => {
     const voiceOk = !!(s.voice_path && s.voice_text === s.text && urls.voice?.[s.id]);
@@ -231,7 +233,7 @@ export function buildProps(project, scenes, urls = {}) {
         const whole = Math.max(1, Math.ceil(Number(x.duration || 1) * FPS));
         return { url: x.url, volume: Math.min(Math.max(0, Number(x.volume ?? 0.6)), 1), start, frames: x.cut === false ? whole : Math.min(whole, dur - start), fade: x.cut !== false && whole > dur - start };
       }),
-      groups: captionGroups(words, drawn ? 5 : settings.captions.words || 3),
+      groups: captionGroups(words, story ? 6 : drawn ? 5 : settings.captions.words || 3),
       ...(drawn ? { x: explainerScene(drawn[i], words, sceneSeconds(s)) } : {}),
       clip: {
         type: clip.type || "card",
@@ -246,7 +248,8 @@ export function buildProps(project, scenes, urls = {}) {
     return scene;
   });
   return {
-    style: drawn ? "explainer" : "classic",
+    style: story ? "story" : drawn ? "explainer" : "classic",
+    story: story ? { code: String(story.code), look: ["noir", "paper", "pop"].includes(story.look) ? story.look : "noir" } : null,
     look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow") : null,
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),
     rtl: RTL_LANGS.has(project.language),
@@ -272,7 +275,7 @@ export function preRenderCheck(project, scenes) {
   const outdated = ordered.filter((s) => s.voice_path && s.voice_text !== s.text).length;
   if (noVoice) issues.push({ level: "block", text: `${noVoice} scene(s) have no voice yet. Press “Update voice”.` });
   if (outdated) issues.push({ level: "block", text: `${outdated} scene(s) were edited after their voice was made. Press “Update voice”.` });
-  const drawn = project.settings?.style === "explainer";
+  const drawn = ["explainer", "story"].includes(project.settings?.style);
   if (drawn && !["9:16", "16:9"].includes(project.aspect)) issues.push({ level: "block", text: "Animations are drawn for 9:16 (Short) or 16:9 (YouTube video). Choose one of them on its Studio page." });
   const cards = drawn ? 0 : ordered.filter((s) => !s.clip || s.clip.type === "card").length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });

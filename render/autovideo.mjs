@@ -12,11 +12,12 @@ import { creditsText, foundMusic, hasThumbnail, preRenderCheck, sceneSeconds, wi
 import { PRESETS, presetFx } from "../web/voicefx.js";
 import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
+import { writeStoryFilm } from "./story.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const FN = { ai: process.env.AI_FUNCTION || "ai", studio: process.env.STUDIO_FUNCTION || "studio", publish: "publish", explainer: "explainer" };
+const FN = { ai: process.env.AI_FUNCTION || "ai", studio: process.env.STUDIO_FUNCTION || "studio", publish: "publish", explainer: "explainer", story: "story" };
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -164,6 +165,7 @@ async function buildScenes(idea, channel, options, project) {
   const style = channel.video_style || {};
   const ai = idea.ai || {};
   const drawn = options.video_style === "explainer";
+  const story = options.video_style === "story" && ai.story?.code;
   const brief = ai.brief || {};
   const language = options.language || ai.language || style.language || channel.language || "en";
   const voiceStyle = options.voice_style || brief.voice_style || "natural";
@@ -179,11 +181,14 @@ async function buildScenes(idea, channel, options, project) {
     publish: { ...(base.publish || {}), mode: "ask" },
     // the Explainer style draws its scenes (video/Explainer.jsx): the plan without the narration, which is the script
     ...(drawn ? { style: "explainer", explainer: { scenes: (ai.explainer?.scenes || []).map(({ narration: _n, ...rest }) => rest), model: ai.explainer?.model || null, look: options.look || "glow" },
-      hook: { ...(base.hook || {}), enabled: false } } : { style: "classic" }),
+      hook: { ...(base.hook || {}), enabled: false } } : story ? {
+      // the Story style: Claude's film, in the look picked; its own plain subtitles, no hook text on top
+      style: "story", story: { code: ai.story.code, look: options.look || ai.story.look || "noir" }, hook: { ...(base.hook || {}), enabled: false },
+      captions: { ...(base.captions || {}), enabled: false } } : { style: "classic" }),
   };
   const out = await call("studio", {
     action: "build", project_id: project?.id || null, idea_id: idea.id, channel_id: channel.id, title: idea.video_title || idea.title, script: idea.script,
-    language, voice, voice_rate: rate, aspect: drawn ? (options.aspect === "16:9" ? "16:9" : "9:16") : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn ? [] : idea.search_terms || [],
+    language, voice, voice_rate: rate, aspect: drawn || story ? (options.aspect === "16:9" ? "16:9" : "9:16") : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn || story ? [] : idea.search_terms || [],
   });
   if (!out.project_id) throw new Error(out.error || "The scenes couldn't be built");
   if (out.status === "failed") throw new Error(out.error || "The voice job couldn't start");
@@ -356,7 +361,7 @@ async function renderVideo(projectId, ideaId) {
   const blocks = preRenderCheck(project, scenes).filter((x) => x.level === "block");
   if (blocks.length) throw new Error(blocks.map((b) => b.text).join(" "));
   // the licences need these lines in the description (a drawn Explainer shows no footage or photo: only the music is credited)
-  const drawnOnly = project.settings?.style === "explainer";
+  const drawnOnly = ["explainer", "story"].includes(project.settings?.style);
   const idea = await one("ideas", ideaId);
   await rest("PATCH", "ideas", `?id=eq.${ideaId}`, { video_description: withCredits(idea.video_description || "", creditsText(drawnOnly ? [] : scenes, project.settings?.music, drawnOnly ? null : project.settings?.thumbnail)) });
   let lastError = "";
@@ -378,7 +383,7 @@ async function renderVideo(projectId, ideaId) {
 
 /** Measures the finished file. Reports what it finds; a failed check keeps the video from going out. */
 async function finalChecks(job, project) {
-  const drawn = project.settings?.style === "explainer";
+  const drawn = ["explainer", "story"].includes(project.settings?.style);
   if (!isVds(job.output_path) || !mediaReady()) return [{ name: "File", ok: false, detail: "The video isn't on the VDS, so it couldn't be measured." }];
   const file = path.join(os.tmpdir(), `${job.id}.mp4`);
   await downloadFromVds(vdsPath(job.output_path), file);
@@ -414,8 +419,15 @@ async function main(id) {
 
   // the network may have a script to keep, or none yet
   let idea = await one("ideas", run.idea_id);
-  const drawn = options.video_style === "explainer";
-  if (drawn) {
+  const storyStyle = options.video_style === "story";
+  const drawn = options.video_style === "explainer" || storyStyle;
+  if (storyStyle) {
+    // the film belongs to its words: a kept script keeps its film only if that film was made for it
+    const lines = (idea.ai?.story?.lines || []).map((l) => `VO: ${l}`).join("\n\n");
+    if (options.keep_script && idea.ai?.story?.code && lines === String(idea.script || "").trim()) await skip("script", "Keeping the film already drawn");
+    else await step("script", (note) => writeStoryFilm(idea, channel, options, { ROOT, rest, call, log, note, warn }));
+    await skip("review", "The story and its film go together");
+  } else if (drawn) {
     // the drawing belongs to its words: a kept script keeps its plan only if that plan was made for it
     const planned = idea.ai?.style === "explainer" && idea.ai?.explainer?.scenes?.length && (idea.ai.explainer.look || "glow") === (options.look || "glow")
       && idea.ai.explainer.scenes.map((x) => `VO: ${x.narration}`).join("\n\n") === String(idea.script || "").trim();

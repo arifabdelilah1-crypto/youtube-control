@@ -1105,6 +1105,10 @@ VIEWS.ideas = async () => {
 // video/Explainer.jsx animates it in the chosen style, as a 9:16 Short or a 16:9 YouTube video. No stock clips, no sound effects.
 // ==================================================================
 const ANIM_LOOKS = {
+  // Story stick (supabase/functions/story, render/story.mjs): Claude writes a "you" story and draws its own film in code
+  noir: { label: "Story · Noir", story: true, text: "A cinematic stick-figure story: Claude writes it and draws every shot in code. Night sets, one warm light per shot, grain. The ideas are acted out, never written on screen." },
+  paper: { label: "Story · Storybook", story: true, text: "The same kind of story drawn like a picture book: warm paper, soft colours, hand-drawn lines that gently move." },
+  pop: { label: "Story · Pop", story: true, text: "A bold comic version: bright flat colours, thick outlines, halftone dots and outlined subtitles." },
   glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
   minimal: { label: "Minimal", text: "Thin white lines on pure black, one short phrase per scene in spaced capitals, rings and soft fades." },
   whiteboard: { label: "Whiteboard", text: "Drawn in marker on a white board, with hand-written titles." },
@@ -1132,6 +1136,13 @@ const ANIM_LENGTHS = {
 const ANIM_FORMATS = [["9:16", "Short · 9:16"], ["16:9", "YouTube · 16:9"]];
 const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45", aspect: "9:16" };
 // past 3 minutes each chapter re-reads the rules and the outline: measured about 1.45 times the per-minute price (Opus, 5 min: $0.47)
+// Story stick: Claude writes the whole film (most of the price is the code it writes), measured on test films
+const STORY_LENGTHS = { "9:16": [["short30", "About 30 s", 0.5], ["short45", "About 45 s", 0.75], ["short60", "About 1 min", 1]], "16:9": [["short45", "About 45 s", 0.75], ["short60", "About 1 min", 1]] };
+const STORY_MODELS = { "claude-opus-5-5": { base: 0.05, perMinute: 0.45 }, "claude-fable-5-2": { base: 0.1, perMinute: 0.9 }, "claude-sonnet-5-5": { base: 0.025, perMinute: 0.23 } };
+const storyCost = (model, length) => {
+  const m = STORY_MODELS[model] || STORY_MODELS["claude-opus-5-5"], minutes = STORY_LENGTHS["9:16"].find(([k]) => k === length)?.[2] || 0.75;
+  return m.base + m.perMinute * minutes;
+};
 const animCost = (model, length) => {
   const m = EXPLAINER_MODELS[model] || EXPLAINER_MODELS["claude-opus-5-5"], minutes = Object.values(ANIM_LENGTHS).flat().find(([k]) => k === length)?.[2] || 0.75;
   return m.base + m.perMinute * minutes * (minutes > 3 ? 1.45 : 1);
@@ -1148,7 +1159,7 @@ VIEWS.animation = async () => {
   f.aspect = h("select", { id: "a-aspect", class: "field" }, ANIM_FORMATS.map(([v, t]) => h("option", { value: v, selected: animUi.aspect === v, text: t })));
   f.length = h("select", { id: "a-length", class: "field" });
   const fillLengths = (pick) => {
-    const list = ANIM_LENGTHS[f.aspect.value] || ANIM_LENGTHS["9:16"];
+    const list = (ANIM_LOOKS[animUi.look]?.story ? STORY_LENGTHS : ANIM_LENGTHS)[f.aspect.value] || ANIM_LENGTHS["9:16"];
     const keep = list.some(([v]) => v === pick) ? pick : list[f.aspect.value === "16:9" ? 1 : 0][0];
     f.length.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === keep, text: t })));
   };
@@ -1167,7 +1178,11 @@ VIEWS.animation = async () => {
   const langNow = () => f.language.value || channelById(f.channel.value)?.video_style?.language || channelById(f.channel.value)?.language || "en";
   const fillVoices = () => f.voice.replaceChildren(h("option", { value: "", text: "Chosen for you" }), ...(VOICES[String(langNow()).toLowerCase()] || VOICES.en).map(([v, t]) => h("option", { value: v, text: t })));
   const cost = h("p", { class: "muted small", style: "margin:0", "aria-live": "polite" });
-  const showCost = () => { animUi.model = f.model.value; animUi.length = f.length.value; cost.textContent = `About $${animCost(f.model.value, f.length.value).toFixed(2)} for Claude's plan. The voice and the render cost nothing.`; };
+  const showCost = () => {
+    animUi.model = f.model.value; animUi.length = f.length.value;
+    cost.textContent = ANIM_LOOKS[animUi.look]?.story ? `About $${storyCost(f.model.value, f.length.value).toFixed(2)} for Claude's story and film code. The voice and the render cost nothing.`
+      : `About $${animCost(f.model.value, f.length.value).toFixed(2)} for Claude's plan. The voice and the render cost nothing.`;
+  };
   f.language.addEventListener("change", fillVoices); f.channel.addEventListener("change", fillVoices);
   [f.model, f.length].forEach((el) => el.addEventListener("change", showCost));
   fillVoices(); showCost(); showFormat();
@@ -1178,7 +1193,12 @@ VIEWS.animation = async () => {
   const paintLooks = () => {
     if (!ANIM_LOOKS[animUi.look]) animUi.look = "glow";
     looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
-      title: l.text, onclick: () => { animUi.look = k; paintLooks(); } },
+      title: l.text, onclick: () => {
+        const was = !!ANIM_LOOKS[animUi.look]?.story;
+        animUi.look = k; paintLooks();
+        // a story is short and has no music by default; switching kinds refreshes the lengths and the price
+        if (was !== !!l.story) { fillLengths(l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); if (l.story) f.music.checked = false; showCost(); }
+      } },
       h("img", { src: l.img, alt: "", loading: "lazy", width: 120, height: 213 }),
       h("span", { class: "anim-look-name", text: l.label }))));
     lookNote.replaceChildren(h("strong", { text: `${ANIM_LOOKS[animUi.look].label}: ` }), ANIM_LOOKS[animUi.look].text);
@@ -1199,7 +1219,7 @@ VIEWS.animation = async () => {
       const id = picked ? picked.id : (await q(sb.from("ideas").insert({ title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
       await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
         look: animUi.look, ai_model: f.model.value, aspect: f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
-        music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask" } }, "explainer");
+        music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask" } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
       toast("Making your animation");
       f.subject.value = ""; f.idea.value = "";
       await reload();
@@ -1207,7 +1227,7 @@ VIEWS.animation = async () => {
     go.disabled = false; go.textContent = "Create animation";
   } },
     h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
-    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks` }), looks, lookNote,
+    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 3 are Story stick: Claude draws a whole film)` }), looks, lookNote,
     h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
     h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-aspect", "Format", f.aspect, formatNote), field("a-length", "Length", f.length)),
     h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
@@ -1225,12 +1245,12 @@ VIEWS.animation = async () => {
     if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
     const [rows, all] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(200))]);
     ideas = rows;
-    runs = all.filter((r) => r.options?.video_style === "explainer" && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
+    runs = all.filter((r) => ["explainer", "story"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
   };
   const reload = async () => { await load(); paint(); };
   const stopRun = async (r) => { try { await aiCall({ action: "auto_stop", idea_id: r.idea_id, run_id: r.id }); await reload(); } catch (e) { toast(e.message); } };
   const again = async (r) => {
-    try { await aiCall({ action: "start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } }, "explainer"); toast("Making it again"); await reload(); } catch (e) { toast(e.message); }
+    try { await aiCall({ action: "start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } }, r.options?.video_style === "story" ? "story" : "explainer"); toast("Making it again"); await reload(); } catch (e) { toast(e.message); }
   };
   const row = (r) => {
     const look = ANIM_LOOKS[r.options?.look] || ANIM_LOOKS.glow;

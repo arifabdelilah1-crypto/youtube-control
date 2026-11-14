@@ -13,7 +13,8 @@
     "@remotion/renderer": "4.0.535",
     "react": "18.3.1",
     "react-dom": "18.3.1",
-    "remotion": "4.0.535"
+    "remotion": "4.0.535",
+    "sucrase": "^3.35.0"
   },
   "devDependencies": {
     "esbuild": "0.25.10"
