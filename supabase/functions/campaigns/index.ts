@@ -5,7 +5,7 @@
 //   POST {action:"match", campaign_id}      -> scores every network for this campaign (niche fit, language, audience countries from
 //                                              YouTube Analytics, followers, platforms, recent views) with an estimated payout per post,
 //                                              plus a suggested new account when nothing fits. Returns {campaign}.
-// Dashboard users only (JWT + am_i_allowed). Secrets: DEEPSEEK_API_KEY, optional DEEPSEEK_MODEL.
+// Dashboard users (JWT + am_i_allowed), or jobs with x-cron-secret. Secrets: DEEPSEEK_API_KEY, optional DEEPSEEK_MODEL.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
@@ -16,7 +16,7 @@ const DS_MODEL = Deno.env.get("DEEPSEEK_MODEL") || "deepseek-chat";
 const DAILY_RUNS = 200;
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
@@ -34,7 +34,7 @@ function parseJson(text: string) {
   if (a < 0 || b <= a) throw new Error("DeepSeek's answer wasn't valid JSON");
   return JSON.parse(text.slice(a, b + 1));
 }
-async function deepseek(kind: string, system: string, user: string, ownerId: string) {
+async function deepseek(kind: string, system: string, user: string, ownerId: string | null) {
   if (!DS_KEY) throw new Error("DeepSeek isn't set up yet: add DEEPSEEK_API_KEY in Supabase Edge Function secrets.");
   const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", new Date(Date.now() - 864e5).toISOString());
   if ((count ?? 0) >= DAILY_RUNS) throw new Error(`Daily AI limit reached (${DAILY_RUNS} runs in 24 h).`);
@@ -136,7 +136,7 @@ function cleanCard(c: any) {
 }
 const RANK = { green: 0, orange: 1, red: 2 } as const;
 
-async function parse(body: any, userId: string) {
+async function parse(body: any, userId: string | null) {
   const url = clean(body.url, 1000);
   let text = String(body.text ?? "").trim().slice(0, 40_000);
   if (!text && !url) throw new Error("Paste the campaign text or a link.");
@@ -170,7 +170,7 @@ content angles that fit the campaign rules. Plain English. Return json:
 {"fits": [{"channel_id": "...", "fit": 0-100, "why": "one short sentence"}],
  "new_account": {"name": "", "handle": "@...", "bio": "", "niche": "", "language": "en", "platforms": ["tiktok","instagram","youtube"], "angles": ["", "", ""], "why": ""}}`;
 
-async function match(body: any, userId: string) {
+async function match(body: any, userId: string | null) {
   if (!UUID.test(body.campaign_id || "")) throw new Error("campaign_id missing");
   const { data: camp } = await db.from("campaigns").select("*").eq("id", body.campaign_id).single();
   if (!camp) throw new Error("Campaign not found.");
@@ -217,7 +217,7 @@ async function match(body: any, userId: string) {
     const reasons: string[] = [], blockers: string[] = [], todo: string[] = [];
     const f = fits.get(c.id);
     const fit = Math.max(0, Math.min(100, Number(f?.fit) || 0));
-    if (f?.why) reasons.push(clean(f.why, 200));
+    if (f?.why) (fit < 30 ? blockers : reasons).push(fit < 30 ? `Off-topic for this audience: ${clean(f.why, 200)}` : clean(f.why, 200));
     let score = fit * 0.4;
     // language
     if (!langs.length || langs.includes(c.language)) score += 15;
@@ -264,12 +264,19 @@ async function match(body: any, userId: string) {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
-    const user = createClient(URL_, ANON, { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
-    const [{ data: allowed }, { data: { user: u } }] = await Promise.all([user.rpc("am_i_allowed"), user.auth.getUser()]);
-    if (!allowed || !u) return json({ error: "not allowed" }, 403);
+    const cron = req.headers.get("x-cron-secret");
+    let uid: string | null = null;
+    if (cron) {
+      if (cron !== (await db.rpc("get_cron_secret")).data) return json({ error: "not allowed" }, 403);
+    } else {
+      const user = createClient(URL_, ANON, { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
+      const [{ data: allowed }, { data: { user: u } }] = await Promise.all([user.rpc("am_i_allowed"), user.auth.getUser()]);
+      if (!allowed || !u) return json({ error: "not allowed" }, 403);
+      uid = u.id;
+    }
     const body = await req.json().catch(() => ({}));
-    if (body.action === "parse") return json(await parse(body, u.id));
-    if (body.action === "match") return json(await match(body, u.id));
+    if (body.action === "parse") return json(await parse(body, uid));
+    if (body.action === "match") return json(await match(body, uid));
     return json({ error: "unknown action" }, 400);
   } catch (e) {
     return json({ error: (e as Error).message || String(e) }, 400);
