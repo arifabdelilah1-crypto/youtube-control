@@ -117,8 +117,26 @@ async function toYouTube(row, sched, file, job) {
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok || !data.id) throw new Error(`YouTube upload ${res.status}: ${JSON.stringify(data.error || data).slice(0, 400)}`);
-  const warning = await setThumbnail(row, job, data.id, access_token);
-  return { youtube_video_id: data.id, status: meta.status.publishAt ? "scheduled" : "published", warning };
+  const warnings = [await setThumbnail(row, job, data.id, access_token), await markPaidPromotion(job, data.id, access_token)].filter(Boolean);
+  return { youtube_video_id: data.id, status: meta.status.publishAt ? "scheduled" : "published", warning: warnings.join(" ") || null };
+}
+
+/** A video made for a paid campaign (Campaigns page) gets YouTube's "Includes paid promotion" label, as YouTube and the brands require. */
+async function markPaidPromotion(job, videoId, token) {
+  try {
+    const posts = await rest("GET", "campaign_posts", `?render_job_id=eq.${job.id}&select=id&limit=1`);
+    if (!posts?.length) return null;
+    const r = await fetch("https://www.googleapis.com/youtube/v3/videos?part=paidProductPlacementDetails", {
+      method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ id: videoId, paidProductPlacementDetails: { hasPaidProductPlacement: true } }),
+    });
+    if (!r.ok) throw new Error(`${r.status} ${(await r.text()).slice(0, 200)}`);
+    log("Marked as paid promotion");
+    return null;
+  } catch (e) {
+    log(`Paid promotion label not set: ${e.message}`);
+    return `Turn on "Includes paid promotion" for this video in YouTube Studio: it couldn't be set automatically (${e.message}).`.slice(0, 400);
+  }
 }
 
 /** The project's thumbnail as a local file, when there is one. */

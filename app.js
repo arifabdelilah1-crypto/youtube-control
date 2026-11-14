@@ -3169,7 +3169,8 @@ const money = (v) => (v === null || v === undefined || v === "" ? "—" : `$${Nu
 
 VIEWS.campaigns = async () => {
   const rows = await q(sb.from("campaigns").select("id,title,brand,status,risk,rate_per_1k,cap_per_post,deadline,platforms,content_type,matches,created_at").order("created_at", { ascending: false }).limit(100));
-  const waitingRows = rows.length ? await q(sb.from("campaign_posts").select("campaign_id").eq("status", "awaiting_approval").in("campaign_id", rows.map((r) => r.id))) : [];
+  const postRows = rows.length ? await q(sb.from("campaign_posts").select("campaign_id,status,est_payout").in("campaign_id", rows.map((r) => r.id))) : [];
+  const waitingRows = postRows.filter((r) => r.status === "awaiting_approval");
   const text = h("textarea", { class: "field", id: "camp-text", rows: 8, placeholder: "Paste everything from the campaign page: pay, rules, requirements…" });
   const url = h("input", { class: "field", id: "camp-url", type: "url", placeholder: "…or a link: Google Doc, Whop page, Notion, any page", autocomplete: "off" });
   const status = h("p", { class: "muted small", style: "margin:0", hidden: true });
@@ -3202,7 +3203,9 @@ VIEWS.campaigns = async () => {
         h("div", { class: "muted small", text: [c.brand, c.rate_per_1k ? `${money(c.rate_per_1k)} / 1k views` : null, c.cap_per_post ? `max ${money(c.cap_per_post)} / post` : null,
           (c.platforms || []).join(", "), c.deadline ? `ends ${c.deadline}` : null, ago(c.created_at)].filter(Boolean).join(" · ") }),
         h("div", { class: "muted small", text: best ? `Best fit: ${channelById(best.channel_id)?.title || best.title} (${best.score})` : c.matches ? "No network fits: a new account is suggested" : "Not matched yet" }),
-        (() => { const n = waitingRows.filter((w) => w.campaign_id === c.id).length; return n ? h("div", { class: "small", style: "color:var(--cue)", text: `${n} video${n === 1 ? "" : "s"} waiting for your approval` }) : null; })()),
+        (() => { const n = waitingRows.filter((w) => w.campaign_id === c.id).length; return n ? h("div", { class: "small", style: "color:var(--cue)", text: `${n} video${n === 1 ? "" : "s"} waiting for your approval` }) : null; })(),
+        (() => { const mine = postRows.filter((r) => r.campaign_id === c.id && ["live", "submitted", "paid"].includes(r.status)); const e = mine.reduce((a, r) => a + Number(r.est_payout || 0), 0);
+          return mine.length ? h("div", { class: "small", text: `${mine.length} live · ${money(e)} estimated` }) : null; })()),
       h("span", { class: `pill ${rcls}`, text: rlabel }));
   };
   return [pageHead("Campaigns", "Paid campaigns (Whop and similar): paste one, see the rules, the risk, and which network should make it."),
@@ -3472,8 +3475,59 @@ VIEWS.campaign = async (route) => {
   const POST_STATUS = { rendering: ["info", "Making"], failed: ["crit", "Failed"], awaiting_approval: ["warn", "Waiting for you"], approved: ["ok", "Approved"],
     rejected: ["short", "Rejected"], scheduled: ["ok", "Scheduled"], live: ["ok", "Live"], submitted: ["ok", "Submitted"], paid: ["ok", "Paid"], draft: ["short", "Draft"] };
   const setPost = async (p, patch, msg) => { await q(sb.from("campaign_posts").update(patch).eq("id", p.id)); toast(msg); render(); };
+  // where an approved video goes: the campaign's platforms that its network posts to
+  const postNets = [...new Set(posts.map((p) => p.channel_id).filter(Boolean))];
+  const scheds = postNets.length ? await q(sb.from("publish_schedules").select("channel_id,targets").in("channel_id", postNets)) : [];
+  const PLAT_NAME = { youtube: "YouTube", facebook: "Facebook", instagram: "Instagram", tiktok: "TikTok", twitter: "X", x: "X" };
+  const wanted = (c.platforms || []).map((x) => (x === "x" ? "twitter" : x));
+  const placesFor = (channelId) => {
+    const t = scheds.find((x) => x.channel_id === channelId)?.targets;
+    const have = Array.isArray(t) ? t.map((x) => x.platform) : ["youtube"];
+    return { auto: have.filter((x) => !wanted.length || wanted.includes(x)), manual: wanted.filter((x) => !have.includes(x)) };
+  };
+  const downloadBtn = (p) => h("button", { class: "btn", type: "button", text: "⬇ Download", onclick: async () => {
+    const { data, error } = await sb.functions.invoke("studio", { body: { action: "video_link", job_id: p.render_job_id, download: true } });
+    if (error || !data?.url) return toast("The video couldn't be loaded");
+    location.href = data.url;
+  } });
+  const copyCaption = (p) => h("button", { class: "btn ghost", type: "button", text: "Copy caption", onclick: async () => {
+    const idea = ideas.find((i) => i.id === p.idea_id);
+    const text = [idea?.video_title || p.title, idea?.video_description || ""].filter(Boolean).join("\n\n");
+    try { await navigator.clipboard.writeText(text); toast("Caption copied"); } catch { toast("Couldn't copy"); }
+  } });
+  /** Approve = schedule on every campaign platform the network posts to (next free slot, or a chosen time). */
+  const approve = (p, holder) => {
+    const bad = (p.checks || []).filter((k) => !k.ok).length;
+    const { auto, manual } = placesFor(p.channel_id);
+    const when = h("select", { class: "field", "aria-label": "When" }, h("option", { value: "next", text: "Next free slot" }), h("option", { value: "date", text: "Pick a time" }), h("option", { value: "now", text: "Publish now" }));
+    const at = h("input", { class: "field", type: "datetime-local", hidden: true, "aria-label": "Time" });
+    when.onchange = () => { at.hidden = when.value !== "date"; };
+    const go_ = h("button", { class: "btn primary", type: "button", text: auto.length ? `Approve and schedule on ${auto.map((x) => PLAT_NAME[x] || x).join(" + ")}` : "Approve", onclick: async () => {
+      if (bad && !confirm(`${bad} check${bad === 1 ? "" : "s"} failed. Approve anyway?`)) return;
+      if (when.value === "date" && !at.value) return toast("Pick a time");
+      go_.disabled = true;
+      const w = when.value === "date" ? new Date(at.value).toISOString() : when.value;
+      const errs = [];
+      for (const platform of auto) {
+        const { data, error } = await sb.functions.invoke("publish", { body: { action: "queue", render_job_id: p.render_job_id, when: w, platform } });
+        let msg = error?.message || data?.error || null;
+        if (error) { try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } }
+        if (msg) errs.push(`${PLAT_NAME[platform] || platform}: ${msg}`);
+      }
+      await q(sb.from("campaign_posts").update({ status: auto.length && errs.length < auto.length ? "scheduled" : "approved", note: errs.join(" · ") || null }).eq("id", p.id));
+      await campaignCall({ action: "sync", campaign_id: c.id }).catch(() => {});
+      toast(errs.length ? errs.join(" · ") : auto.length ? "Approved and scheduled" : "Approved");
+      render();
+    } });
+    holder.replaceChildren(h("div", { style: "display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--line);border-radius:12px" },
+      auto.length ? h("div", { class: "row", style: "gap:8px" }, when, at) : null,
+      h("div", { class: "muted small", text: [auto.length ? `Goes out on ${auto.map((x) => PLAT_NAME[x] || x).join(", ")} with the paid-promotion label on YouTube.` : "None of the campaign's platforms is connected on this network: approve it, then download and post it yourself.",
+        manual.length ? `Post it yourself on ${manual.map((x) => PLAT_NAME[x] || x).join(", ")} (Download + Copy caption after approving).` : null].filter(Boolean).join(" ") }),
+      h("div", { class: "row" }, go_, h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: () => holder.replaceChildren() }))));
+  };
   const postCard = (p) => {
     const [cls, label] = POST_STATUS[p.status] || ["short", p.status];
+    const approvePanel = h("div", {});
     const idea = ideas.find((i) => i.id === p.idea_id);
     const run = runs.find((r) => r.id === p.video_run_id);
     const step = run?.steps?.find((s) => s.status === "running") || run?.steps?.filter((s) => s.status === "done").pop();
@@ -3508,31 +3562,74 @@ VIEWS.campaign = async (route) => {
     if (edit && ["awaiting_approval", "failed", "rejected"].includes(p.status)) body.append(edit);
     const actions = h("div", { class: "row" });
     if (p.status === "awaiting_approval") actions.append(
-      h("button", { class: "btn primary", type: "button", text: "Approve", onclick: () => {
-        const bad = (p.checks || []).filter((k) => !k.ok).length;
-        if (bad && !confirm(`${bad} check${bad === 1 ? "" : "s"} failed. Approve anyway?`)) return;
-        setPost(p, { status: "approved", note: null }, "Approved");
-      } }),
+      h("button", { class: "btn primary", type: "button", text: "Approve…", onclick: () => approve(p, approvePanel) }),
       h("button", { class: "btn ghost", type: "button", text: "Reject", onclick: () => { const why = prompt("Why? (optional)"); if (why === null) return; setPost(p, { status: "rejected", note: why || "Rejected" }, "Rejected"); } }));
     if (p.status === "failed" && !p.clip_id) actions.append(h("button", { class: "btn", type: "button", text: "Try again", onclick: async (e) => {
       e.currentTarget.disabled = true;
       try { await campaignCall({ action: "rerender", post_id: p.id }); toast("Started again"); render(); } catch (err) { toast(err.message); }
     } }));
-    if (p.status === "approved") body.append(h("div", { class: "muted small", text: "Approved. Scheduling and the paid-promotion label come with Phase 3." }));
+    if (["approved", "scheduled", "live", "submitted", "paid"].includes(p.status)) {
+      for (const l of p.links || []) body.append(h("div", { class: l.status === "failed" ? "down small" : "small" },
+        `${PLAT_NAME[l.platform] || l.platform}: ${l.status === "scheduled" && l.slot_at ? `scheduled ${when(l.slot_at)}` : l.status}${l.error ? ` (${l.error})` : ""} `,
+        l.url ? h("a", { href: l.url, target: "_blank", rel: "noopener", text: "open" }) : null));
+      if (p.note && p.status !== "rejected") body.append(h("div", { class: "down small", text: p.note }));
+      if (["live", "submitted", "paid"].includes(p.status)) body.append(h("div", { class: "row", style: "gap:14px" },
+        h("span", {}, h("strong", { text: fmt(p.views) }), h("span", { class: "muted small", text: " views" })),
+        h("span", {}, h("strong", { text: money(p.est_payout) }), h("span", { class: "muted small", text: c.cap_per_post && Number(p.est_payout) >= Number(c.cap_per_post) ? " (cap reached)" : " estimated" })),
+        p.views_at ? h("span", { class: "muted small", text: `views ${ago(p.views_at)}` }) : null));
+      const { manual } = placesFor(p.channel_id);
+      const row = h("div", { class: "row" });
+      if (p.render_job_id) row.append(downloadBtn(p), copyCaption(p));
+      if (p.status === "approved" && p.render_job_id && placesFor(p.channel_id).auto.length) row.append(h("button", { class: "btn", type: "button", text: "Schedule…", onclick: () => approve(p, approvePanel) }));
+      if (p.status === "live") row.append(h("button", { class: "btn", type: "button", text: "Mark submitted", onclick: () => setPost(p, { status: "submitted", submitted_at: new Date().toISOString() }, "Marked as submitted") }));
+      if (p.status === "submitted") row.append(h("button", { class: "btn", type: "button", text: "Mark paid", onclick: () => setPost(p, { status: "paid", paid_at: new Date().toISOString() }, "Marked as paid") }));
+      if (manual.length && p.status !== "paid") body.append(h("div", { class: "muted small", text: `Post it yourself on ${manual.map((x) => PLAT_NAME[x] || x).join(", ")}: download it and copy the caption.` }));
+      body.append(row);
+    }
     if (actions.childNodes.length) body.append(actions);
+    body.append(approvePanel);
     return h("div", { class: "listrow", style: "align-items:flex-start;gap:16px" }, player, body);
   };
   const waiting = posts.filter((p) => p.status === "awaiting_approval").length;
+  // ---- results: views, money, submission links, alerts ----
+  const out = posts.filter((p) => ["live", "submitted", "paid"].includes(p.status));
+  const earned = out.reduce((a, p) => a + Number(p.est_payout || 0), 0);
+  const paid = posts.filter((p) => p.status === "paid").reduce((a, p) => a + Number(p.est_payout || 0), 0);
+  const toSubmit = posts.filter((p) => p.status === "live" && (p.links || []).some((l) => l.url));
+  const alerts = [];
+  const days = c.deadline ? Math.ceil((Date.parse(`${c.deadline}T23:59:59Z`) - Date.now()) / 864e5) : null;
+  if (days !== null && days < 0) alerts.push(["crit", `The campaign ended on ${c.deadline}.`]);
+  else if (days !== null && days <= 2) alerts.push(["warn", `Ends in ${days} day${days === 1 ? "" : "s"} (${c.deadline}): submit your links.`]);
+  if (c.budget && earned >= 0.9 * Number(c.budget)) alerts.push(["warn", `About ${Math.round((earned / c.budget) * 100)}% of the ${money(c.budget)} budget is used by your posts alone: the campaign may close soon.`]);
+  for (const p of out) if (c.cap_per_post && Number(p.est_payout) >= Number(c.cap_per_post)) alerts.push(["ok", `"${p.title}" reached the ${money(c.cap_per_post)} cap: more views won't pay more.`]);
+  for (const p of out) if (p.views_at && Date.now() - Date.parse(p.created_at) > 3 * 864e5 && Number(p.views) < 300) alerts.push(["warn", `"${p.title}" has only ${fmt(p.views)} views after 3 days: try a new hook on the next one.`]);
+  if (toSubmit.length) alerts.push(["info", `${toSubmit.length} live post${toSubmit.length === 1 ? "" : "s"} to submit on ${/whop/i.test(c.source_url || c.source_text || "") ? "Whop" : "the campaign page"}.`]);
+  if (c.card?.bio_link && out.length) alerts.push(["info", `Check that ${c.card.bio_link} is in your bio on ${(c.platforms || []).map((x) => PLAT_NAME[x] || x).join(", ") || "every platform"}: it can't be set automatically.`]);
+  const resultsCard = posts.some((p) => ["approved", "scheduled", "live", "submitted", "paid"].includes(p.status)) ? h("section", { class: "card" }, h("h2", { text: "Results" }),
+    h("section", { class: "stats" },
+      stat("Live posts", String(out.length), `${posts.filter((p) => p.status === "scheduled").length} scheduled`),
+      stat("Views", fmt(out.reduce((a, p) => a + Number(p.views || 0), 0)), "YouTube, refreshed once a day"),
+      stat("Estimated earnings", money(earned), c.budget ? `of ${money(c.budget)} budget` : "views × rate, capped per post"),
+      stat("Paid", money(paid), `${posts.filter((p) => p.status === "submitted").length} submitted, waiting`)),
+    alerts.length ? h("ul", { style: "margin:12px 0 0;padding-left:0;list-style:none;display:flex;flex-direction:column;gap:6px" },
+      alerts.map(([k, t]) => h("li", { class: "row", style: "gap:8px;flex-wrap:nowrap;align-items:flex-start" }, h("span", { class: `pill ${k}`, text: { crit: "!", warn: "Note", ok: "✓", info: "To do" }[k] }), h("span", { class: "small", text: t })))) : null,
+    toSubmit.length ? h("div", { class: "row", style: "margin-top:12px" }, h("button", { class: "btn primary", type: "button", text: `Copy ${toSubmit.length} link${toSubmit.length === 1 ? "" : "s"} to submit`, onclick: async () => {
+      const text = toSubmit.flatMap((p) => (p.links || []).filter((l) => l.url && (!wanted.length || wanted.includes(l.platform))).map((l) => l.url)).join("\n");
+      try { await navigator.clipboard.writeText(text); toast("Links copied: paste them in the campaign's submission form, then press Mark submitted"); } catch { prompt("Copy these links:", text); }
+    } }), h("button", { class: "btn ghost", type: "button", text: "Mark all submitted", onclick: async () => {
+      await q(sb.from("campaign_posts").update({ status: "submitted", submitted_at: new Date().toISOString() }).in("id", toSubmit.map((p) => p.id)));
+      toast("Marked as submitted"); render();
+    } })) : null) : null;
   const videosCard = h("section", { class: "card" }, h("h2", { text: `Videos${waiting ? ` · ${waiting} waiting for you` : ""}` }),
     posts.length ? posts.map(postCard) : empty(c.content_type === "clipping" ? "No Shorts yet. Send their long video to the Clipper above." : "No videos yet. Brainstorm angles above, tick the best ones and make them."));
-  if (posts.some((p) => p.status === "rendering")) state.timer = setInterval(async () => {
+  if (posts.some((p) => p.status === "rendering" || (p.links || []).some((l) => ["queued", "uploading"].includes(l.status)))) state.timer = setInterval(async () => {
     if (parseRoute().name !== "campaign" || document.querySelector(".card details[open] textarea:focus")) return;
     const { posts: now } = await campaignCall({ action: "sync", campaign_id: c.id }).catch(() => ({ posts }));
     const runsNow = runIds.length ? await q(sb.from("video_runs").select("id,status,steps").in("id", runIds)).catch(() => runs) : [];
     if (JSON.stringify(now.map((p) => p.status)) !== JSON.stringify(posts.map((p) => p.status)) || JSON.stringify(runsNow) !== JSON.stringify(runs)) render();
   }, 30000);
 
-  return [head, pills, risk, numbers, rules, networks, newAcc, videosCard, makeCard, longCard, filesCard, edit, source];
+  return [head, pills, risk, numbers, resultsCard, rules, networks, newAcc, videosCard, makeCard, longCard, filesCard, edit, source];
 };
 
 VIEWS.calendar = async () => {

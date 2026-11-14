@@ -11,6 +11,7 @@
 //   POST {action:"sync", campaign_id}       -> finished videos (and the Clipper's Shorts from the campaign's long videos) move to
 //                                              "awaiting approval" with an automatic checklist. Returns {posts}.
 //   POST {action:"rerender", post_id, script?, title?, description?} -> saves the edits and renders the video again.
+//   (sync also follows approved posts through the publishing queue: links, live or not, views and the estimated payout)
 // Dashboard users (JWT + am_i_allowed), or jobs with x-cron-secret. Secrets: DEEPSEEK_API_KEY, optional DEEPSEEK_MODEL.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -492,8 +493,40 @@ async function sync(body: any) {
         checks: checksFor(camp, p, idea, run, job) }).eq("id", p.id);
     }
   }
+  await track(camp, (posts || []).filter((x: any) => ["approved", "scheduled", "live", "submitted", "paid"].includes(x.status) && x.render_job_id));
   const { data: fresh } = await db.from("campaign_posts").select("*").eq("campaign_id", camp.id).order("created_at", { ascending: false });
   return { posts: fresh || [] };
+}
+
+// ========== Phase 3: where it went, views and money ==========
+/** What a post earns: views over the campaign's minimum, at its rate, up to its cap per post. */
+function payout(camp: any, views: number) {
+  const rate = Number(camp.rate_per_1k || 0), cap = camp.cap_per_post != null ? Number(camp.cap_per_post) : Infinity;
+  const min = Number(camp.card?.min_views_to_pay || 0);
+  if (!rate || views < min) return 0;
+  return Math.round(Math.min(cap, (views / 1000) * rate) * 100) / 100;
+}
+/** Links and status from the publishing queue, views from the channel's YouTube stats (refreshed once a day). */
+async function track(camp: any, posts: any[]) {
+  if (!posts.length) return;
+  const { data: rows } = await db.from("publish_queue").select("render_job_id,platform,status,slot_at,youtube_video_id,public_url,error")
+    .in("render_job_id", posts.map((p) => p.render_job_id));
+  const ytIds = (rows || []).map((r: any) => r.youtube_video_id).filter(Boolean);
+  const { data: stats } = ytIds.length ? await db.from("v_own_video_latest").select("youtube_video_id,views").in("youtube_video_id", ytIds) : { data: [] };
+  for (const p of posts) {
+    const mine = (rows || []).filter((r: any) => r.render_job_id === p.render_job_id && r.status !== "cancelled");
+    if (!mine.length) continue;
+    const links = mine.map((r: any) => ({ platform: r.platform, status: r.status, slot_at: r.slot_at, error: r.status === "failed" ? r.error : null,
+      url: r.youtube_video_id ? `https://www.youtube.com/shorts/${r.youtube_video_id}` : r.public_url || null }));
+    const yt = mine.find((r: any) => r.youtube_video_id);
+    const views = yt ? Number((stats || []).find((x: any) => x.youtube_video_id === yt.youtube_video_id)?.views || 0) : Number(p.views || 0);
+    const out = mine.some((r: any) => r.status === "published" || (r.status === "scheduled" && r.slot_at && Date.parse(r.slot_at) <= Date.now()));
+    const waiting = mine.some((r: any) => ["queued", "uploading", "scheduled"].includes(r.status));
+    // submitted and paid are Arif's: the queue never moves a post back
+    const status = ["submitted", "paid"].includes(p.status) ? p.status : out ? "live" : waiting ? "scheduled" : p.status;
+    await db.from("campaign_posts").update({ links, status, post_url: links.find((l: any) => l.url)?.url || p.post_url,
+      views, views_at: yt ? new Date().toISOString() : p.views_at, est_payout: payout(camp, views) }).eq("id", p.id);
+  }
 }
 
 /** "Edit and render again": a new script (or the same one), a new video. */
