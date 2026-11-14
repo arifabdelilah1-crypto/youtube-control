@@ -424,7 +424,9 @@ async function main(id) {
   if (storyStyle) {
     // the film belongs to its words: a kept script keeps its film only if that film was made for it
     const lines = (idea.ai?.story?.lines || []).map((l) => `VO: ${l}`).join("\n\n");
-    if (options.keep_script && idea.ai?.story?.code && lines === String(idea.script || "").trim()) await skip("script", "Keeping the film already drawn");
+    // ...and only in its own language (a German voice must never read an English film)
+    const lang = options.language || channel.video_style?.language || channel.language || "en";
+    if (options.keep_script && idea.ai?.story?.code && lines === String(idea.script || "").trim() && (idea.ai?.language || "en") === lang) await skip("script", "Keeping the film already drawn");
     else await step("script", (note) => writeStoryFilm(idea, channel, options, { ROOT, rest, call, log, note, warn }));
     await skip("review", "The story and its film go together");
   } else if (drawn) {

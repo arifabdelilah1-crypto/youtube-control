@@ -92,6 +92,8 @@ async function claude({ key, model, system, user, maxTokens = 32000, log }) {
     });
     if (r.ok) break;
     const t = (await r.text()).slice(0, 400);
+    // a spending limit reached on the Claude account: say it plainly, retrying can't help
+    if (/usage limits/i.test(t)) throw new Error(`Claude's monthly spending limit is reached (Anthropic Console → Settings → Limits): ${t.match(/regain access on ([^."]+)/)?.[1] ? `it comes back on ${t.match(/regain access on ([^."]+)/)[1]}` : "raise it to continue"}.`);
     if (r.status === 429 || r.status >= 500) { log(`Claude ${r.status}, retrying: ${t}`); await new Promise((res) => setTimeout(res, 20000 * (attempt + 1))); continue; }
     throw new Error(`Claude ${r.status}: ${t}`);
   }
