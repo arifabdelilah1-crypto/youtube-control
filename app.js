@@ -1109,6 +1109,8 @@ const ANIM_LOOKS = {
   noir: { label: "Story · Noir", story: true, text: "A cinematic stick-figure story: Claude writes it and draws every shot in code. Night sets, one warm light per shot, grain. The ideas are acted out, never written on screen." },
   paper: { label: "Story · Storybook", story: true, text: "The same kind of story drawn like a picture book: warm paper, soft colours, hand-drawn lines that gently move." },
   pop: { label: "Story · Pop", story: true, text: "A bold comic version: bright flat colours, thick outlines, halftone dots and outlined subtitles." },
+  // Mix (video/Mix.jsx): Claude decides scene by scene between real footage, a drawing, or a drawing over a dimmed real picture
+  mix: { label: "Mix: animation + real footage", mix: true, text: "About half the scenes are real stock clips and photos (Pexels, Pixabay, Wikimedia Commons), the others are Claude's drawings, some laid over a dimmed real picture. The same captions and colours throughout. Pick the look of the drawn parts below." },
   glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
   minimal: { label: "Minimal", text: "Thin white lines on pure black, one short phrase per scene in spaced capitals, rings and soft fades." },
   whiteboard: { label: "Whiteboard", text: "Drawn in marker on a white board, with hand-written titles." },
@@ -1134,7 +1136,9 @@ const ANIM_LENGTHS = {
   "16:9": [["short60", "About 1 min", 1], ["long3", "About 3 min", 3], ["long5", "About 5 min", 5], ["long8", "About 8 min", 8], ["long10", "About 10 min", 10]],
 };
 const ANIM_FORMATS = [["9:16", "Short · 9:16"], ["16:9", "YouTube · 16:9"]];
-const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45", aspect: "9:16" };
+const animUi = { look: "glow", model: "claude-opus-5-5", length: "short45", aspect: "9:16", mixLook: "glow" };
+// the looks a Mix can draw its scenes with (video/layout.js MIX_LOOKS): the sliding ones, not kinetic text nor the Story films
+const MIX_DRAW_LOOKS = Object.entries(ANIM_LOOKS).filter(([k, l]) => !l.story && !l.mix && k !== "kinetic");
 // past 3 minutes each chapter re-reads the rules and the outline: measured about 1.45 times the per-minute price (Opus, 5 min: $0.47)
 // Story stick: Claude writes the whole film (most of the price is the code it writes), measured on test films
 const STORY_LENGTHS = { "9:16": [["short30", "About 30 s", 0.5], ["short45", "About 45 s", 0.75], ["short60", "About 1 min", 1]], "16:9": [["short45", "About 45 s", 0.75], ["short60", "About 1 min", 1]] };
@@ -1159,7 +1163,9 @@ VIEWS.animation = async () => {
   f.aspect = h("select", { id: "a-aspect", class: "field" }, ANIM_FORMATS.map(([v, t]) => h("option", { value: v, selected: animUi.aspect === v, text: t })));
   f.length = h("select", { id: "a-length", class: "field" });
   const fillLengths = (pick) => {
-    const list = (ANIM_LOOKS[animUi.look]?.story ? STORY_LENGTHS : ANIM_LENGTHS)[f.aspect.value] || ANIM_LENGTHS["9:16"];
+    // a Mix is planned in one call: 3 minutes at most
+    const list = ((ANIM_LOOKS[animUi.look]?.story ? STORY_LENGTHS : ANIM_LENGTHS)[f.aspect.value] || ANIM_LENGTHS["9:16"])
+      .filter(([v]) => !ANIM_LOOKS[animUi.look]?.mix || !["long5", "long8", "long10"].includes(v));
     const keep = list.some(([v]) => v === pick) ? pick : list[f.aspect.value === "16:9" ? 1 : 0][0];
     f.length.replaceChildren(...list.map(([v, t]) => h("option", { value: v, selected: v === keep, text: t })));
   };
@@ -1187,6 +1193,12 @@ VIEWS.animation = async () => {
   [f.model, f.length].forEach((el) => el.addEventListener("change", showCost));
   fillVoices(); showCost(); showFormat();
 
+  // a Mix: the look of its drawn scenes
+  f.mixLook = h("select", { id: "a-mix-look", class: "field" }, MIX_DRAW_LOOKS.map(([k, l]) => h("option", { value: k, selected: animUi.mixLook === k, text: l.label })));
+  f.mixLook.addEventListener("change", () => { animUi.mixLook = f.mixLook.value; });
+  const mixWrap = h("div", { class: "form-grid", hidden: !ANIM_LOOKS[animUi.look]?.mix }, field("a-mix-look", "Look of the drawn scenes", f.mixLook,
+    h("p", { class: "muted small", style: "margin:0", text: "The real scenes get a light tint of it, and the captions and name cards take its accent colour." })));
+
   // the styles, as small cards with a frame of each; the one picked says what it looks like
   const looks = h("div", { class: "anim-looks", role: "radiogroup", "aria-label": "Style" });
   const lookNote = h("p", { class: "muted small anim-look-note", "aria-live": "polite" });
@@ -1194,10 +1206,12 @@ VIEWS.animation = async () => {
     if (!ANIM_LOOKS[animUi.look]) animUi.look = "glow";
     looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
       title: l.text, onclick: () => {
-        const was = !!ANIM_LOOKS[animUi.look]?.story;
+        const kind = (x) => (x?.story ? "story" : x?.mix ? "mix" : "drawn");
+        const was = kind(ANIM_LOOKS[animUi.look]);
         animUi.look = k; paintLooks();
-        // a story is short and has no music by default; switching kinds refreshes the lengths and the price
-        if (was !== !!l.story) { fillLengths(l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); if (l.story) f.music.checked = false; showCost(); }
+        mixWrap.hidden = !l.mix;
+        // a story or a Mix has no music by default; switching kinds refreshes the lengths and the price
+        if (was !== kind(l)) { fillLengths(l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); f.music.checked = !l.story && !l.mix; showCost(); }
       } },
       h("img", { src: l.img, alt: "", loading: "lazy", width: 120, height: 213 }),
       h("span", { class: "anim-look-name", text: l.label }))));
@@ -1217,9 +1231,10 @@ VIEWS.animation = async () => {
     go.disabled = true; go.textContent = "Starting…";
     try {
       const id = picked ? picked.id : (await q(sb.from("ideas").insert({ title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
+      const isMix = !!ANIM_LOOKS[animUi.look]?.mix;
       await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
-        look: animUi.look, ai_model: f.model.value, aspect: f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
-        music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask" } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
+        look: isMix ? f.mixLook.value : animUi.look, ai_model: f.model.value, aspect: f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
+        music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask", ...(isMix ? { video_style: "mix" } : {}) } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
       toast("Making your animation");
       f.subject.value = ""; f.idea.value = "";
       await reload();
@@ -1227,7 +1242,7 @@ VIEWS.animation = async () => {
     go.disabled = false; go.textContent = "Create animation";
   } },
     h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
-    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 3 are Story stick: Claude draws a whole film)` }), looks, lookNote,
+    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 3 are Story stick: Claude draws a whole film; then Mix, with real footage)` }), looks, lookNote, mixWrap,
     h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
     h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-aspect", "Format", f.aspect, formatNote), field("a-length", "Length", f.length)),
     h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
@@ -1246,7 +1261,7 @@ VIEWS.animation = async () => {
     if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
     const [rows, all] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(200))]);
     ideas = rows;
-    runs = all.filter((r) => ["explainer", "story"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
+    runs = all.filter((r) => ["explainer", "story", "mix"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
     const missing = runs.map((r) => r.contact_sheet).filter((p) => p && !sheets.has(p));
     if (missing.length) {
       const { data } = await sb.storage.from("renders").createSignedUrls(missing, 6 * 3600);
@@ -1259,7 +1274,7 @@ VIEWS.animation = async () => {
     try { await aiCall({ action: "start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } }, r.options?.video_style === "story" ? "story" : "explainer"); toast("Making it again"); await reload(); } catch (e) { toast(e.message); }
   };
   const row = (r) => {
-    const look = ANIM_LOOKS[r.options?.look] || ANIM_LOOKS.glow;
+    const look = r.options?.video_style === "mix" ? { label: `Mix · ${(ANIM_LOOKS[r.options?.look] || ANIM_LOOKS.glow).label}`, img: ANIM_LOOKS.mix.img } : ANIM_LOOKS[r.options?.look] || ANIM_LOOKS.glow;
     const plan = (r.steps || []).find((x) => x.key === "script" && x.status === "done")?.detail;
     const lamp = isActiveRun(r) ? ["Working", "cue"] : r.status === "ready" ? ["Ready", "ready"] : r.status === "review" ? ["Ready, to check", "cue"] : r.status === "failed" ? ["Stopped", "alert"] : ["Cancelled", "idle"];
     const acts = isActiveRun(r) ? [h("button", { class: "btn small ghost", type: "button", text: "Stop", onclick: () => stopRun(r) })]
@@ -1293,7 +1308,7 @@ VIEWS.animation = async () => {
 
   await load();
   paint();
-  return [pageHead("Animation", "Drawn videos: Claude writes the voice-over and draws every scene. No stock clips, no sound effects."),
+  return [pageHead("Animation", "Claude writes the voice-over and draws every scene; a Mix also uses real stock footage and photos. No sound effects."),
     form, h("section", { class: "anim-list", "aria-label": "Your animations" }, h("h2", { text: "Your animations" }), list)];
 };
 

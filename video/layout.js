@@ -172,6 +172,15 @@ export const EXPLAINER_LAYOUTS = ["title", "row", "journey", "compare", "checkli
 // the Animation page's styles (video/Explainer.jsx): settings.explainer.look
 export const EXPLAINER_LOOKS = ["glow", "whiteboard", "kinetic", "blueprint", "chalkboard", "neon", "comic", "terminal", "vintage", "clean", "sunset", "badges", "notes", "minimal", "stick", "stickcolor", "stickdoodle"];
 const EXPLAINER_KINDS = ["icon", "person", "person_hat", "child"];
+// the Mix style (video/Mix.jsx): settings.mix = {look, scenes: [{kind, layout, heading, items, …}]}, one per scene
+export const MIX_KINDS = ["footage", "drawn", "overlay"];
+// the looks a Mix can draw with: the sliding ones (kinetic is a whole different film)
+export const MIX_LOOKS = EXPLAINER_LOOKS.filter((l) => l !== "kinetic");
+/** A Mix scene's kind; a scene without a usable plan shows its clip. */
+export function mixKind(plan, clip) {
+  if (MIX_KINDS.includes(plan?.kind)) return plan.kind;
+  return clip && ["video", "image"].includes(clip.type) ? "footage" : "drawn";
+}
 
 /**
  * One scene of the Explainer style: its drawing (settings.explainer.scenes[i], written by the AI) with the second each
@@ -215,6 +224,7 @@ export function buildProps(project, scenes, urls = {}) {
   const drawn = project.settings?.style === "explainer" ? (Array.isArray(project.settings.explainer?.scenes) ? project.settings.explainer.scenes : []) : null;
   // the Story style: a film drawn in code (video/story), timed on the words; its subtitles are plain lines of ~6 words
   const story = project.settings?.style === "story" && project.settings.story?.code ? project.settings.story : null;
+  const mix = project.settings?.style === "mix" ? (Array.isArray(project.settings.mix?.scenes) ? project.settings.mix.scenes : []) : null;
   let from = 0;
   const out = ordered.map((s, i) => {
     const voiceOk = !!(s.voice_path && s.voice_text === s.text && urls.voice?.[s.id]);
@@ -235,6 +245,8 @@ export function buildProps(project, scenes, urls = {}) {
       }),
       groups: captionGroups(words, story ? 6 : drawn ? 5 : settings.captions.words || 3),
       ...(drawn ? { x: explainerScene(drawn[i], words, sceneSeconds(s)) } : {}),
+      // a Mix scene: its kind, and the drawing of drawn and overlay scenes (a footage scene shows its clip)
+      ...(mix ? (() => { const kind = mixKind(mix[i], s.clip); return { kind, ...(kind !== "footage" ? { x: explainerScene(mix[i] || { layout: "title", heading: "" }, words, sceneSeconds(s)) } : {}) }; })() : {}),
       clip: {
         type: clip.type || "card",
         url: clip.path ? urls.media?.[clip.path] || null : clip.url || null,
@@ -248,9 +260,10 @@ export function buildProps(project, scenes, urls = {}) {
     return scene;
   });
   return {
-    style: story ? "story" : drawn ? "explainer" : "classic",
+    style: story ? "story" : drawn ? "explainer" : mix ? "mix" : "classic",
     story: story ? { code: String(story.code), look: ["noir", "paper", "pop"].includes(story.look) ? story.look : "noir" } : null,
-    look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow") : null,
+    look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow")
+      : mix ? (MIX_LOOKS.includes(project.settings.mix?.look) ? project.settings.mix.look : "glow") : null,
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),
     rtl: RTL_LANGS.has(project.language),
     language: project.language,
@@ -276,8 +289,10 @@ export function preRenderCheck(project, scenes) {
   if (noVoice) issues.push({ level: "block", text: `${noVoice} scene(s) have no voice yet. Press “Update voice”.` });
   if (outdated) issues.push({ level: "block", text: `${outdated} scene(s) were edited after their voice was made. Press “Update voice”.` });
   const drawn = ["explainer", "story"].includes(project.settings?.style);
-  if (drawn && !["9:16", "16:9"].includes(project.aspect)) issues.push({ level: "block", text: "Animations are drawn for 9:16 (Short) or 16:9 (YouTube video). Choose one of them on its Studio page." });
-  const cards = drawn ? 0 : ordered.filter((s) => !s.clip || s.clip.type === "card").length;
+  const mix = project.settings?.style === "mix" ? (project.settings.mix?.scenes || []) : null;
+  if ((drawn || mix) && !["9:16", "16:9"].includes(project.aspect)) issues.push({ level: "block", text: "Animations are drawn for 9:16 (Short) or 16:9 (YouTube video). Choose one of them on its Studio page." });
+  // a Mix's drawn scenes need no clip
+  const cards = drawn ? 0 : ordered.filter((s, i) => (!mix || mixKind(mix[i], s.clip) !== "drawn") && (!s.clip || ["card", "drawn"].includes(s.clip.type))).length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
   const credited = ordered.filter((s) => creditOf(s.clip)).length;
   if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage that gets a credit. The credit lines below go in the video description.` });

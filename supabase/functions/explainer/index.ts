@@ -7,6 +7,9 @@
 //   POST {action:"outline", ...same}                         -> {outline: {title, description, ..., chapters}, cost_usd}
 //   POST {action:"chapter", ...same, outline, index}          -> {scenes, cost_usd} (chapters only see the outline: run them together)
 //   POST {action:"assemble", ...same, outline, chapters, cost_usd} -> saves the idea like "plan" (the job only)
+// POST {action:"plan", ..., style:"mix"} -> the Mix style: each scene is "footage" (real stock video or photo), "drawn" or "overlay" (a drawing over
+//   a dimmed real picture). Saves ideas.script with VO, FOOTAGE and CARD lines (so the clip search works as for classic videos) and
+//   ideas.ai.mix {scenes: [{kind, layout…, footage, card}]}. Up to 3 minutes (one call).
 // POST {action:"start", idea_id, channel_id?, options} -> starts "Generate video" (render/autovideo.mjs) as an Explainer video,
 //   like ai's auto_start, with options.video_style = "explainer", options.ai_model, options.look (glow | whiteboard | kinetic),
 //   options.aspect 9:16 (Short, the default) or 16:9 (YouTube video), and no sound effects. Returns {run_id}. Started from the
@@ -19,7 +22,7 @@ import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@1.8.0";
 import { zodOutputFormat } from "npm:@anthropic-ai/sdk@1.8.0/helpers/zod";
 import { ICON_NAMES } from "./icons.ts";
-import { Chapter, LENGTHS, LOOKS, MODELS, Outline, Plan, chapterSystem, chapterUser, clean, outlineSystem, system, userPrompt } from "./plan.ts";
+import { Chapter, LENGTHS, LOOKS, MODELS, MixPlan, Outline, Plan, chapterSystem, chapterUser, clean, mixSystem, outlineSystem, system, userPrompt } from "./plan.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -83,15 +86,32 @@ function cleanScenes(list: any[]) {
   })).filter((s) => s.narration);
 }
 
+/** Mix scenes: the drawing (as cleanScenes) plus the kind, the footage searches and the name card. */
+function cleanMixScenes(list: any[]) {
+  const raw = (Array.isArray(list) ? list : []).filter((s) => clean(s?.narration, 600));
+  const drawn = cleanScenes(raw);
+  return raw.map((s, i) => {
+    const footage = (Array.isArray(s?.footage) ? s.footage : []).slice(0, 3)
+      .map((f: any) => ({ kind: f?.kind === "image" ? "image" : "video", q: clean(f?.q, 80).replace(/[|:]/g, " ").trim() })).filter((f: any) => f.q);
+    let kind = ["footage", "drawn", "overlay"].includes(s?.kind) ? s.kind : "drawn";
+    if (kind !== "drawn" && !footage.length) kind = "drawn";  // a real picture needs something to search
+    const card = kind !== "drawn" && clean(s?.card_name, 40) ? { name: clean(s.card_name, 40).replace(/[|#]/g, ""), stat: clean(s?.card_stat, 30).replace(/[|#]/g, "") } : null;
+    return { ...drawn[i], kind, footage: kind === "drawn" ? [] : footage, card };
+  });
+}
+const mixScript = (scenes: any[]) => scenes.map((s) => [`VO: ${s.narration}`,
+  s.footage.length ? `FOOTAGE: ${s.footage.map((f: any) => `${f.kind}: ${f.q}`).join(" | ")}` : "",
+  s.card ? `CARD: ${s.card.name} | ${s.card.stat}` : ""].filter(Boolean).join("\n")).join("\n\n");
+
 /** Saves a finished plan on the idea: the script (one VO line per scene), title, description, tags, and the drawing. */
-async function savePlan(db: any, ctx: any, meta: any, scenes: any[], extra: { cost: number; usage?: unknown; seconds?: number; chapters?: number }) {
+async function savePlan(db: any, ctx: any, meta: any, scenes: any[], extra: { cost: number; usage?: unknown; seconds?: number; chapters?: number; mix?: boolean }) {
   const { idea } = ctx;
   if (!scenes.length) throw new Fail("Claude returned no scenes", 502);
-  const script = scenes.map((s) => `VO: ${s.narration}`).join("\n\n");
+  const script = extra.mix ? mixScript(scenes) : scenes.map((s) => `VO: ${s.narration}`).join("\n\n");
   const hashtags = (meta.hashtags || []).map((t: string) => "#" + clean(t, 40).replace(/^#/, "").replace(/\s+/g, "")).filter((t: string) => t.length > 1).slice(0, 3);
   const ai = {
-    style: "explainer", language: ctx.language, length: ctx.length, aspect: ctx.aspect, model: ctx.model, generated_at: new Date().toISOString(),
-    explainer: { scenes, model: ctx.model, look: ctx.look, usage: extra.usage || null, cost_usd: extra.cost, seconds: extra.seconds ?? null, chapters: extra.chapters ?? null },
+    style: extra.mix ? "mix" : "explainer", language: ctx.language, length: ctx.length, aspect: ctx.aspect, model: ctx.model, generated_at: new Date().toISOString(),
+    [extra.mix ? "mix" : "explainer"]: { scenes, model: ctx.model, look: ctx.look, usage: extra.usage || null, cost_usd: extra.cost, seconds: extra.seconds ?? null, chapters: extra.chapters ?? null },
     hook_text: clean(scenes[0]?.heading, 40),
     brief: { subject: clean(idea.video_title || idea.title, 200), kind: "explainer", feeling: "", voice_style: "natural", voice_gender: "any",
       music_mood: ["calm", "dark", "epic", "sad", "happy", "funny", "love", "horror", "none"].includes(meta.music_mood) ? meta.music_mood : "calm", music_words: [], thumbnail_style: "dark" },
@@ -106,7 +126,9 @@ async function savePlan(db: any, ctx: any, meta: any, scenes: any[], extra: { co
     ai, ai_status: "ready", ai_error: null, stage,
   }).eq("id", idea.id);
   if (error) throw error;
-  return { ok: true, scenes: scenes.length, words: script.split(/\s+/).length - scenes.length, model: ctx.model, cost_usd: extra.cost };
+  const words = scenes.reduce((t, s) => t + String(s.narration).split(/\s+/).filter(Boolean).length, 0);
+  return { ok: true, scenes: scenes.length, words, model: ctx.model, cost_usd: extra.cost,
+    ...(extra.mix ? { real: scenes.filter((s) => s.kind !== "drawn").length } : {}) };
 }
 
 /** The idea, its network and the choices, read the same way by every action. */
@@ -123,6 +145,8 @@ async function context(db: any, body: any) {
   let length = Object.hasOwn(LENGTHS, body.length || "") ? body.length : "short45";
   // a Short stays a Short: 3 minutes at most, so the long lengths are for 16:9 only
   if (aspect === "9:16" && !length.startsWith("short")) length = "short120";
+  // the Mix style is written in one call: 3 minutes at most
+  if (body.style === "mix" && LENGTHS[length].chapters) length = "long3";
   return {
     idea, channel, niche, channelId, aspect, length,
     language: /^[a-z]{2}$/.test(body.language || "") ? body.language : String(channel?.video_style?.language || channel?.language || "en").toLowerCase(),
@@ -147,7 +171,6 @@ Deno.serve(async (req) => {
     const body = await req.json();
 
     if (body.action === "start") {
-      if (isService) return json({ error: "not allowed" }, 403);
       const id = UUID.test(body.idea_id || "") ? body.idea_id : "";
       const { data: idea } = id ? await db.from("ideas").select("id,channel_id,script").eq("id", id).single() : { data: null };
       if (!idea) return json({ error: "idea not found" }, 404);
@@ -166,9 +189,10 @@ Deno.serve(async (req) => {
         language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect, length,
         angle: o.angle ? clean(o.angle, 300) : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: VOICE_STYLES.has(o.voice_style) ? o.voice_style : null,
-        music: o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
+        // the Mix style has no music unless asked (the rule for every channel); the Explainer keeps its music on by default
+        music: o.video_style === "mix" ? o.music === true : o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
         publish: o.publish === "next" ? "next" : "ask",
-        video_style: "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
+        video_style: o.video_style === "mix" ? "mix" : "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
         look: Object.hasOwn(LOOKS, o.look || "") ? o.look : "glow",
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", id);
@@ -196,6 +220,10 @@ Deno.serve(async (req) => {
 
     if (body.action === "plan") {
       await db.from("ideas").update({ ai_status: "writing", ai_error: null, channel_id: ctx.channelId }).eq("id", ideaId);
+      if (body.style === "mix") {
+        const r = await ask(db, ctx, "explainer_mix", MixPlan, mixSystem(ctx.language, ctx.length, ctx.look, ctx.aspect), base, ownerId);
+        return json(await savePlan(db, ctx, r.out, cleanMixScenes(r.out.scenes), { cost: r.cost, usage: r.usage, seconds: r.seconds, mix: true }));
+      }
       const r = await ask(db, ctx, "explainer", Plan, system(ctx.language, ctx.length, ctx.look, ctx.aspect), base, ownerId);
       return json(await savePlan(db, ctx, r.out, cleanScenes(r.out.scenes), { cost: r.cost, usage: r.usage, seconds: r.seconds }));
     }

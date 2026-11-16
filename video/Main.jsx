@@ -6,6 +6,7 @@ import { COVER_FRAMES, MUSIC_UNDER_VOICE } from "./layout.js";
 import { Thumbnail } from "./Thumbnail.jsx";
 import { Explainer } from "./Explainer.jsx";
 import { StoryFilm } from "./story/StoryFilm.jsx";
+import { Mix } from "./Mix.jsx";
 
 // "static:sfx/x.mp3" = file shipped with the renderer bundle; anything else is a normal URL.
 const src = (u) => (u && u.startsWith("static:") ? staticFile(u.slice(7)) : u);
@@ -59,7 +60,7 @@ function Photo({ clip, dur, index, width, height }) {
   );
 }
 
-function Clip({ clip, dur, index, width, height }) {
+export function Clip({ clip, dur, index, width, height }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   // punch-in at the cut, then a slow push
@@ -82,7 +83,7 @@ function Clip({ clip, dur, index, width, height }) {
   );
 }
 
-function Captions({ groups, cfg, rtl, font, height }) {
+export function Captions({ groups, cfg, rtl, font, height, top: at = null }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
@@ -90,7 +91,7 @@ function Captions({ groups, cfg, rtl, font, height }) {
   if (!group) return null;
   const startF = Math.round(group.s * fps);
   const pop = spring({ frame: frame - startF, fps, config: { damping: 14, stiffness: 220 }, durationInFrames: 8 });
-  const top = { top: "16%", center: "42%", bottom: "64%" }[cfg.position] || "64%";
+  const top = at || { top: "16%", center: "42%", bottom: "64%" }[cfg.position] || "64%";
   const look = cfg.style || "classic";
   const clean = look === "clean";
   const size = Math.round((cfg.size || 84) * (height / 1920) * (look === "classic" ? 1 : 0.86));
@@ -137,7 +138,7 @@ function Hook({ text, font, rtl, width }) {
 }
 
 // Title and card positions that stay clear of the captions (and of the hook during the first seconds).
-function slots(captions, firstWithHook) {
+export function slots(captions, firstWithHook) {
   const pos = captions.enabled ? captions.position : "bottom";
   return {
     title: pos === "top" ? "30%" : firstWithHook ? "21%" : "13%",
@@ -163,7 +164,7 @@ function SceneTitle({ text, font, rtl, width, top, color, dur }) {
   );
 }
 
-function NameCard({ card, font, rtl, width, top, accent }) {
+export function NameCard({ card, font, rtl, width, top, accent }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const inn = spring({ frame: frame - 6, fps, config: { damping: 15, stiffness: 140 }, durationInFrames: 18 });
@@ -201,9 +202,11 @@ function Progress({ total, color }) {
   );
 }
 
-// The Explainer style draws its own scenes, the Story style is a film drawn in code; every other video is footage + captions.
+// The Explainer style draws its own scenes, the Story style is a film drawn in code, the Mix style alternates real footage and
+// drawings (video/Mix.jsx); every other video is footage + captions.
 export function Main(props) {
   if (props.style === "story") return <StoryFilm {...props} />;
+  if (props.style === "mix") return <Mix {...props} />;
   return props.style === "explainer" ? <Explainer {...props} /> : <Footage {...props} />;
 }
 

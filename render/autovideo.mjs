@@ -8,7 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { creditsText, foundMusic, hasThumbnail, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
+import { SCENE_GAP, TAIL, creditsText, foundMusic, hasThumbnail, mixKind, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 import { PRESETS, presetFx } from "../web/voicefx.js";
 import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage, voiceThreshold } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
@@ -138,7 +138,9 @@ const CHAPTERED = { long5: 3, long8: 4, long10: 5 };
 async function planExplainer(idea, channel, options, note) {
   const model = MODEL_LABELS[options.ai_model] ? options.ai_model : "claude-opus-5-5";
   const aspect = options.aspect === "16:9" ? "16:9" : "9:16";
-  const body = { idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow", aspect };
+  const mix = options.video_style === "mix";
+  const body = { idea_id: idea.id, channel_id: channel.id, language: options.language, angle: options.angle, length: options.length, model, look: options.look || "glow", aspect,
+    ...(mix ? { style: "mix" } : {}) };
   // a function gets about 150 s: less thinking, then the faster model, if an answer takes too long
   const tries = [{}, { effort: "low" }, ...(model === "claude-sonnet-5-5" ? [] : [{ model: "claude-sonnet-5-5", effort: "low" }])];
   const fallbacks = [];
@@ -160,10 +162,10 @@ async function planExplainer(idea, channel, options, note) {
   };
   const tell = async () => { if (fallbacks.length) await warn(`${MODEL_LABELS[model]} was too slow for ${fallbacks.join(", ")}, so ${MODEL_LABELS["claude-sonnet-5-5"]} wrote ${fallbacks.length === 1 ? "it" : "them"}.`); };
 
-  if (!(aspect === "16:9" && CHAPTERED[options.length])) {
+  if (mix || !(aspect === "16:9" && CHAPTERED[options.length])) {
     const out = await ask({ action: "plan" }, "The plan");
     await tell();
-    return `${out.scenes} scenes by ${MODEL_LABELS[out.model] || out.model}, $${Number(out.cost_usd || 0).toFixed(3)}`;
+    return `${out.scenes} scenes${mix ? ` (${out.real ?? "?"} real)` : ""} by ${MODEL_LABELS[out.model] || out.model}, $${Number(out.cost_usd || 0).toFixed(3)}`;
   }
   // a long YouTube video: the outline, then the chapters three at a time (each one only reads the outline), then the whole
   await note("Planning the chapters");
@@ -204,6 +206,7 @@ async function buildScenes(idea, channel, options, project) {
   const ai = idea.ai || {};
   const drawn = options.video_style === "explainer";
   const story = options.video_style === "story" && ai.story?.code;
+  const mix = options.video_style === "mix" && ai.mix?.scenes?.length;
   const brief = ai.brief || {};
   const language = options.language || ai.language || style.language || channel.language || "en";
   const voiceStyle = options.voice_style || brief.voice_style || "natural";
@@ -222,11 +225,14 @@ async function buildScenes(idea, channel, options, project) {
       hook: { ...(base.hook || {}), enabled: false } } : story ? {
       // the Story style: Claude's film, in the look picked; its own plain subtitles, no hook text on top
       style: "story", story: { code: ai.story.code, look: options.look || ai.story.look || "noir" }, hook: { ...(base.hook || {}), enabled: false },
-      captions: { ...(base.captions || {}), enabled: false } } : { style: "classic" }),
+      captions: { ...(base.captions || {}), enabled: false } } : mix ? {
+      // the Mix style (video/Mix.jsx): each scene's kind and drawing, without the narration (the script) or the footage searches (FOOTAGE lines)
+      style: "mix", mix: { look: options.look || "glow", model: ai.mix.model || null, scenes: ai.mix.scenes.map(({ narration: _n, footage: _f, ...rest }) => rest) },
+      hook: { ...(base.hook || {}), enabled: false } } : { style: "classic" }),
   };
   const out = await call("studio", {
     action: "build", project_id: project?.id || null, idea_id: idea.id, channel_id: channel.id, title: idea.video_title || idea.title, script: idea.script,
-    language, voice, voice_rate: rate, aspect: drawn || story ? (options.aspect === "16:9" ? "16:9" : "9:16") : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn || story ? [] : idea.search_terms || [],
+    language, voice, voice_rate: rate, aspect: drawn || story || mix ? (options.aspect === "16:9" ? "16:9" : "9:16") : options.aspect || ai.aspect || style.aspect || "9:16", settings, default_terms: drawn || story || mix ? [] : idea.search_terms || [],
   });
   if (!out.project_id) throw new Error(out.error || "The scenes couldn't be built");
   if (out.status === "failed") throw new Error(out.error || "The voice job couldn't start");
@@ -237,12 +243,17 @@ async function buildScenes(idea, channel, options, project) {
 const sceneRows = (projectId) => rest("GET", "project_scenes", `?project_id=eq.${projectId}&select=*&order=idx`);
 const clipLine = (c, n) => ({ n, type: c.type, seconds: c.duration ?? null, tags: String(c.tags || "").slice(0, 160) });
 
-/** An editor chooses from the tags, searches again where nothing fits, then looks at the pictures. */
-async function chooseClips(projectId, subject, aspect, note) {
-  const scenes = (await sceneRows(projectId)).map((s) => ({ ...s, candidates: (s.candidates || []).filter(usable) }));
+/** An editor chooses from the tags, searches again where nothing fits, then looks at the pictures.
+ *  mix: the Mix style's plan (settings.mix.scenes): only its footage and overlay scenes get a clip; a drawn scene keeps
+ *  {type: "drawn"}, and a real scene where nothing fits becomes a drawing (a warning, not a failure). */
+async function chooseClips(projectId, subject, aspect, note, mix = null) {
+  const all = (await sceneRows(projectId)).map((s) => ({ ...s, candidates: (s.candidates || []).filter(usable) }));
+  const real = (i) => !mix || mixKind(mix[i], { type: "video" }) !== "drawn";
+  if (mix) for (const [i, s] of all.entries()) if (!real(i)) await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: { type: "drawn" }, candidates: [] });
+  const scenes = all;
   const ask = async (list) => (await call("ai", { action: "pick_clips", idea_id: run.idea_id, subject,
     scenes: list.map(({ i, s }) => ({ i, says: s.text, seconds: Math.round(sceneSeconds(s)), clips: s.candidates.map(clipLine) })) })).picks || [];
-  const indexed = scenes.map((s, i) => ({ i, s }));
+  const indexed = scenes.map((s, i) => ({ i, s })).filter(({ i }) => real(i));
   let chosen = {};
   const batches = (list, n) => Array.from({ length: Math.ceil(list.length / n) }, (_, k) => list.slice(k * n, k * n + n));
   const picksFor = async (list) => {
@@ -289,21 +300,38 @@ async function chooseClips(projectId, subject, aspect, note) {
     }
     await picksFor(indexed.filter(({ i }) => rejected.some((c) => Number(c.i) === i)));
   }
-  // what's left: the first clip no other scene uses, said out loud
+  // what's left: the first clip no other scene uses, said out loud. In a Mix, a drawing instead.
   const taken = new Set(Object.values(chosen).filter(Boolean).map((c) => `${c.source}-${c.id}`));
   const weak = [];
   for (const { i, s } of indexed) {
     if (chosen[i]) continue;
-    const fallback = s.candidates.find((c) => !taken.has(`${c.source}-${c.id}`));
     weak.push(i + 1);
+    if (mix) continue;
+    const fallback = s.candidates.find((c) => !taken.has(`${c.source}-${c.id}`));
     if (fallback) { chosen[i] = fallback; taken.add(`${fallback.source}-${fallback.id}`); }
   }
   for (const { i, s } of indexed) {
     const { seen: _seen, ...pick } = chosen[i] || {};
-    await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: chosen[i] ? { ...pick, trim: 0 } : { type: "card" }, candidates: s.candidates.slice(0, 16) });
+    await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: chosen[i] ? { ...pick, trim: 0 } : { type: mix ? "drawn" : "card" }, candidates: s.candidates.slice(0, 16) });
+  }
+  if (mix && weak.length) {
+    // its plan when Claude drew one (an overlay), else its key phrase as a title
+    const project = await one("video_projects", projectId);
+    const plan = (project.settings?.mix?.scenes || []).map((p, i) => (!weak.includes(i + 1) ? p
+      : { ...p, kind: "drawn", ...(p.heading || (p.items || []).length || p.number ? {} : { layout: "title", heading: keyPhrase(scenes[i].text), items: [] }) }));
+    await saveSettings(projectId, { mix: { ...project.settings.mix, scenes: plan } });
+    await warn(`Scene${weak.length === 1 ? "" : "s"} ${weak.join(", ")}: no real clip fit, so ${weak.length === 1 ? "it is" : "they are"} drawn instead.`);
+    return `${indexed.length - weak.length} of ${indexed.length} real scenes found a clip; ${weak.length} drawn instead`;
   }
   if (weak.length) await warn(`Scene${weak.length === 1 ? "" : "s"} ${weak.join(", ")}: no clip really fits. Choose another one.`);
-  return weak.length ? `${scenes.length - weak.length} of ${scenes.length} fit` : `All ${scenes.length} scenes fit`;
+  const n = indexed.length;
+  return weak.length ? `${n - weak.length} of ${n} fit` : mix ? `All ${n} real scenes fit` : `All ${n} scenes fit`;
+}
+/** A scene's few key words, for a drawn title when nothing else was planned. */
+function keyPhrase(text) {
+  const words = String(text || "").replace(/[“”"«»]/g, "").split(/\s+/).filter(Boolean);
+  const long = words.filter((w) => w.replace(/[^\p{L}\p{N}]/gu, "").length > 3);
+  return (long.length >= 2 ? long : words).slice(0, 4).join(" ").replace(/[.,!?;:…]+$/u, "").slice(0, 40);
 }
 
 async function waitForVoice(projectId) {
@@ -436,6 +464,7 @@ async function contactSheet(file, seconds) {
 
 async function finalChecks(job, project) {
   const drawn = ["explainer", "story"].includes(project.settings?.style);
+  const mix = project.settings?.style === "mix" ? project.settings.mix?.scenes || [] : null;
   if (!isVds(job.output_path) || !mediaReady()) return [{ name: "File", ok: false, detail: "The video isn't on the VDS, so it couldn't be measured." }];
   const file = path.join(os.tmpdir(), `${job.id}.mp4`);
   await downloadFromVds(vdsPath(job.output_path), file);
@@ -445,15 +474,23 @@ async function finalChecks(job, project) {
   const volume = spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-af", "volumedetect", "-vn", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
   const black = drawn ? "" : spawnSync("ffmpeg", ["-hide_banner", "-nostats", "-i", file, "-vf", "blackdetect=d=0.5:pix_th=0.05", "-an", "-f", "null", "-"], { encoding: "utf8" }).stderr || "";
   // (the Explainer style draws white lines on black: the black-screen check would flag every frame)
-  const blackSeconds = [...black.matchAll(/black_duration:([\d.]+)/g)].reduce((t, m) => t + Number(m[1]), 0);
-  // is the narrator really heard over the music? What a listener would catch, against the script
   const scenes = await sceneRows(project.id);
+  let blackSeconds = [...black.matchAll(/black_duration:([\d.]+)/g)].reduce((t, m) => t + Number(m[1]), 0);
+  if (mix) {
+    // a Mix: only black inside its real scenes counts (its drawn scenes may be dark on purpose)
+    let at = 0;
+    const realSpans = scenes.map((s, i) => { const from = at; at += sceneSeconds(s) + SCENE_GAP + (i === scenes.length - 1 ? TAIL : 0); return [from, at, mixKind(mix[i], s.clip) !== "drawn"]; })
+      .filter(([, , isReal]) => isReal);
+    blackSeconds = [...black.matchAll(/black_start:([\d.]+) black_end:([\d.]+)/g)].reduce((t, m) => t + realSpans.reduce((u, [a, b]) =>
+      u + Math.max(0, Math.min(b, Number(m[2])) - Math.max(a, Number(m[1]))), 0), 0);
+  }
+  // is the narrator really heard over the music? What a listener would catch, against the script
   const listen = spawnSync("python", [path.join(ROOT, "render/voice_check.py"), file, project.language], { encoding: "utf8", timeout: 15 * 60e3 });
   const voice = listen.status === 0
     ? (() => { const share = voiceCoverage(scenes.map((s) => s.text).join(" "), listen.stdout, project.language); log(`Heard: ${listen.stdout.slice(0, 300)}`); return { name: "Voice", ok: share >= voiceThreshold(project.language), detail: `${Math.round(share * 100)}% of the script is heard` }; })()
     : { name: "Voice", ok: false, detail: "The voice couldn't be checked by listening. Listen to the video." };
   if (listen.status !== 0) log(`voice check: ${String(listen.stderr).slice(-400)}`);
-  if (drawn) await contactSheet(file, Number(probe.format?.duration) || 0).catch((e) => log(`contact sheet: ${e.message}`));
+  if (drawn || mix) await contactSheet(file, Number(probe.format?.duration) || 0).catch((e) => log(`contact sheet: ${e.message}`));
   fs.rmSync(file, { force: true });
   return [voice, ...checkVideo({ aspect: project.aspect, expectedSeconds: Number(job.duration_s) || 0, width: video.width, height: video.height, duration: Number(probe.format?.duration) || 0, hasAudio,
     meanVolume: Number(volume.match(/mean_volume: (-?[\d.]+)/)?.[1] ?? -91), blackSeconds })];
@@ -477,6 +514,7 @@ async function main(id) {
   // the network may have a script to keep, or none yet
   let idea = await one("ideas", run.idea_id);
   const storyStyle = options.video_style === "story";
+  const mixStyle = options.video_style === "mix";
   const drawn = options.video_style === "explainer" || storyStyle;
   if (storyStyle) {
     // the film belongs to its words: a kept script keeps its film only if that film was made for it
@@ -486,13 +524,16 @@ async function main(id) {
     if (options.keep_script && idea.ai?.story?.code && lines === String(idea.script || "").trim() && (idea.ai?.language || "en") === lang) await skip("script", "Keeping the film already drawn");
     else await step("script", (note) => writeStoryFilm(idea, channel, options, { ROOT, rest, call, log, note, warn }));
     await skip("review", "The story and its film go together");
-  } else if (drawn) {
+  } else if (drawn || mixStyle) {
     // the drawing belongs to its words: a kept script keeps its plan only if that plan was made for it
-    const planned = idea.ai?.style === "explainer" && idea.ai?.explainer?.scenes?.length && (idea.ai.explainer.look || "glow") === (options.look || "glow")
-      && idea.ai.explainer.scenes.map((x) => `VO: ${x.narration}`).join("\n\n") === String(idea.script || "").trim();
-    if (options.keep_script && planned) await skip("script", "Keeping the explainer already planned");
+    const key = mixStyle ? "mix" : "explainer";
+    const plan = idea.ai?.[key];
+    const said = String(idea.script || "").split("\n").filter((l) => l.startsWith("VO: ")).map((l) => l.slice(4).trim()).join("\n");
+    const planned = idea.ai?.style === key && plan?.scenes?.length && (plan.look || "glow") === (options.look || "glow")
+      && plan.scenes.map((x) => String(x.narration).trim()).join("\n") === said;
+    if (options.keep_script && planned) await skip("script", mixStyle ? "Keeping the Mix already planned" : "Keeping the explainer already planned");
     else await step("script", (note) => planExplainer(idea, channel, options, note));
-    await skip("review", "The explainer plan keeps its own words");
+    await skip("review", "The plan keeps its own words");
   } else if (options.keep_script && idea.script?.trim()) {
     await skip("script", "Keeping your script");
     await skip("review", "Keeping your script");
@@ -510,17 +551,17 @@ async function main(id) {
   await step("scenes", async () => { projectId = await buildScenes(idea, channel, options, earlier); return `Voice style: ${options.voice_style || brief.voice_style || "natural"}`; });
   const project = await one("video_projects", projectId);
   if (drawn) await skip("clips", "Drawn scenes, no clips");
-  else await step("clips", (note) => chooseClips(projectId, brief.subject || idea.video_title || idea.title, project.aspect, note));
+  else await step("clips", (note) => chooseClips(projectId, brief.subject || idea.video_title || idea.title, project.aspect, note, mixStyle ? project.settings?.mix?.scenes || [] : null));
   await step("voice", () => waitForVoice(projectId));
   const total = (await sceneRows(projectId)).reduce((t, s) => t + sceneSeconds(s), 0);
   if (options.music === false) await skip("music", "You chose no music");
   else await step("music", () => findMusic(projectId, brief, channel.id, total));
-  if (options.sounds && !drawn) await step("sounds", () => addSounds(projectId, brief, total));
+  if (options.sounds && !drawn && !mixStyle) await step("sounds", () => addSounds(projectId, brief, total));
   else {
     await rest("PATCH", "project_scenes", `?project_id=eq.${projectId}`, { sounds: [] });
     await skip("sounds", "No sound effects");
   }
-  if (drawn) await skip("thumbnail", "The drawn frames are the cover");
+  if (drawn || mixStyle) await skip("thumbnail", "The drawn frames are the cover");
   else await step("thumbnail", () => makeThumbnailChoice(projectId, idea, brief, project.aspect));
   let job;
   await step("render", async () => { job = await renderVideo(projectId, idea.id); return `${Math.round(job.duration_s)} s`; });

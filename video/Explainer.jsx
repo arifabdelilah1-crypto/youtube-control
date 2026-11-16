@@ -122,6 +122,34 @@ let T = THEMES.glow;
 const TS = () => ({ hand: 1.12, comic: 1.3, mono: 0.9, serif: 1.04 }[T.font] || 1);
 let FONT = `"${LATIN}", "${ARABIC}", sans-serif`;
 
+const lumaOf = (hex) => { const h = String(hex || "").replace("#", ""); if (!/^[0-9a-f]{6}$/i.test(h)) return 255; const n = parseInt(h, 16); return 0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255); };
+/**
+ * The theme, geometry and font every drawing part reads (T, G, FONT), set before a scene is drawn: the Explainer sets it once,
+ * the Mix style (video/Mix.jsx) for each scene. transparent: a drawing laid over a dimmed real picture, so no background,
+ * no texture, and light ink where the look's ink is dark.
+ */
+export function setExplainerTheme(look, width, height, rtl, transparent = false) {
+  let theme = THEMES[EXPLAINER_LOOKS.includes(look) ? look : "glow"] || THEMES.glow;
+  if (transparent) {
+    theme = { ...theme, transparent: true, overlay: null, dust: null,
+      ...(lumaOf(theme.ink) < 128 ? { ink: "#FFFFFF", dim: "rgba(255,255,255,.42)", pillBg: "rgba(0,0,0,.62)",
+        glow: "drop-shadow(0 2px 8px rgba(0,0,0,.65))", glowAccent: "drop-shadow(0 2px 8px rgba(0,0,0,.65))",
+        shadow: "radial-gradient(closest-side, rgba(0,0,0,.35), rgba(0,0,0,0))" } : {}) };
+  }
+  T = theme;
+  G = Number(width) > Number(height) ? GEO.landscape : GEO.portrait;
+  const face = { hand: HAND, mono: MONO, serif: SERIF, comic: COMIC, light: LIGHT }[T.font];
+  FONT = rtl ? `"${ARABIC}", "${face || LATIN}", sans-serif` : face ? `"${face}", "${LATIN}", "${ARABIC}", sans-serif` : `"${LATIN}", "${ARABIC}", sans-serif`;
+  return T;
+}
+/** The same, as a hook that also loads the fonts. */
+export function useExplainerTheme(look, width, height, rtl, assetBase = null, transparent = false) {
+  useFonts(assetBase);
+  return setExplainerTheme(look, width, height, rtl, transparent);
+}
+/** A look's colours, without changing what is being drawn. */
+export const explainerTheme = (look) => THEMES[EXPLAINER_LOOKS.includes(look) ? look : "glow"] || THEMES.glow;
+
 const clamp = { extrapolateLeft: "clamp", extrapolateRight: "clamp" };
 const ease = Easing.bezier(0.65, 0, 0.35, 1);
 
@@ -383,7 +411,7 @@ function StatBar({ s, t, W, y }) {
 }
 
 // ---------- scene layouts (glow and whiteboard) ----------
-function SceneBody({ s, t, frame, fps, icons }) {
+export function SceneBody({ s, t, frame, fps, icons }) {
   const its = s.items;
   const P = { t, frame, fps, icons };
   const W = G.W;
@@ -567,7 +595,7 @@ function Captions({ words, t }) {
   );
 }
 
-function Overlay({ camX }) {
+export function Overlay({ camX }) {
   switch (T.overlay) {
     case "grid":
       return <AbsoluteFill style={{ backgroundImage: "linear-gradient(rgba(234,242,255,.16) 2px, transparent 2px), linear-gradient(90deg, rgba(234,242,255,.16) 2px, transparent 2px), linear-gradient(rgba(234,242,255,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(234,242,255,.07) 1px, transparent 1px)",
@@ -676,11 +704,7 @@ function KineticScene({ s, t, frame, fps, icons, rtl }) {
 export function Explainer(props) {
   const { scenes: list, music, rtl, totalFrames } = props;
   const look = EXPLAINER_LOOKS.includes(props.look) ? props.look : "glow";
-  T = THEMES[look] || THEMES.glow;
-  G = Number(props.width) > Number(props.height) ? GEO.landscape : GEO.portrait;
-  useFonts(props.assetBase);
-  const face = { hand: HAND, mono: MONO, serif: SERIF, comic: COMIC, light: LIGHT }[T.font];
-  FONT = rtl ? `"${ARABIC}", "${face || LATIN}", sans-serif` : face ? `"${face}", "${LATIN}", "${ARABIC}", sans-serif` : `"${LATIN}", "${ARABIC}", sans-serif`;
+  useExplainerTheme(look, props.width, props.height, rtl, props.assetBase);
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const icons = ICONS;

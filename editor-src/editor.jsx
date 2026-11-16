@@ -82,7 +82,16 @@ function CardEditor({ card, index, onChange }) {
   );
 }
 
-function SceneCard({ scene, index, count, project, active, signed, onChange, onPick, onSearch, onUpload, onMove, onDelete, onAdd, onSeek, searching }) {
+// The Mix style: each scene is real footage, a drawing, or a drawing over a dimmed real picture (video/Mix.jsx)
+const MIX_CHOICES = [["footage", "Real", "Stock clip or photo, full screen"], ["drawn", "Drawn", "Claude's drawing, no clip"], ["overlay", "Overlay", "The drawing over the clip, dimmed"]];
+/** A line's few key words: the title of a drawing made for a line that had none. */
+const keyPhrase = (text) => {
+  const words = String(text || "").replace(/[“”"«»]/g, "").split(/\s+/).filter(Boolean);
+  const long = words.filter((w) => w.replace(/[^\p{L}\p{N}]/gu, "").length > 3);
+  return (long.length >= 2 ? long : words).slice(0, 4).join(" ").replace(/[.,!?;:…]+$/u, "").slice(0, 40);
+};
+
+function SceneCard({ scene, index, count, project, active, signed, onChange, onPick, onSearch, onUpload, onMove, onDelete, onAdd, onSeek, searching, mixKind = null, mixPlan = null, onKind }) {
   const [text, setText] = useState(scene.text);
   const [terms, setTerms] = useState((scene.terms || []).join(", "));
   const [title, setTitle] = useState(scene.title || "");
@@ -116,12 +125,12 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
     <article className={`ed-scene${active ? " active" : ""}`} aria-label={`Scene ${index + 1}`}>
       <div className="ed-scene-head">
         <button type="button" className="ed-thumb" onClick={onSeek} aria-label={`Play from scene ${index + 1}`}>
-          {thumb ? <img src={thumb} alt="" /> : <span>{clip.type === "card" ? "Text card" : clip.type === "video" ? "Your clip" : ""}</span>}
+          {thumb && mixKind !== "drawn" ? <img src={thumb} alt="" /> : <span>{mixKind === "drawn" ? "Drawing" : clip.type === "card" ? "Text card" : clip.type === "video" ? "Your clip" : ""}</span>}
           <b>{index + 1}</b>
         </button>
         <div className="ed-scene-meta">
           <span className={`pill ${voiceState[0]}`}>{voiceState[1]}</span>
-          <span className="muted small">{clip.type === "card" ? "No clip" : clip.source === "youtube" ? "YouTube CC · file needed" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license || clip.credit?.license ? ` · ${clip.license || clip.credit.license}` : ""}`}{sceneSounds(scene).length ? ` · ${sceneSounds(scene).length} sound${sceneSounds(scene).length > 1 ? "s" : ""}` : ""}</span>
+          <span className="muted small">{mixKind === "drawn" ? "Drawn by Claude" : clip.type === "card" || clip.type === "drawn" ? "No clip" : clip.source === "youtube" ? "YouTube CC · file needed" : `${clip.type === "video" ? "Video" : "Image"} · ${clip.source === "upload" ? "uploaded" : clip.source || ""}${clip.license || clip.credit?.license ? ` · ${clip.license || clip.credit.license}` : ""}`}{sceneSounds(scene).length ? ` · ${sceneSounds(scene).length} sound${sceneSounds(scene).length > 1 ? "s" : ""}` : ""}</span>
         </div>
         <div className="ed-scene-tools">
           <button type="button" className="btn small ghost" disabled={index === 0} onClick={() => onMove(-1)} aria-label="Move up">↑</button>
@@ -131,8 +140,15 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
         </div>
       </div>
       <textarea className="field ed-text" rows={2} value={text} dir="auto" onChange={(e) => setText(e.target.value)} onBlur={commitText} aria-label={`Scene ${index + 1} voice-over text`} />
-      <input className="field" dir="auto" value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} onBlur={commitTitle}
-        placeholder="On-screen title (optional), e.g. YAMAL TO MADRID?" aria-label={`Scene ${index + 1} on-screen title`} />
+      {mixKind ? (
+        <div className="ed-mix" role="group" aria-label={`Scene ${index + 1}: real or drawn`}>
+          {MIX_CHOICES.map(([k, t, hint]) => <button key={k} type="button" className={`btn small${mixKind === k ? " primary" : ""}`} aria-pressed={mixKind === k} title={hint} onClick={() => onKind(k)}>{t}</button>)}
+          <span className="muted small">{MIX_CHOICES.find(([k]) => k === mixKind)?.[2]}{mixKind !== "footage" && mixPlan ? ` · ${mixPlan.layout || "title"}${mixPlan.heading ? `: “${mixPlan.heading}”` : ""}` : ""}</span>
+        </div>
+      ) : null}
+      {mixKind === "drawn" ? null : (<>
+      {mixKind ? null : <input className="field" dir="auto" value={title} maxLength={80} onChange={(e) => setTitle(e.target.value)} onBlur={commitTitle}
+        placeholder="On-screen title (optional), e.g. YAMAL TO MADRID?" aria-label={`Scene ${index + 1} on-screen title`} />}
       <div className="ed-search">
         <select className="field ed-kind" value={footage} onChange={(e) => { onChange({ footage: e.target.value }); search(e.target.value); }} aria-label={`Scene ${index + 1} footage type`}>
           {FOOTAGE.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
@@ -168,7 +184,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
       <div className="row">
         <button type="button" className="btn small ghost" onClick={() => fileRef.current?.click()}>Upload image / clip</button>
         <input ref={fileRef} type="file" accept="image/*,video/mp4,video/quicktime,video/webm" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onUpload(f); }} />
-        {clip.type !== "card" ? <button type="button" className="btn small ghost" onClick={() => onPick({ type: "card" })}>Use text card</button> : null}
+        {clip.type !== "card" && !mixKind ? <button type="button" className="btn small ghost" onClick={() => onPick({ type: "card" })}>Use text card</button> : null}
         {clip.type === "video" ? (
           <label className="row small muted" style={{ gap: 6 }}>Start at
             <input className="field ed-trim" type="number" min="0" step="0.5" value={clip.trim || 0}
@@ -176,6 +192,7 @@ function SceneCard({ scene, index, count, project, active, signed, onChange, onP
           </label>
         ) : null}
       </div>
+      </>)}
     </article>
   );
 }
@@ -1072,18 +1089,41 @@ function Editor({ ctx }) {
     const credit = prev.source === "youtube" ? { tags: prev.tags, author: prev.author, license: prev.license, page: prev.page, via: "YouTube" } : null;
     await patchScene(scene.id, { clip: { type: kind, source: "upload", id: path, path, duration, width: size[0], height: size[1], trim: 0, credit } });
   };
+  // the Mix style: settings.mix.scenes[i] is scene i's kind and drawing, so it follows the scenes when they're added, removed or moved
+  const mix = project?.settings?.style === "mix";
+  const mixPlans = () => { const l = [...(project.settings?.mix?.scenes || [])]; while (l.length < scenes.length) l.push({ kind: "footage" }); return l; };
+  const saveMix = (list) => saveProject({ settings: { ...project.settings, mix: { ...(project.settings?.mix || {}), scenes: list } } });
+  const mixKindOf = (i) => { const k = project.settings?.mix?.scenes?.[i]?.kind; return ["footage", "drawn", "overlay"].includes(k) ? k : scenes[i]?.clip && ["video", "image"].includes(scenes[i].clip.type) ? "footage" : "drawn"; };
+  const setMixKind = async (i, kind) => {
+    const list = mixPlans();
+    const cur = list[i] || {};
+    const planned = cur.heading || (cur.items || []).length || cur.number;
+    // a drawing for a line that had none: its key words as a title
+    list[i] = { ...cur, kind, ...(kind !== "footage" && !planned ? { layout: "title", heading: keyPhrase(scenes[i].text), items: [] } : {}) };
+    saveMix(list);
+    const s = scenes[i];
+    if (kind === "drawn") await patchScene(s.id, { clip: { type: "drawn" } });
+    else if (!s.clip || ["drawn", "card"].includes(s.clip.type)) {
+      // real again: the clip picker, with a search if it has nothing to show
+      await patchScene(s.id, { clip: { type: "card" } });
+      if (!(s.candidates || []).length) searchFor(s.id, (s.terms || [])[0] || s.text, (s.terms || []).slice(1), s.footage === "image" ? "image" : "video");
+    }
+  };
   const addAfter = async (i) => {
-    const { data, error } = await sb.from("project_scenes").insert({ project_id: project.id, idx: i + 1, text: "New line…", terms: [], clip: { type: "card" } }).select().single();
+    const { data, error } = await sb.from("project_scenes").insert({ project_id: project.id, idx: i + 1, text: "New line…", terms: [], clip: { type: mix ? "drawn" : "card" } }).select().single();
     if (error) return toast(error.message);
     const list = [...scenes]; list.splice(i + 1, 0, data); await reindex(list);
+    if (mix) { const plans = mixPlans(); plans.splice(i + 1, 0, { kind: "drawn", layout: "title", heading: "", items: [] }); saveMix(plans); }
   };
   const remove = async (i) => {
     const s = scenes[i];
     await sb.from("project_scenes").delete().eq("id", s.id);
     await reindex(scenes.filter((x) => x.id !== s.id));
+    if (mix) { const plans = mixPlans(); plans.splice(i, 1); saveMix(plans); }
   };
   const move = async (i, d) => {
     const list = [...scenes]; const [s] = list.splice(i, 1); list.splice(i + d, 0, s); await reindex(list);
+    if (mix) { const plans = mixPlans(); const [p] = plans.splice(i, 1); plans.splice(i + d, 0, p); saveMix(plans); }
   };
   const updateVoice = async () => {
     const ids = scenes.filter((s) => !s.voice_path || s.voice_text !== s.text).map((s) => s.id);
@@ -1205,6 +1245,7 @@ function Editor({ ctx }) {
               {scenes.map((s, i) => (
                 <SceneCard key={s.id} scene={s} index={i} count={scenes.length} project={project} active={i === currentScene} signed={signed}
                   searching={searching === s.id}
+                  mixKind={mix ? mixKindOf(i) : null} mixPlan={mix ? project.settings?.mix?.scenes?.[i] || null : null} onKind={(k) => setMixKind(i, k)}
                   onChange={(patch) => patchScene(s.id, patch)}
                   onPick={(clip) => patchScene(s.id, { clip })}
                   onSearch={(q, more, kind) => searchFor(s.id, q, more, kind)}

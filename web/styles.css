@@ -946,3 +946,6 @@ button.tr-q:hover { color: var(--signal); }
 .anim-sheet { display: block; margin-top: 8px; max-width: 420px; }
 .anim-sheet img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--line); }
 .anim-sheet:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+/* Studio, a Mix video: each scene is real, drawn or a drawing over the clip */
+.ed-mix { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ed-mix .muted { flex: 1 1 180px; min-width: 0; }
