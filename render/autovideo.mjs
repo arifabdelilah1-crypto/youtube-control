@@ -312,7 +312,11 @@ async function chooseClips(projectId, subject, aspect, note, mix = null) {
   }
   for (const { i, s } of indexed) {
     const { seen: _seen, ...pick } = chosen[i] || {};
-    await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: chosen[i] ? { ...pick, trim: 0 } : { type: mix ? "drawn" : "card" }, candidates: s.candidates.slice(0, 16) });
+    // a Mix's name card stays only on a picture of that very person or thing (not a fan in their jersey)
+    const dropCard = mix && s.card?.name && (!chosen[i] || !namedIn(chosen[i], s.card.name));
+    if (dropCard) log(`scene ${i + 1}: name card "${s.card.name}" dropped, the picture isn't of them`);
+    await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: chosen[i] ? { ...pick, trim: 0 } : { type: mix ? "drawn" : "card" }, candidates: s.candidates.slice(0, 16),
+      ...(dropCard ? { card: null } : {}) });
   }
   if (mix && weak.length) {
     // its plan when Claude drew one (an overlay), else its key phrase as a title
@@ -326,6 +330,13 @@ async function chooseClips(projectId, subject, aspect, note, mix = null) {
   if (weak.length) await warn(`Scene${weak.length === 1 ? "" : "s"} ${weak.join(", ")}: no clip really fits. Choose another one.`);
   const n = indexed.length;
   return weak.length ? `${n - weak.length} of ${n} fit` : mix ? `All ${n} real scenes fit` : `All ${n} scenes fit`;
+}
+/** Is the clip a picture of that name? Every word of the name (3+ letters) in its tags, title or page. */
+function namedIn(clip, name) {
+  const norm = (x) => String(x || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ");
+  const hay = ` ${norm([clip.tags, clip.title, clip.page].join(" "))} `;
+  const words = norm(name).split(" ").filter((w) => w.length > 2);
+  return words.length > 0 && words.every((w) => hay.includes(` ${w} `) || hay.includes(` ${w}`));
 }
 /** A scene's few key words, for a drawn title when nothing else was planned. */
 function keyPhrase(text) {

@@ -158,6 +158,8 @@ The viewer must feel one video, not two styles glued together.
 - About 50 to 60% of the scenes are "footage" or "overlay". End on a strong real picture or a drawn summary.
 - A scene about a real named person is "footage" (or "overlay") with an image of THAT person: kind "image" and their exact name. Never a
   drawing of a real person, and never stock video of someone else standing in for them.
+- A name card only on a scene whose picture IS that person or thing (its first footage entry is an image search of exactly card_name).
+  A fan, a jersey, a crowd or a look-alike never gets the person's name card.
 Footage ("footage" and "overlay" scenes: exactly 2 entries, the most precise first, then a safer, more general one):
 - kind "video": stock clips from Pexels, Pixabay and Wikimedia Commons: 2 to 4 simple ENGLISH words a camera can film and stock sites really
   have ("stadium crowd night", "man walking alone city"). No brand names or famous people.
