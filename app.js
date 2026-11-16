@@ -3839,7 +3839,25 @@ function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
   const tiktok = menu("tiktok", "Don't post");
   const ttPrivacy = h("select", { class: "field", "aria-label": "TikTok visibility" }, [["PUBLIC_TO_EVERYONE", "Public"], ["SELF_ONLY", "Only me"], ["MUTUAL_FOLLOW_FRIENDS", "Friends"], ["FOLLOWER_OF_CREATOR", "Followers"]].map(([v, t]) => h("option", { value: v, selected: (savedOf("tiktok")?.privacy || "PUBLIC_TO_EVERYONE") === v, text: t })));
   const ttAi = h("input", { type: "checkbox", checked: savedOf("tiktok")?.ai !== false });
-  const instagram = menu("instagram", "Don't post");
+  // Instagram: the professional account linked to a Facebook Page connected directly (Reels through the Graph API), or one through Blotato
+  const igSaved = savedOf("instagram");
+  const igCurrent = igSaved?.method === "meta" && igSaved.page_id ? `meta:${igSaved.page_id}` : igSaved?.account_id ? (igSaved.page_id ? `${igSaved.account_id}:${igSaved.page_id}` : String(igSaved.account_id)) : "";
+  const igMeta = metaPages.filter((pg) => pg.ig_user_id);
+  const igBlotato = accountsFor("instagram");
+  const instagram = h("select", { class: "field", "aria-label": "Instagram account" }, h("option", { value: "", text: "Don't post" }),
+    igMeta.length ? h("optgroup", { label: "Direct (through a Facebook Page)" }, igMeta.map((pg) => h("option", { value: `meta:${pg.page_id}`, selected: igCurrent === `meta:${pg.page_id}`, text: `@${pg.ig_username || pg.ig_user_id} (${pg.name})` }))) : null,
+    igBlotato.length ? h("optgroup", { label: "Through Blotato" }, igBlotato.map((a) => h("option", { value: keyOf(a), selected: keyOf(a) === igCurrent, text: a.name }))) : null,
+    igCurrent && !igMeta.some((pg) => `meta:${pg.page_id}` === igCurrent) && !igBlotato.some((a) => keyOf(a) === igCurrent) ? h("option", { value: igCurrent, selected: true, text: "Saved account (not found)" }) : null);
+  const igPill = h("span", {});
+  const showIg = () => {
+    const v = instagram.value;
+    const page = v.startsWith("meta:") ? metaPages.find((pg) => `meta:${pg.page_id}` === v) : null;
+    const [cls, text] = !v ? ["short", "Off"] : v.startsWith("meta:") ? (!page?.ig_user_id ? ["crit", "Not found"] : page.needs_reconnect ? ["crit", "Reconnect needed"] : ["ok", "Connected"])
+      : blotato.error ? ["warn", "Can't check"] : igBlotato.some((a) => keyOf(a) === v) ? ["ok", "Through Blotato"] : ["crit", "Not found"];
+    igPill.className = `pill ${cls}`; igPill.textContent = text;
+  };
+  instagram.addEventListener("change", showIg); showIg();
+  const igHint = h("span", { class: "muted small", text: igMeta.length ? "Reels of 3 to 90 s, 9:16. They go out at their slot." : "To post Reels directly, link an Instagram professional account to your Facebook Page, then Reconnect Facebook." });
   const x = menu("twitter", "Don't post");
   // Facebook: a Page connected directly (Connect Facebook), or one through Blotato
   const fbSaved = savedOf("facebook");
@@ -3881,7 +3899,9 @@ function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
     const blotatoTarget = (platform, select, extra = {}) => { if (!select.value) return []; const [account_id, page_id] = select.value.split(":"); return [{ platform, method: "blotato", account_id, ...(page_id ? { page_id } : {}), ...extra }]; };
     const targets = [
       ...(ytMethod.value === "off" ? [] : [{ platform: "youtube", method: ytMethod.value, account_id: ytMethod.value === "blotato" ? ytBlotato.value : null }]),
-      ...blotatoTarget("tiktok", tiktok, { privacy: ttPrivacy.value, ai: ttAi.checked }), ...blotatoTarget("instagram", instagram), ...blotatoTarget("twitter", x),
+      ...blotatoTarget("tiktok", tiktok, { privacy: ttPrivacy.value, ai: ttAi.checked }),
+      ...(instagram.value.startsWith("meta:") ? [{ platform: "instagram", method: "meta", page_id: instagram.value.slice(5) }] : blotatoTarget("instagram", instagram)),
+      ...blotatoTarget("twitter", x),
       ...(facebook.value.startsWith("meta:") ? [{ platform: "facebook", method: "meta", page_id: facebook.value.slice(5) }] : blotatoTarget("facebook", facebook)),
     ];
     try {
@@ -3899,7 +3919,7 @@ function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
     noAccounts ? h("p", { class: "muted small", style: "margin:0", text: "No TikTok, Instagram, X or Facebook account in Blotato yet. Connect them there, then reload this page." }) : null,
     row("youtube", ytPill, ytMethod, ytWrap, h("button", { class: `btn small${chRow.connected ? "" : " primary"}`, type: "button", text: chRow.connected ? "Reconnect Google" : "Connect with Google", onclick: () => startOAuth(id) })),
     row("tiktok", status("tiktok", tiktok), tiktok, ttPrivacy, h("label", { class: "pub-check small" }, ttAi, "Mark as AI-generated")),
-    row("instagram", status("instagram", instagram), instagram),
+    row("instagram", igPill, instagram, igHint),
     row("twitter", status("twitter", x), x, h("span", { class: "muted small", text: "Posts the title, 280 characters at most." })),
     row("facebook", fbPill, facebook, h("button", { class: `btn small${metaPages.length && !fbBroken ? "" : " primary"}`, type: "button", text: metaPages.length ? "Reconnect Facebook" : "Connect Facebook",
       title: "Log in with the Facebook profile that manages your Pages: they all appear in this list", onclick: (e) => { e.currentTarget.disabled = true; startMetaOAuth(id); } }),
@@ -3946,8 +3966,8 @@ VIEWS.channel = async (route) => {
     q(sb.from("publish_schedules").select("*").eq("channel_id", id)),
     publishCall({ action: "blotato_accounts" }).catch((e) => ({ accounts: [], error: e.message })),
   ]);
-  const metaPages = await q(sb.from("meta_pages").select("page_id,name,picture_url,ig_username,needs_reconnect,reconnect_since").order("name"))
-    .catch(() => q(sb.from("meta_pages").select("page_id,name,picture_url,ig_username").order("name"))).catch(() => []);
+  const metaPages = await q(sb.from("meta_pages").select("page_id,name,picture_url,ig_user_id,ig_username,needs_reconnect,reconnect_since").order("name"))
+    .catch(() => q(sb.from("meta_pages").select("page_id,name,picture_url,ig_user_id,ig_username").order("name"))).catch(() => []);
   const { count: fbFailed } = await sb.from("publish_queue").select("id", { count: "exact", head: true }).eq("channel_id", id).eq("method", "meta").eq("platform", "facebook").eq("status", "failed");
   const panels = networkPanels(chRow, scheds[0], blotato, metaPages, fbFailed || 0);
   const header = h("header", { class: "head" },

@@ -6,6 +6,8 @@
 // POST {action:"blotato_accounts"}                                       (dashboard user) -> connected accounts, and each Facebook account's Pages
 // POST {action:"blotato_sync"}                                           (dashboard user) -> asks Blotato how its pending posts ended
 // POST {action:"token",  channel_id}                                     (publish job, x-cron-secret) -> short-lived YouTube access token
+// POST {action:"dispatch_due"}                                          (pg_cron "instagram-dispatch", x-cron-secret) -> starts the
+//      upload job of the Instagram Reels whose slot has come (the API can't schedule them), 5 at a time
 // POST {action:"resend_meta", page_id}                                   (dashboard user) -> after a Facebook reconnect: every failed
 //      Facebook post of that Page goes back in the queue, in its network's next free slots
 // GitHub jobs read the cron secret from the database with their service key, then send it as x-cron-secret.
@@ -56,8 +58,9 @@ function targetsOf(schedule: any): { platform: string; method: string; account_i
   return schedule.targets.filter((x: any) => PLATFORMS.has(x?.platform))
     .map((x: any) => ({
       platform: x.platform,
-      // "meta": a Facebook Page connected directly (Connect Facebook), posted by the publish job with the Page's own token
-      method: x.platform === "youtube" ? (x.method !== "blotato" ? "youtube" : "blotato") : x.platform === "facebook" && x.method === "meta" ? "meta" : "blotato",
+      // "meta": a Facebook Page connected directly (Connect Facebook), or its linked Instagram account, posted by the publish job
+      // with the Page's own token
+      method: x.platform === "youtube" ? (x.method !== "blotato" ? "youtube" : "blotato") : (x.platform === "facebook" || x.platform === "instagram") && x.method === "meta" ? "meta" : "blotato",
       account_id: x.account_id ? String(x.account_id) : null, page_id: x.page_id ? String(x.page_id) : null,
     }));
 }
@@ -83,6 +86,11 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   if (!targets.length) return { error: excluded.size ? "Every account is switched off for this video. Turn one on in its Publish tab." : "This network posts nowhere yet. Pick its accounts on its Networks page.", status: 400 };
   if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account on this network's page.", status: 400 };
   if (targets.some((x) => x.method === "meta" && !x.page_id)) return { error: "Pick the Facebook Page on this network's page.", status: 400 };
+  const igMeta = targets.find((x) => x.platform === "instagram" && x.method === "meta");
+  if (igMeta) {
+    const { data: page } = await db.from("meta_pages").select("ig_user_id").eq("page_id", igMeta.page_id).maybeSingle();
+    if (!page?.ig_user_id) return { error: "The Instagram account isn't linked to this network's Facebook Page any more. Link it in Instagram, then click Reconnect Facebook.", status: 400 };
+  }
   if (targets.some((x) => x.method === "youtube")) {
     const { count } = await db.from("channel_tokens").select("channel_id", { count: "exact", head: true }).eq("channel_id", channelId);
     if (!count) return { error: "This network's YouTube channel isn't connected. Connect it on its Networks page first.", status: 400 };
@@ -130,11 +138,31 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
     };
     const { data: saved, error } = await db.from("publish_queue").upsert(row, { onConflict: "render_job_id,platform" }).select().single();
     if (error) throw error;
+    // an Instagram Reel can't be scheduled through the API: it waits in the queue, and dispatch_due starts its job at its slot
+    if (target.platform === "instagram" && target.method === "meta" && slot && Date.parse(slot) > Date.now() + 5 * 60e3) { rows.push(saved); continue; }
     const err = await dispatch({ queue_id: saved.id, ...artifactInputs(job) });
     if (err) await db.from("publish_queue").update({ status: "failed", error: err }).eq("id", saved.id);
     rows.push({ ...saved, status: err ? "failed" : "queued", error: err });
   }
   return { row: rows[0], rows };
+}
+
+/** Instagram Reels whose slot has come: their upload job starts now (5 at a time; the cron runs every 5 minutes). */
+async function dispatchDue() {
+  const soon = new Date(Date.now() + 2 * 60e3).toISOString();
+  const { data: due } = await db.from("publish_queue").select("id,render_job_id").eq("platform", "instagram").eq("method", "meta")
+    .eq("status", "queued").lte("slot_at", soon).order("slot_at").limit(5);
+  let sent = 0;
+  for (const row of due || []) {
+    // claimed first, so the next run of the cron can't start it twice
+    const { data: claimed } = await db.from("publish_queue").update({ status: "uploading", error: null }).eq("id", row.id).eq("status", "queued").select("id");
+    if (!claimed?.length) continue;
+    const { data: job } = await db.from("render_jobs").select("*").eq("id", row.render_job_id).maybeSingle();
+    const err = job ? await dispatch({ queue_id: row.id, ...artifactInputs(job) }) : "The video of this post is gone. Render it again.";
+    if (err) await db.from("publish_queue").update({ status: "failed", error: err }).eq("id", row.id);
+    else sent++;
+  }
+  return { due: due?.length || 0, sent };
 }
 
 /** After a Facebook reconnect: the Page's failed posts go out again, each in its network's next free slot. */
@@ -192,6 +220,10 @@ Deno.serve(async (req) => {
     const cron = req.headers.get("x-cron-secret");
     const isService = !!cron && cron === (await db.rpc("get_cron_secret")).data;
 
+    if (body.action === "dispatch_due") {
+      if (!isService) return json({ error: "not allowed" }, 403);
+      return json(await dispatchDue());
+    }
     if (body.action === "token" || body.action === "auto") {
       if (!isService) return json({ error: "not allowed" }, 403);
       if (body.action === "auto") {

@@ -247,6 +247,68 @@ async function facebookUpload(row, job, pageId) {
   return { status: future ? "scheduled" : "published", public_url: `https://www.facebook.com/${pageId}/videos/${out.id}` };
 }
 
+// ---------- Instagram Reels, directly (the professional account linked to a Facebook Page connected with Connect Facebook) ----------
+// The API can't schedule: the publish function's dispatcher (pg_cron "instagram-dispatch", every 5 minutes) starts this job
+// when the slot comes, and the Reel goes out at once. Meta fetches the video itself from a signed link to the video store.
+const IG_DAILY_LIMIT = 50;  // Instagram: 50 API posts per account in 24 h
+async function igGet(pathAndQuery) {
+  const r = await fetch(`${FB_GRAPH}/${pathAndQuery}`);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok || data.error) throw new MetaError(`Instagram: ${data.error?.error_user_msg || data.error?.message || r.status}`, data.error);
+  return data;
+}
+async function toInstagram(row, sched, job) {
+  const saved = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === "instagram") || {};
+  const pageId = String(saved.page_id || "");
+  if (!/^\d+$/.test(pageId)) throw new Error("Pick the Instagram account for this network (on its page, under Accounts).");
+  try {
+    return await instagramUpload(row, job, pageId);
+  } catch (e) {
+    if (!metaAuthProblem(e)) throw e;
+    await markPageBroken(pageId, e.message);
+    throw new Error(`Meta stopped accepting this Page's connection: click Reconnect Facebook on the network's page, then retry. (${e.message})`);
+  }
+}
+async function instagramUpload(row, job, pageId) {
+  const [page] = await rest("GET", "meta_pages", `?page_id=eq.${pageId}&select=page_id,name,ig_user_id,ig_username`);
+  if (!page?.ig_user_id) throw new Error("This Facebook Page has no Instagram professional account linked. Link one in Instagram's settings, then click Reconnect Facebook.");
+  const tr = await fetch(`${URL_}/rest/v1/rpc/get_meta_page_token`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_page_id: pageId }) });
+  const token = tr.ok ? await tr.json() : null;
+  if (!token) throw new Error("This Facebook Page isn't connected any more. Click Connect Facebook on the network's page.");
+  const seconds = Number(job.duration_s || 0);
+  if ((job.params?.aspect || "9:16") !== "9:16") throw new Error("Instagram Reels must be vertical (9:16). Render a 9:16 version, or turn Instagram off for this video.");
+  if (seconds && (seconds < 3 || seconds > 90)) throw new Error(`Instagram Reels last 3 to 90 seconds; this video lasts ${Math.round(seconds)} s.`);
+  if (!job.output_path) throw new Error("Instagram fetches the video from a link, and this render has no stored file (only a GitHub artifact). Render it again.");
+  const ig = page.ig_user_id;
+  // 50 posts in 24 h per account: past that, the Reel waits an hour in the queue
+  const limit = await igGet(`${ig}/content_publishing_limit?${new URLSearchParams({ fields: "quota_usage,config", access_token: token })}`).catch(() => null);
+  const used = Number(limit?.data?.[0]?.quota_usage ?? 0), cap = Number(limit?.data?.[0]?.config?.quota_total ?? IG_DAILY_LIMIT);
+  if (used >= cap) {
+    const later = new Date(Date.now() + 60 * 60e3).toISOString();
+    log(`Instagram limit reached (${used}/${cap} in 24 h): waiting until ${later}`);
+    return { status: "queued", slot_at: later, warning: `Instagram allows ${cap} posts in 24 hours for @${page.ig_username || ig}: this Reel waits and tries again at ${later.slice(11, 16)} UTC.` };
+  }
+  const tags = (row.tags || []).slice(0, 30).map((t) => `#${String(t).replace(/[^\p{L}\p{N}_]/gu, "")}`).filter((t) => t.length > 1);
+  const caption = [row.title, row.description, tags.length && !/#\w/.test(row.description || "") ? tags.join(" ") : ""].filter(Boolean).join("\n\n").slice(0, 2200);
+  const videoUrl = await signedUrl(job.output_path);
+  const container = await fbPost(`${FB_GRAPH}/${ig}/media`, formOf({ media_type: "REELS", video_url: videoUrl, caption, share_to_feed: "true", access_token: token }));
+  log(`Instagram container ${container.id}: Meta is fetching the video`);
+  // Meta downloads and processes the video: usually under a minute, up to a few
+  let state = "";
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 10_000));
+    const st = await igGet(`${container.id}?${new URLSearchParams({ fields: "status_code,status", access_token: token })}`);
+    state = st.status_code;
+    if (state === "FINISHED") break;
+    if (state === "ERROR" || state === "EXPIRED") throw new Error(`Instagram couldn't process the video: ${st.status || state}`);
+  }
+  if (state !== "FINISHED") throw new Error("Instagram was still processing the video after 15 minutes. Retry it on the Publish page.");
+  const published = await fbPost(`${FB_GRAPH}/${ig}/media_publish`, formOf({ creation_id: container.id, access_token: token }));
+  const info = await igGet(`${published.id}?${new URLSearchParams({ fields: "permalink", access_token: token })}`).catch(() => ({}));
+  log(`Instagram Reel published: ${info.permalink || published.id}`);
+  return { status: "published", public_url: info.permalink || null, platform_post_id: published.id };
+}
+
 async function main() {
   if (!URL_ || !KEY) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required");
   if (process.argv[2] === "--auto") {
@@ -268,7 +330,7 @@ async function main() {
     const [sched] = await rest("GET", "publish_schedules", `?channel_id=eq.${row.channel_id}&select=*`);
     const settings = sched || { method: "youtube", privacy: "public", notify_subscribers: true, category_id: "22" };
     const result = row.method === "blotato" ? await toBlotato(row, settings, job)
-      : row.method === "meta" ? await toFacebook(row, settings, job)
+      : row.method === "meta" ? (row.platform === "instagram" ? await toInstagram(row, settings, job) : await toFacebook(row, settings, job))
       : await toYouTube(row, settings, await videoFile(job), job);
     const { warning, ...saved } = result;
     await rest("PATCH", "publish_queue", `?id=eq.${queueId}`, { ...saved, error: warning || null });
