@@ -1240,12 +1240,18 @@ VIEWS.animation = async () => {
   // the animations made so far
   const list = h("div", { class: "idea-list", "aria-live": "off" });
   let ideas = [], runs = [];
+  const sheets = new Map();  // contact sheet path -> signed link (render/autovideo.mjs makes one per drawn film)
   const load = async () => {
     let iq = sb.from("ideas").select("id,title,video_title,channel_id,stage,created_at").not("stage", "in", "(archived,published)").order("created_at", { ascending: false }).limit(200);
     if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
     const [rows, all] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(200))]);
     ideas = rows;
     runs = all.filter((r) => ["explainer", "story"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
+    const missing = runs.map((r) => r.contact_sheet).filter((p) => p && !sheets.has(p));
+    if (missing.length) {
+      const { data } = await sb.storage.from("renders").createSignedUrls(missing, 6 * 3600);
+      for (const d of data || []) if (d.signedUrl) sheets.set(d.path, d.signedUrl);
+    }
   };
   const reload = async () => { await load(); paint(); };
   const stopRun = async (r) => { try { await aiCall({ action: "auto_stop", idea_id: r.idea_id, run_id: r.id }); await reload(); } catch (e) { toast(e.message); } };
@@ -1266,6 +1272,8 @@ VIEWS.animation = async () => {
         h("div", { class: "idea-meta muted small" }, h("span", { text: look.label }), h("span", { text: r.options?.aspect === "16:9" ? "YouTube video 16:9" : "Short 9:16" }), h("span", { text: channelById(r.channel_id)?.title || "" }),
           plan ? h("span", { text: plan }) : null, h("span", { text: ago(r.created_at) })),
         isActiveRun(r) ? runProgress(r) : null,
+        sheets.get(r.contact_sheet) ? h("a", { class: "anim-sheet", href: sheets.get(r.contact_sheet), target: "_blank", rel: "noopener", title: "Open the six frames in full size" },
+          h("img", { src: sheets.get(r.contact_sheet), alt: `Six frames of "${runTitle(r)}"`, loading: "lazy" })) : null,
         r.status === "failed" ? h("p", { class: "small idea-error", role: "alert", text: r.error || "It stopped before the end." }) : null,
         ["ready", "review"].includes(r.status) ? ideaNotes({ id: r.idea_id, ai: {} }, r) : null),
       h("div", { class: "idea-side" }, h("span", { class: "idea-lamp small", "data-lamp": lamp[1], text: lamp[0] }), h("div", { class: "idea-acts" }, acts)));
@@ -3394,6 +3402,16 @@ VIEWS.campaign = async (route) => {
   const lenBox = h("div", {});
   const pickLen = (v) => { mkLen = v; lenBox.replaceChildren(seg([["short30", "30 s"], ["short45", "45 s"], ["short60", "60 s"]], mkLen, pickLen, "Length")); };
   pickLen(c.card?.length?.max_s && c.card.length.max_s <= 35 ? "short30" : "short45");
+  // the style: stock footage with a narrator (DeepSeek writes the script), or a Story stick film (Claude writes the story and draws it)
+  let mkStyle = "stock", mkLook = "noir";
+  const styleBox = h("div", {}), lookBox = h("div", {});
+  const pickLook = (v) => { mkLook = v; lookBox.replaceChildren(seg([["noir", "Noir"], ["paper", "Storybook"], ["pop", "Pop"]], mkLook, pickLook, "Story look")); };
+  const pickStyle = (v) => { mkStyle = v; styleBox.replaceChildren(seg([["stock", "Stock footage"], ["story", "Story stick"]], mkStyle, pickStyle, "Style")); lookWrap.hidden = v !== "story"; styleNote.textContent = STYLE_NOTES[v]; };
+  const STYLE_NOTES = { stock: "DeepSeek writes each script with the campaign's rules; the video uses stock footage and a narrator.",
+    story: "Claude writes a stick-figure story with the campaign's rules and draws its film (about $0.30 a video, a few minutes each)." };
+  const styleNote = h("p", { class: "muted small", style: "margin:0" });
+  const lookWrap = h("div", { class: "field-wrap", hidden: true }, h("span", { class: "ed-label", text: "Look" }), lookBox);
+  pickLook("noir");
   const mkStatus = h("p", { class: "muted small", style: "margin:0", hidden: true });
   const items = c.angles?.items || [];
   const picks = items.map((a, i) => h("input", { type: "checkbox", value: String(i), checked: i < 3, "aria-label": a.title }));
@@ -3416,17 +3434,20 @@ VIEWS.campaign = async (route) => {
     const b = e.currentTarget; b.disabled = true; brainstorm.disabled = true; mkStatus.hidden = false;
     let ok = 0;
     for (const [i, angle] of chosen.entries()) {
-      mkStatus.textContent = `Writing script ${i + 1} of ${chosen.length}: ${angle.title}…`;
-      try { await campaignCall({ action: "make", campaign_id: c.id, channel_id: mkNet.value, angle, length: mkLen, confirm_red: c.risk === "red" }); ok++; }
+      mkStatus.textContent = mkStyle === "story" ? `Starting film ${i + 1} of ${chosen.length}: ${angle.title}…` : `Writing script ${i + 1} of ${chosen.length}: ${angle.title}…`;
+      try { await campaignCall({ action: "make", campaign_id: c.id, channel_id: mkNet.value, angle, length: mkLen, style: mkStyle, look: mkLook, confirm_red: c.risk === "red" }); ok++; }
       catch (err) { toast(`${angle.title}: ${err.message}`); }
     }
     toast(`${ok} video${ok === 1 ? "" : "s"} started. They show below and wait for your approval.`);
     render();
   } }) : null;
+  pickStyle("stock");
   const makeCard = c.content_type !== "clipping" ? h("section", { class: "card" }, h("h2", { text: "Make videos" }),
-    h("p", { class: "muted small", text: "DeepSeek brainstorms angles for the network, then writes each script with the campaign's rules. Videos use stock footage and a narrator, no music. Nothing is published: every video waits for your approval below." }),
+    h("p", { class: "muted small", text: "DeepSeek brainstorms angles for the network; each ticked angle becomes a video made with the campaign's rules, with no music. Nothing is published: every video waits for your approval below." }),
     h("div", { class: "form-grid" }, h("div", { class: "field-wrap" }, h("label", { for: "cm-net", text: "Network" }), mkNet),
-      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Length" }), lenBox)),
+      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Length" }), lenBox),
+      h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "Style" }), styleBox), lookWrap),
+    styleNote,
     h("div", { class: "row" }, brainstorm, makeBtn, items.length ? h("span", { class: "muted small", text: `${items.length} angles for ${channelById(c.angles.channel_id)?.title || "a network"} · ${ago(c.angles.at)}` }) : null),
     mkStatus, angleList) : null;
 

@@ -146,11 +146,21 @@ export async function writeStoryFilm(idea, channel, options, ctx) {
   const language = options.language || channel.video_style?.language || channel.language || "en";
   const { data: niche } = { data: channel.niche_id ? (await rest("GET", "niches", `?id=eq.${channel.niche_id}&select=name`))[0] : null };
   const example = fs.readFileSync(path.join(ROOT, "video/story/example.film.jsx"), "utf8");
-  const system = `${RULES.replace("{aspect}", `${aspect} (W = ${W}, H = ${H})`)}\n\n${KIT_DOC}\n\nEXAMPLE FILM (a model of the code you write; its narration is in the comments):\n${example}\n\n` +
+  const system = `${RULES.replace("{aspect}", `${aspect} (W = ${W}, H = ${H})`)}${campaignRules}\n\n${KIT_DOC}\n\nEXAMPLE FILM (a model of the code you write; its narration is in the comments):\n${example}\n\n` +
     `ANSWER FORMAT, exactly:\n<story>{"title": "under 70 characters", "hook_text": "2-5 words", "description": "2-3 sentences", "hashtags": ["#a", "#b", "#c"], ` +
     `"tags": ["8-12 search tags"], "voice_style": "natural|dark|deep", "voice_gender": "male|female|any", "lines": ["narration line 1", "line 2", "..."]}</story>\n<film>\nfunction Film({ f }) { ... }\n</film>`;
+  // a paid campaign's video (campaigns function, makeStory): its rules go in, and a rule check comes back
+  const campaign = idea.ai?.campaign?.rules ? { rules: idea.ai.campaign.rules, angle: idea.ai.campaign.angle || null } : null;
+  const campaignRules = campaign ? `\n\nTHIS VIDEO IS FOR A PAID BRAND CAMPAIGN ("campaign" in the data). Its rules come first:
+- Say the brand name aloud in the first two lines, and act out the brand moment in the film: the product shown ON a prop (a phone screen,
+  a sign, a box, a laptop), timed to its word. The story must still work for the channel's audience: the brand comes in naturally.
+- Include every must_include point, never anything in banned, and stay inside length_seconds when it's given.
+- Claims about the product only from the campaign's own text: no invented results, prices, numbers or reviews.
+- Hashtags and links are added to the description for you: don't put them in the lines.
+- Add to the <story> JSON: "rule_check": [{"rule": "...", "ok": true|false, "note": "how the video meets it, or why not"}], one row per campaign
+  rule (brand said, must_include points, banned items, length), honestly.` : "";
   const user = JSON.stringify({
-    subject: idea.video_title || idea.title, notes: idea.notes || null, angle: options.angle || null,
+    subject: idea.video_title || idea.title, notes: idea.notes || null, angle: options.angle || null, campaign,
     channel: { name: channel.network_name || channel.title, niche: niche?.name || null }, language: LANG_NAMES[language] || language,
     canvas: { aspect, W, H }, length: { narration_words: `${wMin} to ${wMax}`, lines: nLines },
     look: options.look || "noir",
@@ -189,13 +199,15 @@ export async function writeStoryFilm(idea, channel, options, ctx) {
   const title = String(meta.title || idea.title).replace(/[<>]/g, "").slice(0, 100);
   await rest("PATCH", "ideas", `?id=eq.${idea.id}`, {
     script: lines.map((l) => `VO: ${l}`).join("\n\n"), video_title: title,
-    video_description: [String(meta.description || "").replace(/[<>]/g, "").slice(0, 3000), hashtags.join(" ")].filter(Boolean).join("\n\n"),
+    video_description: [String(meta.description || "").replace(/[<>]/g, "").slice(0, 3000), campaign ? idea.ai.campaign.description_end : hashtags.join(" ")].filter(Boolean).join("\n\n"),
     video_tags: (Array.isArray(meta.tags) ? meta.tags : []).map((t) => String(t).slice(0, 60)).slice(0, 15),
     stage: ["new", "shortlisted", "assigned"].includes(idea.stage) ? "scripted" : idea.stage, ai_status: "ready",
     ai: { ...(idea.ai || {}), style: "story", language, aspect, length, hook_text: String(meta.hook_text || "").slice(0, 40), music_mood: "none",
       brief: { subject: title, kind: "story", feeling: "", voice_style: vs, voice_gender: ["male", "female"].includes(meta.voice_gender) ? meta.voice_gender : "any",
         music_mood: "none", music_words: [], thumbnail_style: "dark" },
-      story: { code: film, look: options.look || "noir", model, lines, cost_usd: Math.round(cost * 10000) / 10000, tokens: [tokensIn, tokensOut], checked_frames: check.frames } },
+      story: { code: film, look: options.look || "noir", model, lines, cost_usd: Math.round(cost * 10000) / 10000, tokens: [tokensIn, tokensOut], checked_frames: check.frames },
+      ...(campaign ? { campaign: { ...idea.ai.campaign, rule_check: (Array.isArray(meta.rule_check) ? meta.rule_check : []).slice(0, 30)
+        .map((r) => ({ rule: String(r?.rule || "").slice(0, 200), ok: r?.ok !== false, note: String(r?.note || "").slice(0, 240) })) } } : {}) },
   });
   return `${lines.length} lines, film checked on ${check.frames} frames · ${model.replace("claude-", "Claude ").replace(/-(\d)-(\d)/, " $1.$2")} · $${cost.toFixed(2)}`;
 }

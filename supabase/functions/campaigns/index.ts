@@ -389,6 +389,7 @@ async function make(body: any, userId: string | null) {
   if (!angle.title) throw new Error("No angle given.");
   const length = Object.hasOwn(LENGTHS, body.length) ? body.length : "short45";
   const ch = await channelOf(body.channel_id);
+  if (body.style === "story") return makeStory(camp, ch, angle, length, ["noir", "paper", "pop"].includes(body.look) ? body.look : "noir", userId);
   const out = await deepseek("campaign_script", CAMP_SCRIPT_SYSTEM, JSON.stringify({
     campaign: rulesOf(camp), angle, channel: { name: ch.name, niche: ch.niche, language: ch.language, markets: ch.markets }, length: LENGTHS[length],
   }), userId);
@@ -418,6 +419,32 @@ async function make(body: any, userId: string | null) {
   if (e2) throw e2;
   try { await startVideo(post, idea.id, ch.id, length); }
   catch (e) { await db.from("campaign_posts").update({ status: "failed", note: `Couldn't start the video: ${(e as Error).message}` }).eq("id", post.id); }
+  if (camp.status === "draft") await db.from("campaigns").update({ status: "active" }).eq("id", camp.id);
+  return { post_id: post.id };
+}
+
+/** The Story stick style for a campaign angle: Claude writes the story with the campaign's rules and draws its film in the
+ *  "Generate video" job (render/story.mjs reads ai.campaign). The campaign's hashtags and links end the description. */
+async function makeStory(camp: any, ch: any, angle: any, length: string, look: string, userId: string | null) {
+  const title = angle.title;
+  const ai = { title_options: [title], music_mood: "none", language: ch.language, aspect: "9:16", length: length === "short30" ? "short30" : length === "short60" ? "short60" : "short45",
+    notes: `Campaign: ${camp.title}. Angle: ${angle.title}`, generated_at: new Date().toISOString(),
+    campaign: { id: camp.id, angle, rules: rulesOf(camp), description_end: campaignDescription(camp, ""), rule_check: [] } };
+  const { data: idea, error } = await db.from("ideas").insert({
+    title, channel_id: ch.id, niche_id: ch.niche_id, stage: "assigned", score: null, sources: [{ type: "campaign", ref: camp.id }],
+    video_title: title, video_description: campaignDescription(camp, ""), video_tags: [], ai, ai_status: "ready",
+    notes: [angle.idea, angle.brand_moment ? `Brand moment: ${angle.brand_moment}` : ""].filter(Boolean).join("\n"),
+  }).select().single();
+  if (error) throw error;
+  const { data: post, error: e2 } = await db.from("campaign_posts").insert({
+    owner_id: userId, campaign_id: camp.id, channel_id: ch.id, platform: "youtube", idea_id: idea.id, status: "rendering", title, angle: angle.title,
+  }).select().single();
+  if (e2) throw e2;
+  try {
+    const out = await callFn("story", { action: "start", idea_id: idea.id, channel_id: ch.id, options: { length: ai.length, look, music: false, publish: "ask",
+      angle: clean([angle.title, angle.hook ? `Hook: ${angle.hook}` : "", angle.brand_moment ? `Brand moment: ${angle.brand_moment}` : ""].filter(Boolean).join(". "), 300) } });
+    await db.from("campaign_posts").update({ video_run_id: out.run_id, status: "rendering", note: null }).eq("id", post.id);
+  } catch (e) { await db.from("campaign_posts").update({ status: "failed", note: `Couldn't start the video: ${(e as Error).message}` }).eq("id", post.id); }
   if (camp.status === "draft") await db.from("campaigns").update({ status: "active" }).eq("id", camp.id);
   return { post_id: post.id };
 }

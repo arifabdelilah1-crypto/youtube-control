@@ -420,6 +420,20 @@ async function renderVideo(projectId, ideaId) {
 }
 
 /** Measures the finished file. Reports what it finds; a failed check keeps the video from going out. */
+/** Six frames of a drawn film on one picture (3 × 2), so the Animation page shows the film without opening it. In Storage: renders/contact/<run>.jpg */
+async function contactSheet(file, seconds) {
+  if (!run?.id || !seconds) return;
+  const out = path.join(os.tmpdir(), `${run.id}-sheet.jpg`);
+  const made = spawnSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", "0.5", "-i", file,
+    "-vf", `fps=6/${Math.max(1, seconds - 0.5).toFixed(2)},scale=320:-2,tile=3x2:padding=6:color=black`, "-frames:v", "1", "-q:v", "4", out], { encoding: "utf8" });
+  if (made.status !== 0 || !fs.existsSync(out)) throw new Error(String(made.stderr || "ffmpeg failed").slice(-200));
+  const objectPath = `contact/${run.id}.jpg`;
+  const r = await fetch(`${URL_}/storage/v1/object/renders/${objectPath}`, { method: "POST", headers: { ...H, "Content-Type": "image/jpeg", "x-upsert": "true" }, body: fs.readFileSync(out) });
+  fs.rmSync(out, { force: true });
+  if (!r.ok) throw new Error(`upload ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  await report({ contact_sheet: objectPath });
+}
+
 async function finalChecks(job, project) {
   const drawn = ["explainer", "story"].includes(project.settings?.style);
   if (!isVds(job.output_path) || !mediaReady()) return [{ name: "File", ok: false, detail: "The video isn't on the VDS, so it couldn't be measured." }];
@@ -439,6 +453,7 @@ async function finalChecks(job, project) {
     ? (() => { const share = voiceCoverage(scenes.map((s) => s.text).join(" "), listen.stdout, project.language); log(`Heard: ${listen.stdout.slice(0, 300)}`); return { name: "Voice", ok: share >= voiceThreshold(project.language), detail: `${Math.round(share * 100)}% of the script is heard` }; })()
     : { name: "Voice", ok: false, detail: "The voice couldn't be checked by listening. Listen to the video." };
   if (listen.status !== 0) log(`voice check: ${String(listen.stderr).slice(-400)}`);
+  if (drawn) await contactSheet(file, Number(probe.format?.duration) || 0).catch((e) => log(`contact sheet: ${e.message}`));
   fs.rmSync(file, { force: true });
   return [voice, ...checkVideo({ aspect: project.aspect, expectedSeconds: Number(job.duration_s) || 0, width: video.width, height: video.height, duration: Number(probe.format?.duration) || 0, hasAudio,
     meanVolume: Number(volume.match(/mean_volume: (-?[\d.]+)/)?.[1] ?? -91), blackSeconds })];
