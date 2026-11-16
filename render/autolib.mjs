@@ -79,8 +79,35 @@ export function checkVideo({ aspect, expectedSeconds, width, height, duration, h
 
 const words = (text) => String(text || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2);
 
+// Arabic: Whisper often spells a word differently from the script (hamza and alef forms, ta marbuta, final ya, short vowels,
+// the article). Both sides are brought to one spelling, and they're compared on letter trigrams, so a spelling difference
+// costs a few trigrams instead of the whole word.
+export function normalizeArabic(text) {
+  return String(text || "")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g, "")   // short vowels, shadda, sukun, Quranic marks
+    .replace(/\u0640/g, "")                                                   // tatweel
+    .replace(/[\u0622\u0623\u0625\u0671]/g, "\u0627")                     // آ أ إ ٱ → ا
+    .replace(/\u0649/g, "\u064A")                                            // ى → ي
+    .replace(/\u0629/g, "\u0647")                                            // ة → ه
+    .replace(/\u0624/g, "\u0648").replace(/\u0626/g, "\u064A")             // ؤ → و, ئ → ي
+    .replace(/[\u0660-\u0669]/g, (d) => String(d.charCodeAt(0) - 0x660))     // Arabic-Indic digits
+    .toLowerCase();
+}
+// "ال" (and و/ب/ف/ك/ل + "ال") is left out for matching: Whisper and the script don't always agree on it
+const arWords = (text) => normalizeArabic(text).split(/[^\p{L}\p{N}]+/u).filter(Boolean)
+  .map((w) => w.replace(/^[\u0648\u0628\u0641\u0643\u0644]?\u0627\u0644(?=.{2,})/u, "")).filter((w) => w.length > 1);
+const trigrams = (w) => { const s = `_${w}_`, out = []; for (let i = 0; i + 3 <= s.length; i++) out.push(s.slice(i, i + 3)); return out; };
+
+/** The share the voice check needs: Arabic transcripts drift more in spelling, so less is enough there. */
+export const voiceThreshold = (language) => (/^ar/i.test(language || "") ? 0.45 : 0.6);
+
 /** How much of the script can be heard: 0 to 1, from the transcript of the finished video. */
-export function voiceCoverage(script, heard) {
+export function voiceCoverage(script, heard, language = "") {
+  if (/^ar/i.test(language || "")) {
+    const said = new Set(arWords(heard).flatMap(trigrams));
+    const expected = arWords(script).flatMap(trigrams);
+    return expected.length ? expected.filter((g) => said.has(g)).length / expected.length : 0;
+  }
   const said = new Set(words(heard));
   const expected = words(script);
   return expected.length ? expected.filter((w) => said.has(w)).length / expected.length : 0;

@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { creditsText, foundMusic, hasThumbnail, preRenderCheck, sceneSeconds, withCredits } from "../video/layout.js";
 import { PRESETS, presetFx } from "../web/voicefx.js";
-import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage } from "./autolib.mjs";
+import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage, voiceThreshold } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 import { writeStoryFilm } from "./story.mjs";
 
@@ -436,7 +436,7 @@ async function finalChecks(job, project) {
   const scenes = await sceneRows(project.id);
   const listen = spawnSync("python", [path.join(ROOT, "render/voice_check.py"), file, project.language], { encoding: "utf8", timeout: 15 * 60e3 });
   const voice = listen.status === 0
-    ? (() => { const share = voiceCoverage(scenes.map((s) => s.text).join(" "), listen.stdout); log(`Heard: ${listen.stdout.slice(0, 300)}`); return { name: "Voice", ok: share >= 0.6, detail: `${Math.round(share * 100)}% of the script is heard` }; })()
+    ? (() => { const share = voiceCoverage(scenes.map((s) => s.text).join(" "), listen.stdout, project.language); log(`Heard: ${listen.stdout.slice(0, 300)}`); return { name: "Voice", ok: share >= voiceThreshold(project.language), detail: `${Math.round(share * 100)}% of the script is heard` }; })()
     : { name: "Voice", ok: false, detail: "The voice couldn't be checked by listening. Listen to the video." };
   if (listen.status !== 0) log(`voice check: ${String(listen.stderr).slice(-400)}`);
   fs.rmSync(file, { force: true });
