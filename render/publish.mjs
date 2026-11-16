@@ -179,11 +179,25 @@ async function toBlotato(row, sched, job) {
 
 // ---------- Facebook Pages, directly (Connect Facebook on a network's page; no Blotato) ----------
 const FB_GRAPH = "https://graph.facebook.com/v27.0";
+class MetaError extends Error { constructor(message, meta) { super(message); this.meta = meta || {}; } }
 async function fbPost(url, form) {
   const r = await fetch(url, { method: "POST", body: form });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok || data.error) throw new Error(`Facebook: ${data.error?.error_user_msg || data.error?.message || r.status}`);
+  if (!r.ok || data.error) throw new MetaError(`Facebook: ${data.error?.error_user_msg || data.error?.message || r.status}`, data.error);
   return data;
+}
+/** Meta refused the Page's token: that needs a reconnect, not a retry. 190 = token invalid or expired, 102 = session,
+ *  10 and 200-299 = permission; and the app/user pair Meta stopped accepting ("Cannot call API for app … on behalf of user …"). */
+function metaAuthProblem(e) {
+  const m = e?.meta || {};
+  const code = Number(m.code);
+  return code === 190 || code === 102 || code === 10 || (code >= 200 && code < 300)
+    || /cannot call api for app .* on behalf of user|session has expired|session has been invalidated|error validating access token|has not authorized application/i.test(`${m.message || ""} ${e?.message || ""}`);
+}
+async function markPageBroken(pageId, error) {
+  const r = await fetch(`${URL_}/rest/v1/rpc/mark_meta_page_broken`, { method: "POST", headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify({ p_page_id: pageId, p_error: String(error || "").slice(0, 500) }) }).catch((e) => ({ ok: false, statusText: e.message }));
+  log(r.ok ? `Facebook Page ${pageId} marked: reconnect needed` : `Couldn't mark the Page for a reconnect: ${r.status || ""} ${r.statusText || ""}`);
 }
 const formOf = (fields) => { const f = new FormData(); for (const [k, v] of Object.entries(fields)) if (v !== undefined && v !== null && v !== "") f.append(k, String(v)); return f; };
 
@@ -192,6 +206,16 @@ async function toFacebook(row, sched, job) {
   const saved = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === "facebook") || {};
   const pageId = String(saved.page_id || "");
   if (!/^\d+$/.test(pageId)) throw new Error("Pick the Facebook Page for this network (Connect Facebook on its page).");
+  try {
+    return await facebookUpload(row, job, pageId);
+  } catch (e) {
+    if (!metaAuthProblem(e)) throw e;
+    await markPageBroken(pageId, e.message);
+    throw new Error(`Meta stopped accepting this Page's connection: click Reconnect Facebook on the network's page, then Send again. (${e.message})`);
+  }
+}
+
+async function facebookUpload(row, job, pageId) {
   const tr = await fetch(`${URL_}/rest/v1/rpc/get_meta_page_token`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_page_id: pageId }) });
   const token = tr.ok ? await tr.json() : null;
   if (!token) throw new Error("This Facebook Page isn't connected any more. Click Connect Facebook on the network's page.");
@@ -208,7 +232,7 @@ async function toFacebook(row, sched, job) {
       method: "POST", headers: { Authorization: `OAuth ${token}`, offset: "0", file_size: String(size) }, body: fs.readFileSync(file),
     });
     const upData = await up.json().catch(() => ({}));
-    if (!up.ok || upData.success === false) throw new Error(`Facebook upload: ${upData.debug_info?.message || upData.error?.message || up.status}`);
+    if (!up.ok || upData.success === false) throw new MetaError(`Facebook upload: ${upData.debug_info?.message || upData.error?.message || up.status}`, upData.error || upData.debug_info);
     await fbPost(`${FB_GRAPH}/${pageId}/video_reels`, formOf({
       upload_phase: "finish", video_id: start.video_id, access_token: token, description: caption, title: row.title,
       video_state: future ? "SCHEDULED" : "PUBLISHED", scheduled_publish_time: future ? at : null,

@@ -6,6 +6,8 @@
 // POST {action:"blotato_accounts"}                                       (dashboard user) -> connected accounts, and each Facebook account's Pages
 // POST {action:"blotato_sync"}                                           (dashboard user) -> asks Blotato how its pending posts ended
 // POST {action:"token",  channel_id}                                     (publish job, x-cron-secret) -> short-lived YouTube access token
+// POST {action:"resend_meta", page_id}                                   (dashboard user) -> after a Facebook reconnect: every failed
+//      Facebook post of that Page goes back in the queue, in its network's next free slots
 // GitHub jobs read the cron secret from the database with their service key, then send it as x-cron-secret.
 // Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GITHUB_TOKEN, GITHUB_REPO, BLOTATO_API_KEY
 import { createClient } from "npm:@supabase/supabase-js@2";
@@ -135,6 +137,35 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   return { row: rows[0], rows };
 }
 
+/** After a Facebook reconnect: the Page's failed posts go out again, each in its network's next free slot. */
+async function resendMeta(pageId: string) {
+  const { data: page } = await db.from("meta_pages").select("page_id,needs_reconnect").eq("page_id", pageId).maybeSingle();
+  if (!page) return { error: "This Facebook Page isn't connected. Click Connect Facebook first.", status: 404 };
+  if (page.needs_reconnect) return { error: "Meta still refuses this Page: click Reconnect Facebook first.", status: 400 };
+  const { data: scheds } = await db.from("publish_schedules").select("*");
+  const networks = (scheds || []).filter((s: any) => Array.isArray(s.targets) && targetsOf(s).some((t) => t.method === "meta" && t.platform === "facebook" && t.page_id === pageId));
+  let sent = 0, firstSlot: string | null = null;
+  const errors: string[] = [];
+  for (const sched of networks) {
+    const { data: failed } = await db.from("publish_queue").select("*").eq("channel_id", sched.channel_id).eq("method", "meta").eq("platform", "facebook").eq("status", "failed").order("created_at");
+    for (const row of failed || []) {
+      const { data: job } = await db.from("render_jobs").select("*").eq("id", row.render_job_id).maybeSingle();
+      if (!job || job.status !== "done") { errors.push(`"${row.title}": its video isn't there any more.`); continue; }
+      const { data: taken } = await db.from("publish_queue").select("slot_at").eq("channel_id", sched.channel_id)
+        .in("status", ["queued", "uploading", "scheduled"]).not("slot_at", "is", null);
+      const t = nextFreeSlot(sched, (taken || []).map((r: any) => Date.parse(r.slot_at)));
+      if (!t) { errors.push("No free slot in the next 120 days: add posting days or times."); break; }
+      const slot = new Date(t).toISOString();
+      await db.from("publish_queue").update({ status: "queued", slot_at: slot, error: null, public_url: null, run_url: null }).eq("id", row.id);
+      const err = await dispatch({ queue_id: row.id, ...artifactInputs(job) });
+      if (err) { await db.from("publish_queue").update({ status: "failed", error: err }).eq("id", row.id); errors.push(err); continue; }
+      sent++;
+      if (!firstSlot || slot < firstSlot) firstSlot = slot;
+    }
+  }
+  return { sent, first_slot: firstSlot, errors };
+}
+
 /** Blotato's answer for the posts it hasn't finished telling us about. */
 async function blotatoSync() {
   if (!BLOTATO) return { checked: 0 };
@@ -206,6 +237,11 @@ Deno.serve(async (req) => {
       return json({ accounts });
     }
     if (body.action === "blotato_sync") return json(await blotatoSync());
+    if (body.action === "resend_meta") {
+      if (!/^\d+$/.test(String(body.page_id || ""))) return json({ error: "page_id required" }, 400);
+      const out: any = await resendMeta(String(body.page_id));
+      return json(out, out.status || 200);
+    }
     if (body.action === "cancel") {
       if (!UUID.test(body.queue_id || "")) return json({ error: "queue_id required" }, 400);
       const { data: row } = await db.from("publish_queue").select("*").eq("id", body.queue_id).single();

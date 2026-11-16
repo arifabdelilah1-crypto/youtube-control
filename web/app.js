@@ -232,7 +232,7 @@ function alertLink(a) {
   const kind = String(a.dedupe_key || "").split(":")[0];
   if (kind === "post_failed" || kind === "post_stuck") return "#/automation";
   if (kind === "video_stuck") return "#/ideas";
-  if (kind === "google_token" || kind === "sync_error") return a.channel_id ? `#/channel/${a.channel_id}` : "#/channels";
+  if (kind === "google_token" || kind === "sync_error" || kind === "meta_auth") return a.channel_id ? `#/channel/${a.channel_id}` : "#/channels";
   return "#/settings";
 }
 
@@ -3803,7 +3803,7 @@ VIEWS.channels = async () => {
 };
 
 /** The accounts of one network, and where its videos start from. */
-function networkPanels(chRow, sc, blotato, metaPages = []) {
+function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
   const id = chRow.id;
   const hasYoutube = !!chRow.youtube_channel_id;
   const saved = targetsOfSchedule(sc || (hasYoutube ? { channel_id: id, method: "youtube" } : null));
@@ -3852,11 +3852,28 @@ function networkPanels(chRow, sc, blotato, metaPages = []) {
   const fbPill = h("span", {});
   const showFb = () => {
     const v = facebook.value;
-    const [cls, text] = !v ? ["short", "Off"] : v.startsWith("meta:") ? (metaPages.some((pg) => `meta:${pg.page_id}` === v) ? ["ok", "Connected"] : ["crit", "Not found"])
+    const page = v.startsWith("meta:") ? metaPages.find((pg) => `meta:${pg.page_id}` === v) : null;
+    const [cls, text] = !v ? ["short", "Off"] : v.startsWith("meta:") ? (!page ? ["crit", "Not found"] : page.needs_reconnect ? ["crit", "Reconnect needed"] : ["ok", "Connected"])
       : blotato.error ? ["warn", "Can't check"] : fbBlotato.some((a) => keyOf(a) === v) ? ["ok", "Through Blotato"] : ["crit", "Not found"];
     fbPill.className = `pill ${cls}`; fbPill.textContent = text;
   };
   facebook.addEventListener("change", showFb); showFb();
+  // Meta stopped accepting the saved Page's token (render/publish.mjs → mark_meta_page_broken): reconnect, then send the failed posts again
+  const fbPage = fbSaved?.method === "meta" ? metaPages.find((pg) => pg.page_id === String(fbSaved.page_id)) : null;
+  const fbBroken = !!fbPage?.needs_reconnect;
+  const fbResend = fbPage && fbFailed ? h("button", { class: `btn small${fbBroken ? "" : " primary"}`, type: "button", disabled: fbBroken,
+    title: fbBroken ? "Reconnect Facebook first" : "Puts every failed Facebook post of this Page back in the queue, in the next free slots",
+    text: `Send again (${fbFailed})`, onclick: async (e) => {
+      const btn = e.currentTarget; btn.disabled = true; btn.textContent = "Sending…";
+      try {
+        const out = await publishCall({ action: "resend_meta", page_id: fbPage.page_id });
+        toast(out.sent ? `${out.sent} Facebook post${out.sent === 1 ? "" : "s"} queued again${out.first_slot ? `, from ${when(out.first_slot)}` : ""}.` : "Nothing to send again.");
+        if (out.errors?.length) toast(out.errors[0]);
+        render();
+      } catch (err) { toast(err.message); btn.disabled = false; btn.textContent = `Send again (${fbFailed})`; }
+    } }) : null;
+  const fbNote = fbBroken ? h("p", { class: "small idea-error", style: "margin:0", role: "status",
+    text: `Meta stopped accepting ${fbPage.name}'s connection${fbPage.reconnect_since ? ` on ${when(fbPage.reconnect_since)}` : ""}, so its Facebook posts fail. Click Reconnect Facebook${fbFailed ? ", then Send again" : ""}.` }) : null;
   const row = (platform, pill, ...controls) => h("div", { class: "net-row" }, h("strong", { text: PLATFORM_NAMES[platform] }), pill, h("div", { class: "net-controls" }, controls));
   const name = h("input", { id: `net-name-${id}`, class: "field", maxlength: 60, value: chRow.title });
   const save = h("button", { class: "btn primary", type: "button", text: "Save accounts", onclick: async () => {
@@ -3884,9 +3901,10 @@ function networkPanels(chRow, sc, blotato, metaPages = []) {
     row("tiktok", status("tiktok", tiktok), tiktok, ttPrivacy, h("label", { class: "pub-check small" }, ttAi, "Mark as AI-generated")),
     row("instagram", status("instagram", instagram), instagram),
     row("twitter", status("twitter", x), x, h("span", { class: "muted small", text: "Posts the title, 280 characters at most." })),
-    row("facebook", fbPill, facebook, h("button", { class: `btn small${metaPages.length ? "" : " primary"}`, type: "button", text: metaPages.length ? "Reconnect Facebook" : "Connect Facebook",
+    row("facebook", fbPill, facebook, h("button", { class: `btn small${metaPages.length && !fbBroken ? "" : " primary"}`, type: "button", text: metaPages.length ? "Reconnect Facebook" : "Connect Facebook",
       title: "Log in with the Facebook profile that manages your Pages: they all appear in this list", onclick: (e) => { e.currentTarget.disabled = true; startMetaOAuth(id); } }),
-      h("span", { class: "muted small", text: "Pages only. Shorts go up as Reels." })),
+      fbResend, h("span", { class: "muted small", text: "Pages only. Shorts go up as Reels." })),
+    fbNote,
     h("div", { class: "row" }, save));
 
   const style = chRow.video_style || {};
@@ -3928,8 +3946,10 @@ VIEWS.channel = async (route) => {
     q(sb.from("publish_schedules").select("*").eq("channel_id", id)),
     publishCall({ action: "blotato_accounts" }).catch((e) => ({ accounts: [], error: e.message })),
   ]);
-  const metaPages = await q(sb.from("meta_pages").select("page_id,name,picture_url,ig_username").order("name")).catch(() => []);
-  const panels = networkPanels(chRow, scheds[0], blotato, metaPages);
+  const metaPages = await q(sb.from("meta_pages").select("page_id,name,picture_url,ig_username,needs_reconnect,reconnect_since").order("name"))
+    .catch(() => q(sb.from("meta_pages").select("page_id,name,picture_url,ig_username").order("name"))).catch(() => []);
+  const { count: fbFailed } = await sb.from("publish_queue").select("id", { count: "exact", head: true }).eq("channel_id", id).eq("method", "meta").eq("platform", "facebook").eq("status", "failed");
+  const panels = networkPanels(chRow, scheds[0], blotato, metaPages, fbFailed || 0);
   const header = h("header", { class: "head" },
     h("div", { class: "row", style: "gap:16px;flex-wrap:nowrap" }, ch.thumbnail_url ? h("img", { class: "avatar", src: ch.thumbnail_url, alt: "" }) : h("span", { class: "avatar" }),
       h("div", { class: "head-text" }, h("a", { href: "#/channels", class: "small", text: "← Networks" }), h("h1", { style: "font-size:26px", text: ch.title }),
