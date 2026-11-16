@@ -1472,10 +1472,12 @@ const PROVIDER_COLORS = { Claude: "#D97757", DeepSeek: "#60A5FA" };
 VIEWS.costs = async () => {
   const now = new Date();
   const since = costsUi.period === "month" ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)) : new Date(Date.now() - Number(costsUi.period) * 864e5);
-  const [rows, runs] = await Promise.all([
+  const [rows, runs, capRows] = await Promise.all([
     q(sb.rpc("ai_cost_rows", { p_since: since.toISOString() })),
     q(sb.from("video_runs").select("id,channel_id,status,created_at").gte("created_at", since.toISOString()).in("status", ["ready", "review"]).limit(1000)),
+    q(sb.rpc("ai_runs_status")).catch(() => []),  // the AI safety cap (Settings), all networks together
   ]);
+  const aiCap = capRows?.[0];
   const one = state.channel !== "all";
   const mine = rows.map((r) => ({ ...r, cost: aiCost(r), provider: priceFor(r.model)?.provider || "Other" })).filter((r) => !one || r.channel_id === state.channel);
   const videos = runs.filter((r) => !one || r.channel_id === state.channel).length;
@@ -1523,7 +1525,11 @@ VIEWS.costs = async () => {
       k("AI cost", usd(total), `${fmt(calls)} AI calls`),
       k("Claude", usd(byProvider("Claude")), "Animation plans"),
       k("DeepSeek", usd(byProvider("DeepSeek")), "Scripts, reviews, clips, trends"),
-      k("Per finished video", videos ? usd((total - (one ? 0 : shared)) / videos) : "—", `${videos} video${videos === 1 ? "" : "s"} finished`)),
+      k("Per finished video", videos ? usd((total - (one ? 0 : shared)) / videos) : "—", `${videos} video${videos === 1 ? "" : "s"} finished`),
+      aiCap ? h("a", { class: "kpi kpi-link", href: "#/settings", "aria-label": `AI runs in the last 24 hours: ${aiCap.used} of ${aiCap.cap}. Change the cap in Settings.` },
+        h("div", { class: "label", text: "AI runs, last 24 h" }), h("div", { class: "value", text: `${fmt(aiCap.used)} / ${fmt(aiCap.cap)}` }),
+        bar(Math.min(100, (aiCap.used / aiCap.cap) * 100), aiCap.used >= aiCap.cap * 0.9 ? "#F87171" : null, true),
+        h("div", { class: "muted small", text: aiCap.used >= aiCap.cap ? "Cap reached: new videos wait" : "Safety cap, all networks" })) : null),
     h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: weekly ? "Cost per week" : "Cost per day" }),
       h("div", { class: "row small muted" }, parts.filter((p) => sum(mine.filter(p.match)) > 0).map((p) => h("span", { class: "row", style: "gap:6px" }, h("span", { class: "dot", style: `background:${p.color}` }), p.name)))),
       total ? stackedCols(cols, "AI cost over time", (v) => (v ? usd(v) : "$0"), 0.01) : empty("No AI calls in this period.")),
@@ -4406,7 +4412,27 @@ VIEWS.settings = async (route) => {
     keyRow("openai", "OpenAI", "Paste an OpenAI key (sk-…)", "https://platform.openai.com/api-keys"),
     keyRow("anthropic", "Claude", "Paste a Claude key (sk-ant-…)", "https://console.anthropic.com/settings/keys"));
 
-  return [pageHead("Settings", "AI keys, AI connection, niches, channels, music and background jobs."), keysBox, await mcpBox(), nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
+  // the AI safety cap (migration 0037): AI calls allowed in 24 h, all tasks together. A video that reaches it waits for room.
+  const capRow = (await q(sb.rpc("ai_runs_status")).catch(() => []))?.[0];
+  const capIn = h("input", { id: "ai-cap", class: "field", type: "number", inputmode: "numeric", min: "20", max: "5000", step: "10", value: capRow?.cap ?? 400, style: "width:130px" });
+  const capMsg = h("span", { class: "small idea-error", role: "status" });
+  const capBox = h("section", { class: "card", id: "ai-cap" },
+    h("div", { class: "card-head" }, h("h2", { text: "AI safety cap" }),
+      capRow ? h("span", { class: "muted small", text: `${fmt(capRow.used)} of ${fmt(capRow.cap)} AI runs in the last 24 hours` }) : null),
+    h("p", { class: "muted small", style: "margin:0", text: "How many AI calls may run in 24 hours, all tasks and networks together. A video that reaches it waits for room instead of failing." }),
+    capRow ? bar(Math.min(100, (capRow.used / capRow.cap) * 100), capRow.used >= capRow.cap * 0.9 ? "#F87171" : null, true)
+      : h("p", { class: "small idea-error", style: "margin:0", text: "The cap isn't set up on the server yet." }),
+    h("form", { class: "row", style: "align-items:flex-end", onsubmit: async (e) => {
+      e.preventDefault();
+      const v = Math.round(Number(capIn.value));
+      if (!(v >= 20 && v <= 5000)) { capMsg.textContent = "Choose a number between 20 and 5,000."; capIn.focus(); return; }
+      capMsg.textContent = "";
+      try { await q(sb.from("app_settings").upsert({ key: "ai_daily_runs", value: v })); toast("AI safety cap saved"); render(); }
+      catch (err) { capMsg.textContent = err.message; }
+    } }, h("div", { class: "field-wrap" }, h("label", { for: "ai-cap", text: "AI runs per 24 hours" }), capIn),
+      h("button", { class: "btn small primary", type: "submit", text: "Save", disabled: !capRow }), capMsg));
+
+  return [pageHead("Settings", "AI safety cap, AI keys, AI connection, niches, channels, music and background jobs."), capBox, keysBox, await mcpBox(), nichesBox, channelsBox, musicBox, h("div", { class: "cols" }, jobs, quotaBox)];
 };
 
 // The AI connection (MCP): tokens that let Claude or another AI app use the app from outside (supabase/functions/mcp).

@@ -34,7 +34,17 @@ async function rest(method, table, query = "", body) {
 const one = async (table, id) => (await rest("GET", table, `?id=eq.${id}&select=*`))[0];
 
 let secret = null;
+// A function at the AI safety cap answers "Daily AI limit reached": the video waits for room and tries again.
 async function call(fn, body, seconds = 170) {
+  for (;;) {
+    try { return await callOnce(fn, body, seconds); }
+    catch (e) {
+      if (!/Daily AI limit reached/i.test(e.message || "")) throw e;
+      await waitForAiRoom(1);
+    }
+  }
+}
+async function callOnce(fn, body, seconds) {
   if (!secret) {
     const r = await fetch(`${URL_}/rest/v1/rpc/get_cron_secret`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: "{}" });
     if (!r.ok) throw new Error(`get_cron_secret ${r.status}`);
@@ -52,6 +62,7 @@ async function call(fn, body, seconds = 170) {
 let run;
 class Stopped extends Error {}
 const warnings = [];
+let stepNote = null;  // writes a line on the running step (set by step())
 async function report(values) {
   run = { ...run, ...values };
   await rest("PATCH", "video_runs", `?id=eq.${run.id}`, values);
@@ -62,12 +73,39 @@ async function step(key, work) {
   const set = (status, detail = "") => report({ steps: run.steps.map((s) => (s.key === key ? { ...s, status, detail: String(detail || s.detail || "").slice(0, 300) } : s)) });
   log(`-- ${key}`);
   await set("running");
+  stepNote = (text) => set("running", text);
   try {
-    const detail = await work((text) => set("running", text));
+    const detail = await work(stepNote);
     await set("done", detail);
   } catch (e) {
     if (!(e instanceof Stopped)) await set("failed", e.message);
     throw e;
+  } finally { stepNote = null; }
+}
+
+// ---------- the AI safety cap ----------
+// Settings → AI safety cap (app_settings.ai_daily_runs, migration 0037) counts every AI call of the last 24 h. Near it,
+// the video waits for room (the oldest calls leave the 24 h window) instead of failing; the step says why.
+const CAP_POLL_MS = 5 * 60e3;
+const CAP_WAIT_MS = 75 * 60e3;  // the whole run's waiting, inside the job's 180 minutes
+let capWaited = 0;
+async function aiRunsStatus() {
+  const r = await fetch(`${URL_}/rest/v1/rpc/ai_runs_status`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: "{}" }).catch(() => null);
+  if (!r?.ok) return null;  // no setting yet: the functions still guard the cap
+  const row = (await r.json().catch(() => []))[0];
+  return row ? { used: Number(row.used) || 0, cap: Number(row.cap) || 400 } : null;
+}
+async function waitForAiRoom(need) {
+  for (;;) {
+    const s = await aiRunsStatus();
+    if (!s || s.used + need <= s.cap) return;
+    if (capWaited >= CAP_WAIT_MS) throw new Error(`Daily AI limit reached (${s.used} of ${s.cap} AI runs in 24 h), still full after ${Math.round(capWaited / 60e3)} minutes of waiting. Raise it in Settings → AI safety cap, or start the video again later.`);
+    if (run?.id && (await one("video_runs", run.id))?.status === "cancelled") throw new Stopped();
+    const text = `Waiting for the AI safety cap: ${s.used} of ${s.cap} AI runs in the last 24 h. Trying again in 5 minutes.`;
+    log(text);
+    if (stepNote) await stepNote(text).catch(() => {});
+    await sleep(CAP_POLL_MS);
+    capWaited += CAP_POLL_MS;
   }
 }
 const warn = async (text) => { log(`warning: ${text}`); warnings.push(text); await report({ warnings }); };
@@ -416,6 +454,10 @@ async function main(id) {
   const channel = await one("channels", run.channel_id);
   if (!channel) throw new Error("The network no longer exists.");
   const skip = async (key, why) => { await report({ steps: run.steps.map((s) => (s.key === key ? { ...s, status: "skipped", detail: why } : s)) }); };
+  // a video makes about 15 AI calls: near the cap it waits for room before it starts (the first step shows why)
+  stepNote = (text) => report({ steps: run.steps.map((s, i) => (i === 0 ? { ...s, status: "waiting", detail: text } : s)) });
+  await waitForAiRoom(15);
+  stepNote = null;
 
   // the network may have a script to keep, or none yet
   let idea = await one("ideas", run.idea_id);

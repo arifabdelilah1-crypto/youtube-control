@@ -6,13 +6,13 @@
 // POST {action:"models", provider}             -> {models}: what the saved key can use
 // Signed-in team members only.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 import { Conversation, DEFAULT_MODEL, PRICES, type Provider, listModels } from "./llm.ts";
 import { type Ctx, runTool, toolDefs } from "./tools.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
-const DAILY_RUNS = 200;      // shared with the other AI calls (ai_runs)
 const MAX_STEPS = 6;         // tool rounds per message
 const DEADLINE_MS = 125_000; // a function gets about 150 seconds
 const cors = {
@@ -125,9 +125,8 @@ Deno.serve(async (req) => {
     if (!model) return json({ error: `Choose a ${PROVIDER_NAME[provider]} model in this brain's settings.` }, 400);
     const { data: key } = await db.rpc("ai_key_for", { p_provider: provider });
     if (!key) return json({ error: `No ${PROVIDER_NAME[provider]} key yet: add it in Settings → AI keys.` }, 400);
-    const since = new Date(Date.now() - 864e5).toISOString();
-    const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
-    if ((count ?? 0) >= DAILY_RUNS) return json({ error: `Daily AI limit reached (${DAILY_RUNS} runs in 24 h).` }, 429);
+    const aiCap = await aiRunsStatus(db);  // Settings → AI safety cap, shared with the other AI calls (ai_runs)
+    if (aiCap.used >= aiCap.cap) return json({ error: capMessage(aiCap.cap) }, 429);
 
     const { data: channels } = await db.from("channels").select("id,title,language,markets,niche_id,youtube_channel_id,connected,video_style").order("title");
     const channel = brain.channel_id ? (channels || []).find((c: any) => c.id === brain.channel_id) || null : null;

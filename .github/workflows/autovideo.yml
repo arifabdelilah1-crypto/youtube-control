@@ -9,7 +9,7 @@ concurrency: { group: "autovideo-${{ github.event.inputs.run_id }}", cancel-in-p
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180  # room to wait for the AI safety cap (render/autovideo.mjs, at most 75 minutes)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

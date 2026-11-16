@@ -15,6 +15,7 @@
 // team member; "assemble" by the job.
 // Secrets: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_REPO.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@1.8.0";
 import { zodOutputFormat } from "npm:@anthropic-ai/sdk@1.8.0/helpers/zod";
 import { ICON_NAMES } from "./icons.ts";
@@ -27,7 +28,6 @@ const KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const VOICE_STYLES = new Set(["natural", "dark", "deep", "horror"]);
-const DAILY_RUNS = 200;  // shared with the other AI calls (ai_runs)
 const LIMIT_MS = 135_000;  // a function gets about 150 seconds: past this the job tries again with less thinking
 
 const cors = {
@@ -47,9 +47,8 @@ const priceOf = (model: string, u: any) => Math.round((((u?.input_tokens || 0) *
 
 /** One Claude call with a typed answer. Logs the run; a slow answer says so, so the job can try again with less thinking. */
 async function ask(db: any, ctx: any, kind: string, schema: any, sys: string, user: string, ownerId: string | null) {
-  const since = new Date(Date.now() - 864e5).toISOString();
-  const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
-  if ((count ?? 0) >= DAILY_RUNS) throw new Fail(`Daily AI limit reached (${DAILY_RUNS} runs in 24 h).`, 429);
+  const { used, cap } = await aiRunsStatus(db);  // Settings → AI safety cap, shared with the other AI calls (ai_runs)
+  if (used >= cap) throw new Fail(capMessage(cap), 429);
   const client = new Anthropic({ apiKey: KEY, maxRetries: 1, timeout: LIMIT_MS });
   const started = Date.now();
   let res;

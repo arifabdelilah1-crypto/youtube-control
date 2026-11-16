@@ -14,13 +14,13 @@
 //   (sync also follows approved posts through the publishing queue: links, live or not, views and the estimated payout)
 // Dashboard users (JWT + am_i_allowed), or jobs with x-cron-secret. Secrets: DEEPSEEK_API_KEY, optional DEEPSEEK_MODEL.
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const DS_KEY = Deno.env.get("DEEPSEEK_API_KEY") ?? "";
 const DS_MODEL = Deno.env.get("DEEPSEEK_MODEL") || "deepseek-chat";
-const DAILY_RUNS = 200;
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
@@ -43,8 +43,8 @@ function parseJson(text: string) {
 }
 async function deepseek(kind: string, system: string, user: string, ownerId: string | null) {
   if (!DS_KEY) throw new Error("DeepSeek isn't set up yet: add DEEPSEEK_API_KEY in Supabase Edge Function secrets.");
-  const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", new Date(Date.now() - 864e5).toISOString());
-  if ((count ?? 0) >= DAILY_RUNS) throw new Error(`Daily AI limit reached (${DAILY_RUNS} runs in 24 h).`);
+  const { used, cap } = await aiRunsStatus(db);  // Settings → AI safety cap
+  if (used >= cap) throw new Error(capMessage(cap));
   let last = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {

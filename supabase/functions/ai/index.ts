@@ -15,6 +15,7 @@
 // Secrets: DEEPSEEK_API_KEY (required), DEEPSEEK_MODEL (optional, default deepseek-chat), DEEPSEEK_SCRIPT_MODEL (optional, default deepseek-v4-pro),
 //          YOUTUBE_API_KEY, GITHUB_TOKEN, GITHUB_REPO
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 import { BLUEPRINT_SYSTEM, BRIEF_SYSTEM, CHECK_CLIPS_SYSTEM, HOOKS_SYSTEM, LENGTHS, type LengthKey, PICK_CLIPS_SYSTEM, PICK_SOUNDS_SYSTEM, PICK_TRENDS_SYSTEM, REVIEW_SYSTEM, SCRIPT_SYSTEM, TRANSLATE_SYSTEM, blueprintUser, reviewUser, scriptUser } from "./prompts.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
@@ -27,7 +28,6 @@ const DS_SCRIPT_MODEL = Deno.env.get("DEEPSEEK_SCRIPT_MODEL") || "deepseek-v4-pr
 const DS_VISION_MODEL = "deepseek-flash";  // the one that can see pictures
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
-const DAILY_RUNS = 200;
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
@@ -56,9 +56,8 @@ const PRO_LIMIT_MS = 130_000;
 
 async function deepseek(db: any, ideaId: string | null, kind: string, system: string, user: string, ownerId: string | null, opts: AiOptions = {}) {
   if (!DS_KEY) throw new Error("DeepSeek isn't set up yet: add DEEPSEEK_API_KEY in Supabase Edge Function secrets.");
-  const since = new Date(Date.now() - 864e5).toISOString();
-  const { count } = await db.from("ai_runs").select("id", { count: "exact", head: true }).gte("created_at", since);
-  if ((count ?? 0) >= DAILY_RUNS) throw new Error(`Daily AI limit reached (${DAILY_RUNS} runs in 24 h).`);
+  const { used, cap } = await aiRunsStatus(db);  // Settings → AI safety cap
+  if (used >= cap) throw new Error(capMessage(cap));
   const started = Date.now();
   const model = opts.images ? DS_VISION_MODEL : opts.pro ? DS_SCRIPT_MODEL : DS_MODEL;
   const content = opts.images ? [{ type: "text", text: user }, ...opts.images.flatMap((m) => [{ type: "text", text: m.label }, { type: "image_url", image_url: { url: m.url, detail: "low" } }])] : user;
