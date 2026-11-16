@@ -1908,7 +1908,7 @@ VIEWS.automation = async () => {
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
   const [scheds, queue, jobs, tokens] = await Promise.all([
     q(sb.from("publish_schedules").select("*")),
-    q(sb.from("publish_queue").select("*").neq("status", "cancelled").order("slot_at", { ascending: true, nullsFirst: true }).limit(200)),
+    q(sb.from("publish_queue").select("*").neq("status", "cancelled").or(`slot_at.is.null,slot_at.gte.${since}`).order("slot_at", { ascending: true, nullsFirst: true }).limit(2000)),
     q(sb.from("render_jobs").select("id,status,channel_id,project_id,idea_id,params,output_path,run_url,duration_s,finished_at,created_at").eq("status", "done").gte("created_at", since).order("created_at", { ascending: false })),
     q(sb.from("channel_tokens").select("channel_id")),
   ]);
