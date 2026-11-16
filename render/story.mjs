@@ -146,9 +146,6 @@ export async function writeStoryFilm(idea, channel, options, ctx) {
   const language = options.language || channel.video_style?.language || channel.language || "en";
   const { data: niche } = { data: channel.niche_id ? (await rest("GET", "niches", `?id=eq.${channel.niche_id}&select=name`))[0] : null };
   const example = fs.readFileSync(path.join(ROOT, "video/story/example.film.jsx"), "utf8");
-  const system = `${RULES.replace("{aspect}", `${aspect} (W = ${W}, H = ${H})`)}${campaignRules}\n\n${KIT_DOC}\n\nEXAMPLE FILM (a model of the code you write; its narration is in the comments):\n${example}\n\n` +
-    `ANSWER FORMAT, exactly:\n<story>{"title": "under 70 characters", "hook_text": "2-5 words", "description": "2-3 sentences", "hashtags": ["#a", "#b", "#c"], ` +
-    `"tags": ["8-12 search tags"], "voice_style": "natural|dark|deep", "voice_gender": "male|female|any", "lines": ["narration line 1", "line 2", "..."]}</story>\n<film>\nfunction Film({ f }) { ... }\n</film>`;
   // a paid campaign's video (campaigns function, makeStory): its rules go in, and a rule check comes back
   const campaign = idea.ai?.campaign?.rules ? { rules: idea.ai.campaign.rules, angle: idea.ai.campaign.angle || null } : null;
   const campaignRules = campaign ? `\n\nTHIS VIDEO IS FOR A PAID BRAND CAMPAIGN ("campaign" in the data). Its rules come first:
@@ -159,6 +156,9 @@ export async function writeStoryFilm(idea, channel, options, ctx) {
 - Hashtags and links are added to the description for you: don't put them in the lines.
 - Add to the <story> JSON: "rule_check": [{"rule": "...", "ok": true|false, "note": "how the video meets it, or why not"}], one row per campaign
   rule (brand said, must_include points, banned items, length), honestly.` : "";
+  const system = `${RULES.replace("{aspect}", `${aspect} (W = ${W}, H = ${H})`)}${campaignRules}\n\n${KIT_DOC}\n\nEXAMPLE FILM (a model of the code you write; its narration is in the comments):\n${example}\n\n` +
+    `ANSWER FORMAT, exactly:\n<story>{"title": "under 70 characters", "hook_text": "2-5 words", "description": "2-3 sentences", "hashtags": ["#a", "#b", "#c"], ` +
+    `"tags": ["8-12 search tags"], "voice_style": "natural|dark|deep", "voice_gender": "male|female|any", "lines": ["narration line 1", "line 2", "..."]}</story>\n<film>\nfunction Film({ f }) { ... }\n</film>`;
   const user = JSON.stringify({
     subject: idea.video_title || idea.title, notes: idea.notes || null, angle: options.angle || null, campaign,
     channel: { name: channel.network_name || channel.title, niche: niche?.name || null }, language: LANG_NAMES[language] || language,
