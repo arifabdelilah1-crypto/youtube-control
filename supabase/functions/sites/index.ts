@@ -6,6 +6,7 @@
 //   POST {action:"daily"}                              (cron) -> one article per site with "daily" on, at most 4 sites per call
 //   POST {action:"wp_auth", site_id}                   (cron: the video job) -> {base_url, user, password}
 //   POST {action:"pin", article_id, media_url, title, description} (cron: the video job) -> pins the video with the article's link
+//   POST {action:"tiktok", article_id, media_url, description}      (cron: the video job) -> posts it on the site's TikTok, with its call to action
 // Secrets: BLOTATO_API_KEY (as the publish function).
 import { createClient } from "npm:@supabase/supabase-js@2";
 
@@ -96,7 +97,7 @@ Deno.serve(async (req) => {
     if (!isService) {
       const userDb = createClient(URL_, ANON, { global: { headers: { Authorization: req.headers.get("Authorization") ?? "" } } });
       if (!(await userDb.rpc("am_i_allowed")).data) return json({ error: "not allowed" }, 403);
-      if (["daily", "wp_auth", "pin"].includes(body.action)) return json({ error: "not allowed" }, 403);
+      if (["daily", "wp_auth", "pin", "tiktok"].includes(body.action)) return json({ error: "not allowed" }, 403);
     }
 
     if (body.action === "pinterest_accounts") {
@@ -156,7 +157,7 @@ Deno.serve(async (req) => {
 
     if (body.action === "wp_auth") {
       const { site, user, password } = await auth(body.site_id);
-      return json({ base_url: site.base_url, user, password, embed: site.embed, pin: site.pin });
+      return json({ base_url: site.base_url, user, password, embed: site.embed, pin: site.pin, tiktok: !!site.tiktok_account_id });
     }
 
     if (body.action === "pin") {
@@ -186,6 +187,35 @@ Deno.serve(async (req) => {
         return json({ error: err }, 502);
       }
       if (state?.publicUrl) await db.from("site_articles").update({ pin_url: state.publicUrl }).eq("id", a.id);
+      return json({ ok: true, id, status: state?.status || "sent", url: state?.publicUrl || null });
+    }
+    if (body.action === "tiktok") {
+      const { data: a } = await db.from("site_articles").select("*, sites(*)").eq("id", body.article_id).single();
+      if (!a) return json({ error: "article not found" }, 404);
+      const site = a.sites;
+      if (!site.tiktok_account_id) return json({ error: `${site.name} has no TikTok account.` }, 400);
+      const desc = String(body.description || a.title).replace(/(^|\n)Credits:[\s\S]*$/, "").replace(/(^|\n)(Zum Rezept|Full recipe)[^\n]*/g, "").trim();
+      const text = [desc, site.tiktok_cta || ""].filter(Boolean).join("\n\n").slice(0, 2100);
+      const post = await blotato("/posts", { method: "POST", body: JSON.stringify({ post: {
+        accountId: site.tiktok_account_id,
+        content: { platform: "tiktok", text, mediaUrls: [String(body.media_url)] },
+        target: { targetType: "tiktok", privacyLevel: "PUBLIC_TO_EVERYONE", disabledComments: false, disabledDuet: false, disabledStitch: false,
+          isBrandedContent: false, isYourBrand: site.tiktok_your_brand !== false, isAiGenerated: true },
+      } }) });
+      const id = String(post.postSubmissionId || post.id || "");
+      await db.from("site_articles").update({ tiktok_post_id: id, tiktok_at: new Date().toISOString() }).eq("id", a.id);
+      let state = null;
+      for (let i = 0; i < 8 && id; i++) {
+        await new Promise((r) => setTimeout(r, 8000));
+        state = await blotato(`/posts/${encodeURIComponent(id)}`).catch(() => null);
+        if (state?.status === "published" || state?.status === "failed") break;
+      }
+      if (state?.status === "failed") {
+        const err = String(state.errorMessage || state.error || "Blotato couldn't publish it").slice(0, 300);
+        await db.from("site_articles").update({ error: `TikTok: ${err}` }).eq("id", a.id);
+        return json({ error: err }, 502);
+      }
+      if (state?.publicUrl) await db.from("site_articles").update({ tiktok_url: state.publicUrl }).eq("id", a.id);
       return json({ ok: true, id, status: state?.status || "sent", url: state?.publicUrl || null });
     }
     return json({ error: "unknown action" }, 400);

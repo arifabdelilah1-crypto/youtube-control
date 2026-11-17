@@ -1446,13 +1446,14 @@ VIEWS.pinterest = async () => {
   const sites = await q(sb.from("sites").select("*").order("created_at"));
   const ids = sites.map((x) => x.id);
   const [articles, counts] = await Promise.all([
-    ids.length ? q(sb.from("site_articles").select("id,site_id,title,url,status,published_at,video_url,pin_url,pinned_at,error,video_run_id,updated_at").in("site_id", ids)
+    ids.length ? q(sb.from("site_articles").select("id,site_id,title,url,status,published_at,video_url,pin_url,pinned_at,tiktok_url,tiktok_at,error,video_run_id,updated_at").in("site_id", ids)
       .neq("status", "new").order("updated_at", { ascending: false }).limit(300)) : [],
     ids.length ? q(sb.from("site_articles").select("site_id,status").in("site_id", ids).limit(20000)) : [],
   ]);
   const has = new Map(await Promise.all(sites.map(async (x) => [x.id, (await sb.rpc("site_has_wp_password", { p_site: x.id })).data === true])));
   if (!pinUi.accounts && !pinUi.accountsError) {
     try { pinUi.accounts = (await sitesCall({ action: "pinterest_accounts" })).accounts || []; } catch (e) { pinUi.accountsError = e.message; }
+    pinUi.tiktoks = ((await sitesCall({ action: "blotato_all" }).catch(() => ({ accounts: [] }))).accounts || []).filter((a) => a.platform === "tiktok");
   }
   const accounts = pinUi.accounts || [];
   const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("p", { class: "muted small", style: "margin:4px 0 0", text: hint }) : null);
@@ -1512,13 +1513,18 @@ VIEWS.pinterest = async () => {
     const netSel = h("select", { class: "field", "aria-label": "Network" }, ...state.channels.map((c) => h("option", { value: c.id, selected: c.id === x.channel_id, text: c.title })));
     const model = h("select", { class: "field", "aria-label": "Claude model" }, h("option", { value: "claude-sonnet-5-5", selected: x.ai_model !== "claude-opus-5-5", text: "Sonnet: about $0.05 a video" }),
       h("option", { value: "claude-opus-5-5", selected: x.ai_model === "claude-opus-5-5", text: "Opus: best, about $0.15 a video" }));
+    const tiktoks = pinUi.tiktoks || [];
+    const tt = h("select", { class: "field", "aria-label": "TikTok account" }, h("option", { value: "", text: "No TikTok" }),
+      ...tiktoks.map((a) => h("option", { value: a.id, selected: a.id === x.tiktok_account_id, text: `@${a.name}` })));
+    const cta = h("input", { class: "field", value: x.tiktok_cta || "", placeholder: "📘 Das Rezeptbuch: Link in der Bio", "aria-label": "TikTok call to action" });
     const daily = h("input", { type: "checkbox", checked: x.daily });
     const embed = h("input", { type: "checkbox", checked: x.embed });
     const pin = h("input", { type: "checkbox", checked: x.pin });
     const save = async () => {
       const a = accounts.find((y) => y.id === acc.value), b = a?.boards.find((y) => y.id === board.value);
       await q(sb.from("sites").update({ wp_user: user.value.trim() || null, channel_id: netSel.value || null, ai_model: model.value, daily: daily.checked, embed: embed.checked, pin: pin.checked,
-        pinterest_account_id: a?.id || null, pinterest_account_name: a?.name || null, pinterest_board_id: b?.id || null, pinterest_board_name: b?.name || null }).eq("id", x.id));
+        pinterest_account_id: a?.id || null, pinterest_account_name: a?.name || null, pinterest_board_id: b?.id || null, pinterest_board_name: b?.name || null,
+        tiktok_account_id: tt.value || null, tiktok_account_name: tiktoks.find((y) => y.id === tt.value)?.name || null, tiktok_cta: cta.value.trim() || null }).eq("id", x.id));
       if (pass.value) { const { error } = await sb.rpc("site_set_wp_password", { p_site: x.id, p_password: pass.value }); if (error) throw new Error(error.message); }
     };
     const act = (label, fn, cls = "btn small") => h("button", { class: cls, type: "button", text: label, onclick: async (e) => {
@@ -1533,7 +1539,8 @@ VIEWS.pinterest = async () => {
         h("div", { style: "flex:1 1 220px;min-width:0" },
           h("a", { href: a.url, target: "_blank", rel: "noopener", dir: "auto", text: a.title }),
           h("div", { class: "muted small" }, [a.video_url ? h("a", { href: a.video_url, target: "_blank", rel: "noopener", text: "Video" }) : null,
-            a.pin_url ? h("a", { href: a.pin_url, target: "_blank", rel: "noopener", text: "Pin" }) : a.pinned_at ? "Pinned" : null, ago(a.updated_at)].filter(Boolean).flatMap((v, i) => (i ? [" · ", v] : [v]))),
+            a.pin_url ? h("a", { href: a.pin_url, target: "_blank", rel: "noopener", text: "Pin" }) : a.pinned_at ? "Pinned" : null,
+            a.tiktok_url ? h("a", { href: a.tiktok_url, target: "_blank", rel: "noopener", text: "TikTok" }) : a.tiktok_at ? "On TikTok" : null, ago(a.updated_at)].filter(Boolean).flatMap((v, i) => (i ? [" · ", v] : [v]))),
           a.error ? h("p", { class: "small idea-error", text: a.error }) : null),
         ["failed", "review"].includes(a.status) ? act("Make it again", async () => { await sitesCall({ action: "make", article_id: a.id }); toast("Making the video again"); render(); }) : null);
     };
@@ -1549,7 +1556,8 @@ VIEWS.pinterest = async () => {
         h("div", { class: "recipe-opts" },
           field(`u-${x.id}`, "WordPress user", user), field(`p-${x.id}`, "Application password", pass, "WordPress → Users → Profile → Application Passwords. Stored in Vault."),
           field(`a-${x.id}`, "Pinterest account", acc), field(`b-${x.id}`, "Board", board),
-          field(`n-${x.id}`, "Network (voice, language)", netSel), field(`m-${x.id}`, "Claude for the plan", model)),
+          field(`n-${x.id}`, "Network (voice, language)", netSel), field(`m-${x.id}`, "Claude for the plan", model),
+          field(`t-${x.id}`, "TikTok account (optional)", tt), field(`c-${x.id}`, "TikTok call to action", cta, "Added at the end of the caption, e.g. your product with \"Link in der Bio\".")),
         h("div", { class: "row" }, h("label", { class: "row small" }, daily, " One video a day"), h("label", { class: "row small" }, embed, " Put it in the article"), h("label", { class: "row small" }, pin, " Pin it")),
         h("div", { class: "row" },
           act("Save", async () => { await save(); toast("Saved"); render(); }, "btn small primary"),

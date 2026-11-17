@@ -61,6 +61,11 @@ export async function deliverToSite({ articleId, job, idea, call, rest, log, dow
     const out = await call("sites", { action: "pin", article_id: articleId, media_url: mediaUrl, title: idea.video_title || article.title, description: idea.video_description || article.title }, 140);
     log(`pinned: ${out.status || "sent"} ${out.url || ""}`);
   }
+  // 4. the site's TikTok, once (a product account: its call to action ends the caption)
+  if (site.tiktok && !article.tiktok_at) {
+    const out = await call("sites", { action: "tiktok", article_id: articleId, media_url: mediaUrl, description: idea.video_description || article.title }, 140);
+    log(`TikTok: ${out.status || "sent"} ${out.url || ""}`);
+  }
   await set({ status: "done" });
   return mediaUrl;
 }
