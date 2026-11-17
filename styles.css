@@ -949,3 +949,12 @@ button.tr-q:hover { color: var(--signal); }
 /* Studio, a Mix video: each scene is real, drawn or a drawing over the clip */
 .ed-mix { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .ed-mix .muted { flex: 1 1 180px; min-width: 0; }
+
+/* Recipes page: the article's photos, ticked to be used */
+.recipe-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; margin: 12px 0; }
+.recipe-photo { display: flex; flex-direction: column; gap: 6px; border: 1px solid var(--line, #ddd); border-radius: 10px; padding: 6px; cursor: pointer; min-width: 0; }
+.recipe-photo img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; display: block; }
+.recipe-photo:has(input:not(:checked)) img { opacity: .35; filter: grayscale(1); }
+.recipe-photo-cap { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; line-height: 1.3; min-width: 0; }
+.recipe-photo-cap span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.recipe-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }

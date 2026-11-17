@@ -248,8 +248,16 @@ const clipLine = (c, n) => ({ n, type: c.type, seconds: c.duration ?? null, tags
  *  {type: "drawn"}, and a real scene where nothing fits becomes a drawing (a warning, not a failure). */
 async function chooseClips(projectId, subject, aspect, note, mix = null) {
   const all = (await sceneRows(projectId)).map((s) => ({ ...s, candidates: (s.candidates || []).filter(usable) }));
-  const real = (i) => !mix || mixKind(mix[i], { type: "video" }) !== "drawn";
-  if (mix) for (const [i, s] of all.entries()) if (!real(i)) await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: { type: "drawn" }, candidates: [] });
+  // a recipe video: a scene planned on one of the article's own photos shows that photo, with no search and no credit line
+  const given = (i) => (mix && mix[i]?.image?.path && mixKind(mix[i], { type: "image" }) !== "drawn" ? mix[i].image : null);
+  const real = (i) => (!mix || mixKind(mix[i], { type: "video" }) !== "drawn") && !given(i);
+  if (mix) for (const [i, s] of all.entries()) {
+    const photo = given(i);
+    if (photo) await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: { type: "image", path: photo.path, source: "article", id: `article-${photo.n}`, tags: photo.alt || "", trim: 0 }, candidates: [] });
+    else if (!real(i)) await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: { type: "drawn" }, candidates: [] });
+  }
+  const photos = mix ? all.filter((_, i) => given(i)).length : 0;
+  if (photos) await note(`${photos} scene${photos === 1 ? "" : "s"} on the article's own photos`);
   const scenes = all;
   const ask = async (list) => (await call("ai", { action: "pick_clips", idea_id: run.idea_id, subject,
     scenes: list.map(({ i, s }) => ({ i, says: s.text, seconds: Math.round(sceneSeconds(s)), clips: s.candidates.map(clipLine) })) })).picks || [];
@@ -329,7 +337,9 @@ async function chooseClips(projectId, subject, aspect, note, mix = null) {
   }
   if (weak.length) await warn(`Scene${weak.length === 1 ? "" : "s"} ${weak.join(", ")}: no clip really fits. Choose another one.`);
   const n = indexed.length;
-  return weak.length ? `${n - weak.length} of ${n} fit` : mix ? `All ${n} real scenes fit` : `All ${n} scenes fit`;
+  const own = photos ? `${photos} article photo${photos === 1 ? "" : "s"}${n ? ", " : ""}` : "";
+  if (!n && photos) return `${photos} article photo${photos === 1 ? "" : "s"}, no stock clip needed`;
+  return own + (weak.length ? `${n - weak.length} of ${n} fit` : mix ? `all ${n} stock scene${n === 1 ? "" : "s"} fit` : `All ${n} scenes fit`);
 }
 /** Is the clip a picture of that name? Every word of the name (3+ letters) in its tags, title or page. */
 function namedIn(clip, name) {

@@ -1313,6 +1313,112 @@ VIEWS.animation = async () => {
 };
 
 // ==================================================================
+// Recipes: a recipe article of our own blog becomes a Short made from its own photos, with stock clips and drawings where the
+// photos don't reach (supabase/functions/recipe; the plan: explainer "plan" with style "mix" on ai.recipe). No music.
+// ==================================================================
+async function recipeCall(body) {
+  const { data, error } = await sb.functions.invoke("recipe", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+const RECIPE_LOOKS = [["clean", "Clean"], ["sunset", "Sunset"], ["notes", "Sticky notes"], ["glow", "Glow"], ["minimal", "Minimal"], ["vintage", "Vintage"]];
+
+VIEWS.recipes = async () => {
+  const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("p", { class: "muted small", style: "margin:4px 0 0", text: hint }) : null);
+  const url = h("input", { id: "r-url", class: "field", type: "url", required: true, placeholder: "https://airfryer-rezepte.blog/…", autocomplete: "off" });
+  const channel = h("select", { id: "r-channel", class: "field", required: true }, h("option", { value: "", text: "Choose a network" }),
+    ...state.channels.map((c) => h("option", { value: c.id, selected: state.channel === c.id, text: c.title })));
+  const status = h("p", { class: "muted small", role: "status", style: "margin:0", hidden: true });
+  const readBtn = h("button", { class: "btn primary", type: "submit", text: "Read the article" });
+  const picked = h("div", { "aria-live": "polite" });
+  const form = h("form", { class: "card", onsubmit: async (e) => {
+    e.preventDefault();
+    if (!url.value.trim()) return toast("Paste the article's link");
+    readBtn.disabled = true; status.hidden = false; status.textContent = "Reading the article and copying its photos… (10–30 s)";
+    try {
+      const out = await recipeCall({ action: "parse", url: url.value.trim(), channel_id: channel.value || null });
+      status.hidden = true;
+      picked.replaceChildren(article(out));
+      picked.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) { status.textContent = err.message; toast(err.message); }
+    readBtn.disabled = false;
+  } },
+    h("h2", { text: "New recipe video" }),
+    field("r-url", "Article link", url, "Only articles of your own blogs: the video uses their photos."),
+    field("r-channel", "Network", channel),
+    h("div", { class: "row" }, readBtn, h("span", { class: "muted small", text: "Nothing is made yet: you'll see the photos first." })),
+    status);
+
+  // the article read: its photos (all kept unless unticked) and the choices
+  function article(out) {
+    const r = out.recipe;
+    const boxes = r.images.map((im, i) => {
+      const box = h("input", { type: "checkbox", checked: true, "aria-label": `Use photo ${i + 1}: ${im.alt || im.heading || ""}` });
+      const tile = h("label", { class: "recipe-photo", title: im.alt || "" },
+        out.previews[i] ? h("img", { src: out.previews[i], alt: im.alt || `Photo ${i + 1}`, loading: "lazy" }) : h("div", { class: "muted small", text: "No preview" }),
+        h("span", { class: "recipe-photo-cap" }, box, h("span", { text: `${i + 1}. ${im.heading || im.alt || ""}` })));
+      return { box, tile };
+    });
+    const length = h("select", { id: "r-length", class: "field" }, h("option", { value: "short45", text: "Short, about 45 s" }), h("option", { value: "short60", text: "Short, about 60 s" }));
+    const look = h("select", { id: "r-look", class: "field" }, ...RECIPE_LOOKS.map(([v, l]) => h("option", { value: v, text: l })));
+    const publish = h("select", { id: "r-publish", class: "field" }, h("option", { value: "ask", text: "Review first" }), h("option", { value: "next", text: "Schedule in the next free slot" }));
+    const angle = h("input", { id: "r-angle", class: "field", placeholder: "Optional, e.g. only the 5 fastest ones, for busy parents" });
+    const make = h("button", { class: "btn primary", type: "button", text: "Make the video", onclick: async () => {
+      if (!channel.value) { channel.focus(); return toast("Pick the network first"); }
+      const keep = boxes.map((b, i) => (b.box.checked ? i : -1)).filter((i) => i >= 0);
+      if (keep.length < 2) return toast("Keep at least 2 photos");
+      make.disabled = true; make.textContent = "Starting…";
+      try {
+        await recipeCall({ action: "start", idea_id: out.idea_id, channel_id: channel.value, images: keep,
+          options: { length: length.value, look: look.value, publish: publish.value, angle: angle.value.trim() || null } });
+        toast("Making the video: about 5–8 minutes");
+        picked.replaceChildren();
+        url.value = "";
+        await reload();
+      } catch (err) { toast(err.message); make.disabled = false; make.textContent = "Make the video"; }
+    } });
+    return h("section", { class: "card" },
+      h("div", { class: "card-head" }, h("h2", { dir: "auto", text: r.title }), h("a", { class: "muted small", href: r.url, target: "_blank", rel: "noopener", text: r.site })),
+      h("p", { class: "muted small", text: `${r.images.length} photos found. Untick the ones the video shouldn't use. Claude writes the voice-over from the article, puts each photo where it fits, and fills any gap with a stock clip or a drawing.` }),
+      h("div", { class: "recipe-photos" }, boxes.map((b) => b.tile)),
+      h("div", { class: "recipe-opts" }, field("r-length", "Length", length), field("r-look", "Drawings' style", look), field("r-publish", "When it's ready", publish)),
+      field("r-angle", "Angle", angle),
+      h("div", { class: "row" }, make, h("span", { class: "muted small", text: "No music. The description links to the article." })));
+  }
+
+  // the recipe videos made so far
+  const list = h("div", { class: "idea-list" });
+  let runs = [];
+  const load = async () => {
+    const all = await q(sb.from("video_runs").select("*, ideas(title, video_title)").eq("options->>recipe", "true").order("created_at", { ascending: false }).limit(40));
+    runs = all.filter((r) => state.channel === "all" || r.channel_id === state.channel);
+  };
+  const reload = async () => { await load(); paint(); };
+  const row = (r) => {
+    const lamp = isActiveRun(r) ? ["Working", "cue"] : r.status === "ready" ? ["Ready", "ready"] : r.status === "review" ? ["Ready, to check", "cue"] : r.status === "failed" ? ["Stopped", "alert"] : ["Cancelled", "idle"];
+    const acts = ["ready", "review"].includes(r.status) && r.project_id ? [h("a", { class: "btn small primary", href: `#/edit/${r.project_id}?tab=publish`, text: "Review video" })] : [];
+    return h("article", { class: "idea", "data-state": r.status },
+      h("div", { class: "idea-main" },
+        h("a", { class: "title", dir: "auto", href: `#/studio/${r.idea_id}`, text: runTitle(r) }),
+        h("div", { class: "idea-meta muted small" }, h("span", { text: channelById(r.channel_id)?.title || "" }), h("span", { text: r.options?.length === "short60" ? "60 s" : "45 s" }),
+          h("span", { text: r.options?.publish === "next" ? "Scheduled when ready" : "Review first" }), h("span", { text: ago(r.created_at) })),
+        isActiveRun(r) ? runProgress(r) : null,
+        r.status === "failed" ? h("p", { class: "small idea-error", role: "alert", text: r.error || "It stopped before the end." }) : null),
+      h("div", { class: "idea-side" }, h("span", { class: "idea-lamp small", "data-lamp": lamp[1], text: lamp[0] }), h("div", { class: "idea-acts" }, acts)));
+  };
+  function paint() {
+    list.replaceChildren(...(runs.length ? runs.map(row) : [empty("No recipe video yet. Paste an article above.")]));
+    if (state.timer) { clearInterval(state.timer); state.timer = null; }
+    if (runs.some(isActiveRun)) state.timer = setInterval(() => reload().catch(() => {}), 6000);
+  }
+  await load();
+  paint();
+  return [pageHead("Recipes", "Paste a recipe article of your blog: the video is made from its own photos, with the steps, times and temperatures it gives."),
+    form, picked, h("section", { class: "anim-list", "aria-label": "Your recipe videos" }, h("h2", { text: "Your recipe videos" }), list)];
+};
+
+// ==================================================================
 // Brain: one per network plus a general one (All networks). You talk to it; it reads the app, remembers, adds ideas,
 // and proposes videos you approve (supabase/functions/brain, supabase/migrations/0030_brain.sql).
 // ==================================================================

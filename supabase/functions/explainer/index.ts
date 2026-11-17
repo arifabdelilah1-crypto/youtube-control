@@ -22,7 +22,7 @@ import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@1.8.0";
 import { zodOutputFormat } from "npm:@anthropic-ai/sdk@1.8.0/helpers/zod";
 import { ICON_NAMES } from "./icons.ts";
-import { Chapter, LENGTHS, LOOKS, MODELS, MixPlan, Outline, Plan, chapterSystem, chapterUser, clean, mixSystem, outlineSystem, system, userPrompt } from "./plan.ts";
+import { Chapter, LENGTHS, LOOKS, MODELS, MixPlan, Outline, Plan, RecipePlan, chapterSystem, chapterUser, clean, mixSystem, outlineSystem, recipeSystem, recipeUser, system, userPrompt } from "./plan.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -87,10 +87,18 @@ function cleanScenes(list: any[]) {
 }
 
 /** Mix scenes: the drawing (as cleanScenes) plus the kind, the footage searches and the name card. */
-function cleanMixScenes(list: any[]) {
+function cleanMixScenes(list: any[], photos: any[] = []) {
   const raw = (Array.isArray(list) ? list : []).filter((s) => clean(s?.narration, 600));
   const drawn = cleanScenes(raw);
   return raw.map((s, i) => {
+    // a recipe video: a scene on one of the article's own photos (no search: the job puts that photo in)
+    const n = Math.round(Number(s?.image) || 0);
+    const photo = n >= 1 && n <= photos.length ? photos[n - 1] : null;
+    if (photo?.path) {
+      const kind = s?.kind === "overlay" ? "overlay" : "footage";
+      const card = kind === "footage" && clean(s?.card_name, 40) ? { name: clean(s.card_name, 40).replace(/[|#]/g, ""), stat: clean(s?.card_stat, 30).replace(/[|#]/g, "") } : null;
+      return { ...drawn[i], kind, footage: [], card, image: { n, path: photo.path, alt: clean(photo.alt, 200) } };
+    }
     const footage = (Array.isArray(s?.footage) ? s.footage : []).slice(0, 3)
       .map((f: any) => ({ kind: f?.kind === "image" ? "image" : "video", q: clean(f?.q, 80).replace(/[|:]/g, " ").trim() })).filter((f: any) => f.q);
     let kind = ["footage", "drawn", "overlay"].includes(s?.kind) ? s.kind : "drawn";
@@ -102,6 +110,10 @@ function cleanMixScenes(list: any[]) {
 const mixScript = (scenes: any[]) => scenes.map((s) => [`VO: ${s.narration}`,
   s.footage.length ? `FOOTAGE: ${s.footage.map((f: any) => `${f.kind}: ${f.q}`).join(" | ")}` : "",
   s.card ? `CARD: ${s.card.name} | ${s.card.stat}` : ""].filter(Boolean).join("\n")).join("\n\n");
+
+const RECIPE_WORDS: Record<string, string> = { de: "Zum Rezept", en: "Full recipe", fr: "La recette complète", es: "Receta completa", ar: "الوصفة كاملة" };
+/** A recipe video's description sends people to the article. */
+const recipeLink = (url: unknown, lang: string) => (/^https:\/\/\S+$/.test(String(url || "")) ? `${RECIPE_WORDS[lang] || RECIPE_WORDS.en}: ${url}` : "");
 
 /** Saves a finished plan on the idea: the script (one VO line per scene), title, description, tags, and the drawing. */
 async function savePlan(db: any, ctx: any, meta: any, scenes: any[], extra: { cost: number; usage?: unknown; seconds?: number; chapters?: number; mix?: boolean }) {
@@ -115,13 +127,14 @@ async function savePlan(db: any, ctx: any, meta: any, scenes: any[], extra: { co
     hook_text: clean(scenes[0]?.heading, 40),
     brief: { subject: clean(idea.video_title || idea.title, 200), kind: "explainer", feeling: "", voice_style: "natural", voice_gender: "any",
       music_mood: ["calm", "dark", "epic", "sad", "happy", "funny", "love", "horror", "none"].includes(meta.music_mood) ? meta.music_mood : "calm", music_words: [], thumbnail_style: "dark" },
+    ...(idea.ai?.recipe ? { recipe: idea.ai.recipe } : {}),
     previous: idea.script?.trim() ? { script: idea.script, video_title: idea.video_title, video_description: idea.video_description, video_tags: idea.video_tags,
       search_terms: idea.search_terms, ai: idea.ai ? { ...idea.ai, previous: undefined } : null } : null,
   };
   const stage = ["new", "shortlisted", "assigned"].includes(idea.stage) ? "scripted" : idea.stage;
   const { error } = await db.from("ideas").update({
     script, video_title: clean(meta.title, 100) || idea.title,
-    video_description: [clean(meta.description, 2000), hashtags.join(" ")].filter(Boolean).join("\n\n"),
+    video_description: [clean(meta.description, 2000), recipeLink(idea.ai?.recipe?.url, ctx.language), hashtags.join(" ")].filter(Boolean).join("\n\n"),
     video_tags: (meta.tags || []).map((t: string) => clean(t, 60)).filter(Boolean).slice(0, 15), search_terms: [],
     ai, ai_status: "ready", ai_error: null, stage,
   }).eq("id", idea.id);
@@ -220,6 +233,11 @@ Deno.serve(async (req) => {
 
     if (body.action === "plan") {
       await db.from("ideas").update({ ai_status: "writing", ai_error: null, channel_id: ctx.channelId }).eq("id", ideaId);
+      const recipe = body.style === "mix" && ctx.idea.ai?.recipe?.images?.length ? ctx.idea.ai.recipe : null;
+      if (recipe) {
+        const r = await ask(db, ctx, "recipe", RecipePlan, recipeSystem(ctx.language, ctx.length, ctx.look, ctx.aspect, recipe.images.length), recipeUser(recipe, ctx.channel, ctx.angle), ownerId);
+        return json(await savePlan(db, ctx, r.out, cleanMixScenes(r.out.scenes, recipe.images), { cost: r.cost, usage: r.usage, seconds: r.seconds, mix: true }));
+      }
       if (body.style === "mix") {
         const r = await ask(db, ctx, "explainer_mix", MixPlan, mixSystem(ctx.language, ctx.length, ctx.look, ctx.aspect), base, ownerId);
         return json(await savePlan(db, ctx, r.out, cleanMixScenes(r.out.scenes), { cost: r.cost, usage: r.usage, seconds: r.seconds, mix: true }));

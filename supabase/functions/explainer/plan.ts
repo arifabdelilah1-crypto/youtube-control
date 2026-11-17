@@ -77,6 +77,9 @@ const MixScene = z.object({
   card_stat: z.string(),
 });
 export const MixPlan = z.object({ ...Meta, scenes: z.array(MixScene) });
+// A recipe video (the Recipes page): a Mix whose real pictures are mostly the article's own photos. image: the photo's number, 0 for none.
+const RecipeScene = z.object({ ...MixScene.shape, image: z.number().int() });
+export const RecipePlan = z.object({ ...Meta, scenes: z.array(RecipeScene) });
 export const Outline = z.object({
   ...Meta,
   chapters: z.array(z.object({ title: z.string(), covers: z.string(), facts: z.array(z.string()), ends_on: z.string() })),
@@ -227,5 +230,44 @@ export function chapterUser(base: string, outline: any, index: number) {
     chapters,
     this_chapter: { n: index + 1, title: clean(me.title, 100), covers: clean(me.covers, 400), facts: (me.facts || []).map((f: unknown) => clean(f, 300)).slice(0, 8), ends_on: clean(me.ends_on, 300) },
     previous_chapter_ends_on: index > 0 ? clean(outline?.chapters?.[index - 1]?.ends_on, 300) || null : null,
+  });
+}
+
+/** A cooking video made from a recipe article of our own blog: its photos carry the video (the Recipes page). */
+export function recipeSystem(language: string, length: string, look = "clean", aspect = "9:16", photos = 0) {
+  const L = LENGTHS[length];
+  return `${rules(language, look)}
+
+THIS IS A COOKING VIDEO MADE FROM A RECIPE ARTICLE OF OUR OWN BLOG. You get the article's text and its ${photos} photos, numbered 1 to ${photos},
+each with its alt text and the heading it sits under. Every scene has a "kind" and an "image" (the number of the article photo it shows, or 0):
+- "footage" with an image: the photo full screen, with a slow zoom. layout "title", heading "", items [], number 0, highlight 0, footage [].
+  Optional name card on a photo of that very dish: card_name = the dish's short name (max 30 characters), card_stat = its time and/or temperature
+  exactly as the article gives them ("15 Min · 200 °C"), else "" and "".
+- "overlay" with an image: the photo dimmed, with one light drawing on top: the ingredients as a checklist (2 to 4 items), or a stat
+  (minutes or °C, with number_suffix " Min" or " °C"), and a short heading. footage [].
+- "footage" with image 0: a stock video for a cooking moment the photos don't show (chopping, oil poured, an air fryer basket opened):
+  exactly 2 entries of kind "video", 2 to 4 simple ENGLISH words a stock site has. Never a different dish presented as this one. Use it rarely.
+- "drawn" (image 0, footage []): a drawing only (the layouts above): a quick tip or a comparison. At most 2 drawn scenes in the whole video.
+How to use the photos:
+- The photo must show exactly what the voice says in that scene: read its alt text and heading. Each photo at most once, except the opening
+  photo, which may come back in the last scene. At least 70% of the scenes show an article photo.
+- Open with the most appetising photo and a hook: the result, how fast it is, or a surprise. Never "In this video".
+- A list of several dishes: pick the 4 to 6 best ones that have a photo, one scene each (its name, the one thing that makes it great, its
+  time or temperature), and say how many ideas the article has in total. One recipe: the dish, the ingredients, 3 to 5 steps, the result.
+- Times, temperatures and quantities only from the article, exactly as written. No health claims, nothing the article doesn't say.
+- The last line sends people to the full recipe: "the recipe is in the link" in the video's language. Never read a web address aloud.
+- No music: music_mood "none".
+
+Write a ${format(aspect)} of ${L.duration}: ${L.words} words of narration in total, ${L.scenes} scenes.
+
+${META_RULES}`;
+}
+
+/** The article as Claude reads it for a recipe video: its text and its numbered photos. */
+export function recipeUser(recipe: any, channel: any, angle: string | null) {
+  return JSON.stringify({
+    article_title: clean(recipe?.title, 200), site: clean(recipe?.site, 100), channel: clean(channel?.title, 100), angle: angle || null,
+    photos: (recipe?.images || []).map((im: any, i: number) => ({ n: i + 1, alt: clean(im.alt, 200), under_heading: clean(im.heading, 160) })),
+    article_text: String(recipe?.text || "").slice(0, 12000),
   });
 }
