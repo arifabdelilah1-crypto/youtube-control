@@ -1,6 +1,8 @@
 // Story stick videos (render/story.mjs): Claude writes a second-person story and draws its film in code.
 //   POST {action:"start", idea_id, channel_id?, options}  (team member, or x-cron-secret) -> starts "Generate video" with options.video_style = "story",
-//        options.look (noir | paper | pop), options.ai_model, options.aspect (9:16 | 16:9), options.length (short30 | short45 | short60). Returns {run_id}.
+//        options.look (noir | paper | pop), options.ai_model, options.aspect (9:16 | 16:9), options.length (short30 | short45 | short60, or long5 |
+//        long8: a 16:9 episode in chapters), options.film_model (long: the model drawing the chapters), options.mascot (yassine | karim | sami).
+//        Returns {run_id}.
 //   POST {action:"key"}                                    ("Generate video" job, x-cron-secret) -> {key}: the Claude key for the film,
 //        which takes longer to write than a function may run.
 // Secrets: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_REPO.
@@ -14,7 +16,8 @@ const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const LOOKS = new Set(["noir", "paper", "pop"]);
 const MODELS = new Set(["claude-opus-5-5", "claude-fable-5-2", "claude-sonnet-5-5"]);
-const LENGTHS = new Set(["short30", "short45", "short60"]);
+const LENGTHS = new Set(["short30", "short45", "short60", "long5", "long8"]);
+const MASCOTS = new Set(["yassine", "karim", "sami"]);
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
@@ -59,8 +62,10 @@ Deno.serve(async (req) => {
       if (!GH_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return json({ error: "Add GITHUB_TOKEN and GITHUB_REPO in Supabase Edge Function secrets." }, 503);
       const o = body.options && typeof body.options === "object" ? body.options : {};
       const options = {
-        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: o.aspect === "16:9" ? "16:9" : "9:16",
+        // a long video (long5 | long8) is a 16:9 YouTube video, written in chapters (render/story.mjs)
+        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: o.aspect === "16:9" || String(o.length || "").startsWith("long") ? "16:9" : "9:16",
         length: LENGTHS.has(o.length) ? o.length : "short45", angle: o.angle ? clean(o.angle, 300) : null,
+        film_model: MODELS.has(o.film_model) ? o.film_model : null, mascot: MASCOTS.has(o.mascot) ? o.mascot : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: ["natural", "dark", "deep"].includes(o.voice_style) ? o.voice_style : null,
         music: o.music === true, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(), publish: o.publish === "next" ? "next" : "ask",
         video_style: "story", ai_model: MODELS.has(o.ai_model) ? o.ai_model : "claude-opus-5-5", look: LOOKS.has(o.look) ? o.look : "noir",

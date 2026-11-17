@@ -30,7 +30,7 @@ try {
   for (const look of Object.keys(THEMES)) {
     const T = THEMES[look];
     const Film = compileFilm(input.code, { T, W, H, FPS, TOTAL, words, scenes });
-    const step = look === "noir" ? 6 : 30;
+    const step = Number(input.step) > 0 ? (look === "noir" ? Number(input.step) : Number(input.step) * 5) : look === "noir" ? 6 : 30;
     for (let f = 0; f < TOTAL; f += step) {
       let html;
       try {
