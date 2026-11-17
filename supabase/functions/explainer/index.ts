@@ -22,7 +22,7 @@ import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
 import Anthropic from "npm:@anthropic-ai/sdk@1.8.0";
 import { zodOutputFormat } from "npm:@anthropic-ai/sdk@1.8.0/helpers/zod";
 import { ICON_NAMES } from "./icons.ts";
-import { Chapter, LENGTHS, LOOKS, MODELS, MixPlan, Outline, Plan, RecipePlan, chapterSystem, chapterUser, clean, mixSystem, outlineSystem, recipeSystem, recipeUser, system, userPrompt } from "./plan.ts";
+import { Chapter, LENGTHS, LOOKS, MODELS, MixPlan, Outline, Plan, RecipePlan, chapterSystem, chapterUser, clean, mixSystem, outlineSystem, productSystem, productUser, recipeSystem, recipeUser, system, userPrompt } from "./plan.ts";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -111,6 +111,7 @@ const mixScript = (scenes: any[]) => scenes.map((s) => [`VO: ${s.narration}`,
   s.footage.length ? `FOOTAGE: ${s.footage.map((f: any) => `${f.kind}: ${f.q}`).join(" | ")}` : "",
   s.card ? `CARD: ${s.card.name} | ${s.card.stat}` : ""].filter(Boolean).join("\n")).join("\n\n");
 
+const PRODUCT_WORDS: Record<string, string> = { de: "Hier erhältlich", en: "Get it here", fr: "Disponible ici", es: "Disponible aquí", ar: "متوفر هنا" };
 const RECIPE_WORDS: Record<string, string> = { de: "Zum Rezept", en: "Full recipe", fr: "La recette complète", es: "Receta completa", ar: "الوصفة كاملة" };
 /** A recipe video's description sends people to the article. */
 const recipeLink = (url: unknown, lang: string) => (/^https:\/\/\S+$/.test(String(url || "")) ? `${RECIPE_WORDS[lang] || RECIPE_WORDS.en}: ${url}` : "");
@@ -134,7 +135,7 @@ async function savePlan(db: any, ctx: any, meta: any, scenes: any[], extra: { co
   const stage = ["new", "shortlisted", "assigned"].includes(idea.stage) ? "scripted" : idea.stage;
   const { error } = await db.from("ideas").update({
     script, video_title: clean(meta.title, 100) || idea.title,
-    video_description: [clean(meta.description, 2000), recipeLink(idea.ai?.recipe?.url, ctx.language), hashtags.join(" ")].filter(Boolean).join("\n\n"),
+    video_description: [clean(meta.description, 2000), (idea.ai?.recipe?.kind === "product" ? (/^https:\/\/\S+$/.test(String(idea.ai.recipe.url || "")) ? `${PRODUCT_WORDS[ctx.language] || PRODUCT_WORDS.en}: ${idea.ai.recipe.url}` : "") : recipeLink(idea.ai?.recipe?.url, ctx.language)), hashtags.join(" ")].filter(Boolean).join("\n\n"),
     video_tags: (meta.tags || []).map((t: string) => clean(t, 60)).filter(Boolean).slice(0, 15), search_terms: [],
     ai, ai_status: "ready", ai_error: null, stage,
   }).eq("id", idea.id);
@@ -235,7 +236,10 @@ Deno.serve(async (req) => {
       await db.from("ideas").update({ ai_status: "writing", ai_error: null, channel_id: ctx.channelId }).eq("id", ideaId);
       const recipe = body.style === "mix" && ctx.idea.ai?.recipe?.images?.length ? ctx.idea.ai.recipe : null;
       if (recipe) {
-        const r = await ask(db, ctx, "recipe", RecipePlan, recipeSystem(ctx.language, ctx.length, ctx.look, ctx.aspect, recipe.images.length), recipeUser(recipe, ctx.channel, ctx.angle), ownerId);
+        const product = recipe.kind === "product";
+        const r = await ask(db, ctx, product ? "product" : "recipe", RecipePlan,
+          (product ? productSystem : recipeSystem)(ctx.language, ctx.length, ctx.look, ctx.aspect, recipe.images.length),
+          (product ? productUser : recipeUser)(recipe, ctx.channel, ctx.angle), ownerId);
         return json(await savePlan(db, ctx, r.out, cleanMixScenes(r.out.scenes, recipe.images), { cost: r.cost, usage: r.usage, seconds: r.seconds, mix: true }));
       }
       if (body.style === "mix") {

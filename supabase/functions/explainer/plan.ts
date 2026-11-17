@@ -290,3 +290,40 @@ export function recipeUser(recipe: any, channel: any, angle: string | null) {
     article_text: String(recipe?.text || "").slice(0, 12000),
   });
 }
+
+/** A marketing Short for a product of our own shop, made from its own photos (the Recipes page with a product link). */
+export function productSystem(language: string, length: string, look = "clean", aspect = "9:16", photos = 0) {
+  const L = RECIPE_LENGTHS[length] || RECIPE_LENGTHS.short45;
+  return `${rules(language, look)}
+
+THIS IS A SHORT VIDEO AD FOR A PRODUCT OF OUR OWN SHOP. It must stop the scroll and make the right people want it, honestly.
+You get the product page (name, description, features, variants, price data) and its ${photos} photos, numbered 1 to ${photos}, with alt texts.
+Every scene has a "kind" and an "image" (the number of the product photo it shows, or 0):
+- "footage" with an image: the photo full screen, slow zoom. layout "title", heading "", items [], footage []. Optional card_name (short product
+  name) and card_stat (one true fact from the page: a material, a size, "spülmaschinenfest").
+- "overlay" with an image: the photo dimmed with a light drawing: the features as a checklist (2 to 4 items), or a compare (old way vs this).
+- "footage" with image 0: a stock video of the PROBLEM or the everyday moment (a smelly wooden board, a messy kitchen, someone cooking):
+  2 entries of kind "video", 2 to 4 simple English words. Never another product shown as this one. 1 to 3 scenes.
+- "drawn": a drawing only: a compare, a checklist or a year/stat. At most 2.
+The ad, in this order: 1) a hook in the first 2 seconds: the problem the buyer knows ("Your wooden board still smells of onions?"), 2) why it
+happens or why it's annoying, 3) the product as the answer, on its photos, 4) 2 to 3 concrete benefits from the page, each shown on a photo of
+it in use, 5) who it's for, 6) a call to action: "the link is in the bio" (or "in the description"), never a web address read aloud.
+Rules: only claims the product page makes (materials, sizes, features); no invented reviews, results, statistics, discounts or urgency;
+${"no price unless the data says price_ok"}; no comparisons with named brands. Friendly, confident, fast: one short sentence per scene.
+At least 60% of the scenes show a product photo. Each photo at most once, except the best one, which may come back at the end. No music.
+Use the angle given in the data when there is one.
+
+Write a ${format(aspect)} of ${L.duration}: ${L.words} words of narration in total, ${L.scenes} scenes.
+
+${META_RULES}`;
+}
+
+export function productUser(recipe: any, channel: any, angle: string | null) {
+  const p = recipe?.product || {};
+  return JSON.stringify({
+    product: clean(p.name || recipe?.title, 200), site: clean(recipe?.site, 100), channel: clean(channel?.title, 100), angle: angle || null,
+    variants: p.variants || [], price: p.price || null, price_ok: !!recipe?.price_ok,
+    photos: (recipe?.images || []).map((im: any, i: number) => ({ n: i + 1, alt: clean(im.alt, 200) })),
+    product_page_text: String(recipe?.text || "").slice(0, 8000),
+  });
+}

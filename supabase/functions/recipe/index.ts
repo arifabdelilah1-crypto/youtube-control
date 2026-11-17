@@ -1,5 +1,6 @@
 // Recipe videos (the Recipes page): a recipe article of our own blog becomes a Short made from its own photos.
-//   POST {action:"parse", url}  (team member) -> reads the article (WordPress API first, else the page), copies its photos (up to 12) to
+//   POST {action:"parse", url, fresh?}  (team member) -> a shop product page (/product/…, WooCommerce) is read as a product (kind
+//        "product": price, variants, its photos) for a marketing video; else reads the article (WordPress API first, else the page), copies its photos (up to 12) to
 //        Storage renders/materials/recipes/<idea_id>/, and saves an idea with ai.recipe {url, site, title, text, images: [{path, alt, heading, src}]}.
 //        Returns {idea_id, recipe, previews: [signed links]}. The same link again updates the same idea.
 //   POST {action:"start", idea_id, channel_id, images?: [indexes kept, 0-based], options: {length, look, publish, ai_model, angle}}
@@ -72,6 +73,26 @@ function readArticle(html: string, base: string) {
 async function get(url: string, accept = "text/html,application/json") {
   const r = await fetch(url, { headers: { "User-Agent": UA, Accept: accept }, redirect: "follow", signal: AbortSignal.timeout(20000) });
   return r;
+}
+
+/** A shop product (WooCommerce Store API, public): name, prices, description, features, variants and its photos in order. */
+async function fetchProduct(link: string) {
+  const u = new URL(link);
+  const slug = u.pathname.split("/").filter(Boolean).pop() || "";
+  const r = await get(`${u.origin}/wp-json/wc/store/v1/products?slug=${encodeURIComponent(slug)}`, "application/json").catch(() => null);
+  if (!r?.ok) return null;
+  const list = await r.json().catch(() => []);
+  const p = Array.isArray(list) ? list[0] : null;
+  if (!p) return null;
+  const txt = (h: string) => (h ? readArticle(h, link).text : "");
+  const money = (v: unknown) => { const n = Number(v); const d = Number(p.prices?.currency_minor_unit ?? 2); return Number.isFinite(n) ? (n / 10 ** d).toFixed(d) : null; };
+  const pr = p.prices || {};
+  const price = { currency: pr.currency_code || null, price: money(pr.price), regular: money(pr.regular_price), sale: pr.sale_price !== pr.regular_price ? money(pr.sale_price) : null,
+    range: pr.price_range ? { min: money(pr.price_range.min_amount), max: money(pr.price_range.max_amount) } : null };
+  const attrs = (p.attributes || []).map((a: any) => `${a.name}: ${(a.terms || []).map((t: any) => t.name).join(", ")}`);
+  const text = [`# ${clean(p.name, 200)}`, txt(p.short_description), txt(p.description), attrs.length ? `## Varianten\n${attrs.join("\n")}` : ""].filter(Boolean).join("\n\n");
+  const images = (p.images || []).map((im: any) => ({ src: String(im.src || ""), alt: clean(im.alt || im.name, 300), heading: clean(p.name, 200) })).filter((im: any) => /^https:\/\//.test(im.src));
+  return { title: clean(p.name, 200), text, images, site: u.hostname.replace(/^www\./, ""), product: { name: clean(p.name, 200), price, variants: attrs, on_sale: !!p.on_sale, reviews: Number(p.review_count) || 0 } };
 }
 
 /** The article: WordPress's own API when the site has it (clean text, the featured photo first), else the page. */
@@ -153,15 +174,18 @@ Deno.serve(async (req) => {
       if (link.protocol !== "https:") return json({ error: "Only https links" }, 400);
       link.hash = "";
       const url = link.href;
-      const art = await fetchArticle(url);
+      // a shop product page: its own data (the photos are the product's)
+      const prod = /\/product\//.test(link.pathname) ? await fetchProduct(url).catch(() => null) : null;
+      const art: any = prod || await fetchArticle(url);
       if (!art.images.length) return json({ error: "No photo found in this article. Recipe videos are made from the article's own photos." }, 422);
       if (art.text.length < 200) return json({ error: "The article's text couldn't be read." }, 422);
       // the same link again: the same idea
-      const { data: old } = await db.from("ideas").select("id,channel_id").contains("sources", [{ type: "article", ref: url }]).limit(1);
+      // fresh: a new idea even for a link already read (a product gets one video per marketing angle)
+      const { data: old } = body.fresh ? { data: [] } : await db.from("ideas").select("id,channel_id").contains("sources", [{ type: "article", ref: url }]).limit(1);
       let ideaId = old?.[0]?.id;
       if (!ideaId) {
         const { data: made, error } = await db.from("ideas").insert({ title: clean(art.title, 200) || url, video_title: clean(art.title, 100) || null, stage: "new",
-          notes: `Recipe video from ${url}`, sources: [{ type: "article", ref: url, site: art.site }], channel_id: UUID.test(body.channel_id || "") ? body.channel_id : null }).select("id").single();
+          notes: `${prod ? "Product" : "Recipe"} video from ${url}`, sources: [{ type: "article", ref: url, site: art.site }], channel_id: UUID.test(body.channel_id || "") ? body.channel_id : null }).select("id").single();
         if (error) throw error;
         ideaId = made.id;
       }
@@ -171,7 +195,8 @@ Deno.serve(async (req) => {
         if (path) images.push({ path, alt: im.alt, heading: clean(im.heading, 200), src: im.src });
       }
       if (!images.length) return json({ error: "The article's photos couldn't be downloaded." }, 422);
-      const recipe = { url, site: art.site, title: clean(art.title, 200), text: art.text.slice(0, 20000), images, read_at: new Date().toISOString() };
+      const recipe = { url, site: art.site, title: clean(art.title, 200), text: art.text.slice(0, 20000), images, read_at: new Date().toISOString(),
+        ...(prod ? { kind: "product", product: prod.product } : {}) };
       const { data: cur } = await db.from("ideas").select("ai").eq("id", ideaId).single();
       await db.from("ideas").update({ ai: { ...(cur?.ai || {}), recipe }, title: clean(art.title, 200) || url }).eq("id", ideaId);
       const { data: signed } = await db.storage.from("renders").createSignedUrls(images.map((i) => i.path), 6 * 3600);
