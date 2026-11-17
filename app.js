@@ -447,7 +447,7 @@ function makeVideosDialog(c, suggested) {
 VIEWS.home = async () => {
   const now = Date.now();
   const iso = (ms) => new Date(ms).toISOString();
-  const [overview, scheds, tokens, pages, sites, upcoming, failedPosts, runs, orders, ideaRows, aiRows, alerts, doneJobs, sentIdeas, siteDone] = await Promise.all([
+  const [overview, scheds, tokens, pages, sites, upcoming, failedPosts, runs, orders, ideaRows, aiRows, alerts, doneJobs, sentIdeas, siteDone, capRows] = await Promise.all([
     networkOverview(7).catch(() => []),
     q(sb.from("publish_schedules").select("*")),
     q(sb.from("channel_tokens").select("channel_id")),
@@ -463,7 +463,10 @@ VIEWS.home = async () => {
     q(sb.from("render_jobs").select("id,channel_id,idea_id").eq("status", "done").not("idea_id", "is", null).gte("created_at", iso(now - 30 * 864e5)).limit(3000)),
     q(sb.from("publish_queue").select("idea_id").neq("status", "cancelled").not("idea_id", "is", null).limit(10000)),
     q(sb.from("site_articles").select("idea_id").in("status", ["done", "embedding"]).not("idea_id", "is", null)).catch(() => []),
+    q(sb.rpc("ai_runs_status")).catch(() => []),
   ]);
+  const aiCap = capRows?.[0] || null;
+  const capTight = aiCap && aiCap.used + 18 > aiCap.cap * 0.9;
   const latest = new Map(); for (const r of runs) if (!latest.has(r.idea_id)) latest.set(r.idea_id, r);
   const runsLatest = [...latest.values()];
   const active = runsLatest.filter(isActiveRun);
@@ -487,6 +490,7 @@ VIEWS.home = async () => {
   if (failedPosts.length) need.push({ n: failedPosts.length, text: "posts failed (last 7 days)", href: "#/automation", tone: "alert" });
   if (brokenPages.length) need.push({ n: brokenPages.length, text: `Facebook Page${brokenPages.length === 1 ? "" : "s"} to reconnect`, href: "#/channels", tone: "alert" });
   if (sitesMissing.length) need.push({ n: sitesMissing.length, text: "sites with Daily on but setup missing", href: "#/pinterest", tone: "cue" });
+  if (capTight) need.push({ n: aiCap.used, text: `of ${fmt(aiCap.cap)} AI runs used in 24 h: new videos wait for room (raise the limit in Settings)`, href: "#/settings", tone: "cue" });
   if (alerts.length) need.push({ n: alerts.length, text: "alerts", href: "#/stats", tone: alerts.some((a) => a.severity === "critical") ? "alert" : "cue" });
   const needBox = h("section", { class: "card", "aria-label": "Needs you" },
     h("div", { class: "card-head" }, h("h2", { text: need.length ? "Needs you" : "All clear" }),
@@ -556,7 +560,7 @@ VIEWS.home = async () => {
     } }));
   const waitingN = orders.length;
   const makingBox = active.length || waitingN ? h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h2", { text: "Being made now" }), h("span", { class: "muted small", text: `${active.length} in progress${waitingN ? ` · ${waitingN} waiting to start (8 at a time)` : ""}` })),
+    h("div", { class: "card-head" }, h("h2", { text: "Being made now" }), h("span", { class: "muted small", text: `${active.length} in progress${waitingN ? ` · ${waitingN} waiting to start (8 at a time${capTight ? "; the daily AI limit is nearly reached, so they start as it frees up" : ""})` : ""}` })),
     active.slice(0, 12).map(runRowLite)) : null;
   const stoppedBox = stopped.length ? h("section", { class: "card", id: "stopped" },
     h("div", { class: "card-head" }, h("h2", { text: "Stopped" }), h("span", { class: "muted small", text: "Last 3 days. Try again keeps the script already written." })),
