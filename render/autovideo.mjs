@@ -240,6 +240,19 @@ async function buildScenes(idea, channel, options, project) {
   return out.project_id;
 }
 
+/** Rewrites the "m:ss Title" lines of the description with each chapter's real start (scene durations from the voice). */
+async function chapterTimes(idea, projectId) {
+  const rows = await sceneRows(projectId);
+  const starts = [];
+  let t = 0, k = 0;
+  for (const c of idea.ai.story.chapters) { starts.push(t); for (let j = 0; j < c.lines && k < rows.length; j++, k++) t += sceneSeconds(rows[k]) + SCENE_GAP; }
+  const fmt = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
+  const marks = idea.ai.story.chapters.map((c, i) => `${fmt(starts[i])} ${c.title}`).join("\n");
+  const desc = String(idea.video_description || "");
+  const block = desc.match(/(^|\n)0:00 [^\n]*(\n\d+:\d\d [^\n]*)*/);
+  if (!block) return;
+  await rest("PATCH", "ideas", `?id=eq.${idea.id}`, { video_description: desc.replace(block[0], `${block[1]}${marks}`) });
+}
 const sceneRows = (projectId) => rest("GET", "project_scenes", `?project_id=eq.${projectId}&select=*&order=idx`);
 const clipLine = (c, n) => ({ n, type: c.type, seconds: c.duration ?? null, tags: String(c.tags || "").slice(0, 160) });
 
@@ -574,6 +587,8 @@ async function main(id) {
   if (drawn) await skip("clips", "Drawn scenes, no clips");
   else await step("clips", (note) => chooseClips(projectId, brief.subject || idea.video_title || idea.title, project.aspect, note, mixStyle ? project.settings?.mix?.scenes || [] : null));
   await step("voice", () => waitForVoice(projectId));
+  // a long episode's YouTube chapters: the real start of each chapter, from the voice
+  if (storyStyle && idea.ai?.story?.chapters?.length > 1) await chapterTimes(idea, projectId).catch((e) => log(`chapter times: ${e.message}`));
   const total = (await sceneRows(projectId)).reduce((t, s) => t + sceneSeconds(s), 0);
   if (options.music === false) await skip("music", "You chose no music");
   else await step("music", () => findMusic(projectId, brief, channel.id, total));
