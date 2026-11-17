@@ -13,6 +13,7 @@ import { PRESETS, presetFx } from "../web/voicefx.js";
 import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage, voiceThreshold } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 import { writeStoryFilm } from "./story.mjs";
+import { deliverToSite } from "./site.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -618,6 +619,15 @@ async function main(id) {
     const out = await call("publish", { action: "auto", render_job_id: job.id }).catch((e) => ({ error: e.message }));
     log(out.skipped ? `Not queued: ${out.skipped}` : out.error ? `Not queued: ${out.error}` : `Queued for ${out.row?.slot_at || "now"}`);
     if (out.error || out.skipped) await warn(`It didn't go out: ${out.error || out.skipped}`);
+  }
+  // Pinterest & sites: the video goes into its article and onto the site's board, only when every check passed
+  if (options.site_article_id) {
+    const set = (v) => rest("PATCH", "site_articles", `?id=eq.${options.site_article_id}`, v).catch(() => null);
+    if (!clean) await set({ status: "review", error: `Waiting for you: ${[...checks.filter((c) => !c.ok).map((c) => `${c.name}: ${c.detail}`), ...warnings].join(" · ").slice(0, 480) || "to check"}` });
+    else {
+      try { const url = await deliverToSite({ articleId: options.site_article_id, job, idea: await one("ideas", idea.id), call, rest, log, downloadFromVds, vdsPath }); log(`On the site: ${url}`); }
+      catch (e) { log(`site: ${e.message}`); await warn(`It didn't reach the site: ${e.message}`); await set({ status: "failed", error: String(e.message).slice(0, 480) }); }
+    }
   }
   log(`Finished: ${run.status}`);
 }

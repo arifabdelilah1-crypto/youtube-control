@@ -197,7 +197,7 @@ Deno.serve(async (req) => {
         language: null, aspect: "9:16", length: ["short45", "short60"].includes(o.length) ? o.length : "short45",
         angle: o.angle ? clean(o.angle, 300).replace(/[<>]/g, "") : null, voice: null, voice_style: null,
         music: false, sounds: false, keep_script: false, publish: o.publish === "next" ? "next" : "ask",
-        video_style: "mix", recipe: true, ai_model: MODELS.has(o.ai_model) ? o.ai_model : "claude-opus-5-5", look: LOOKS.has(o.look) ? o.look : "clean",
+        video_style: "mix", recipe: true, site_article_id: UUID.test(o.site_article_id || "") ? o.site_article_id : null, ai_model: MODELS.has(o.ai_model) ? o.ai_model : "claude-opus-5-5", look: LOOKS.has(o.look) ? o.look : "clean",
       };
       const { data: run, error } = await db.from("video_runs").insert({ idea_id: id, channel_id: channelId, options, owner_id: user?.id ?? null }).select().single();
       if (error) throw error;
