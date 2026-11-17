@@ -4,6 +4,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { uploadToBlotato } from "./blotato.mjs";
 
 const basic = (u, p) => "Basic " + Buffer.from(`${u}:${p}`).toString("base64");
 
@@ -18,12 +19,22 @@ export async function deliverToSite({ articleId, job, idea, call, rest, log, dow
   const [article] = await rest("GET", "site_articles", `?id=eq.${articleId}&select=*`);
   if (!article) throw new Error("The article isn't in Pinterest & sites any more.");
   const site = await call("sites", { action: "wp_auth", site_id: article.site_id });
-  if (!site.user || !site.password) throw new Error("This site has no WordPress login yet (Pinterest & sites → the site → WordPress).");
-  const A = { Authorization: basic(site.user, site.password), "User-Agent": "YouTubeControl/1.0" };
+  // without a WordPress login the video can't go into the article, but it can still be pinned (and posted): Blotato hosts it then
+  const wp = !!(site.user && site.password) && site.embed !== false;
+  const A = wp ? { Authorization: basic(site.user, site.password), "User-Agent": "YouTubeControl/1.0" } : {};
   await set({ status: "embedding", error: null });
 
-  // 1. the video in the site's media library (its address is public: the pin uses it too)
+  // 1. the video at a public address: the site's media library, or Blotato when there is no WordPress login
   let mediaUrl = article.video_url, mediaId = article.wp_media_id;
+  if (!mediaUrl && !wp) {
+    if (!process.env.BLOTATO_API_KEY) throw new Error("No WordPress login for this site, and no Blotato key in this job to host the video.");
+    const file = path.join(os.tmpdir(), `${job.id}-site.mp4`);
+    await downloadFromVds(vdsPath(job.output_path), file);
+    mediaUrl = await uploadToBlotato(process.env.BLOTATO_API_KEY, file, "video.mp4", "video/mp4");
+    fs.rmSync(file, { force: true });
+    await set({ video_url: mediaUrl });
+    log(`video hosted by Blotato (no WordPress login): ${mediaUrl}`);
+  }
   if (!mediaUrl) {
     const file = path.join(os.tmpdir(), `${job.id}-site.mp4`);
     await downloadFromVds(vdsPath(job.output_path), file);
@@ -39,7 +50,7 @@ export async function deliverToSite({ articleId, job, idea, call, rest, log, dow
   }
 
   // 2. the video in the article, once
-  if (site.embed && !article.embedded_at) {
+  if (wp && !article.embedded_at) {
     const r = await fetch(`${site.base_url}/wp-json/wp/v2/posts/${article.wp_id}?context=edit&_fields=id,content`, { headers: A });
     const post = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(`WordPress didn't give the article (${r.status}): ${String(post.message || "").slice(0, 200)}`);

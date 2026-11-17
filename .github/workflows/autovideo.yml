@@ -33,6 +33,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           MEDIA_URL: ${{ secrets.MEDIA_URL }}
           MEDIA_SECRET: ${{ secrets.MEDIA_SECRET }}
+          BLOTATO_API_KEY: ${{ secrets.BLOTATO_API_KEY }}  # Pinterest & sites: hosts the video when a site has no WordPress login
           RUN_ID: ${{ github.event.inputs.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: node render/autovideo.mjs "$RUN_ID"

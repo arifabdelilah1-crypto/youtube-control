@@ -478,7 +478,7 @@ VIEWS.home = async () => {
   for (const j of doneJobs) if (!gone.has(j.idea_id) && !isActiveRun(latest.get(j.idea_id))) reviewByIdea.set(j.idea_id, j.channel_id);
   const reviewCount = (id) => [...reviewByIdea.values()].filter((x) => !id || x === id).length;
   const brokenPages = pages.filter((p) => p.needs_reconnect);
-  const sitesMissing = sites.filter((x) => x.daily && (!x.wp_ok || (x.pin && !x.pinterest_board_id)));
+  const sitesMissing = sites.filter((x) => x.daily && x.pin && !x.pinterest_board_id);
   const tokenSet = new Set(tokens.map((t) => t.channel_id));
   const costOf = (id) => aiRows.filter((r) => r.ideas?.channel_id === id).reduce((t, r) => t + aiCost({ ...r, peak: deepseekPeak(r.created_at) }), 0);
   const unassignedCost = aiRows.filter((r) => !r.ideas?.channel_id).reduce((t, r) => t + aiCost({ ...r, peak: deepseekPeak(r.created_at) }), 0);
@@ -1738,7 +1738,8 @@ VIEWS.pinterest = async () => {
       const b = e.currentTarget; b.disabled = true;
       try { await fn(); } catch (err) { toast(err.message); } finally { b.disabled = false; }
     } });
-    const ready = [x.wp_ok ? null : "WordPress login", x.pinterest_board_id || !x.pin ? null : "Pinterest board", x.channel_id ? null : "network"].filter(Boolean);
+    // a WordPress login is optional: without it the video is pinned (and posted) but not put in the article
+    const ready = [x.pinterest_board_id || !x.pin ? null : "Pinterest board", x.channel_id ? null : "network"].filter(Boolean);
     const row = (a) => {
       const [cls, label] = ARTICLE_STATUS[a.status] || ["short", a.status];
       return h("div", { class: "listrow", style: "align-items:flex-start" },
@@ -1757,6 +1758,7 @@ VIEWS.pinterest = async () => {
         h("div", null, h("h2", { text: x.name }), h("a", { class: "muted small", href: x.base_url, target: "_blank", rel: "noopener", text: x.base_url })),
         h("div", { class: "row" },
           h("span", { class: `pill ${x.daily && !ready.length ? "ok" : "short"}`, text: x.daily ? (ready.length ? `Daily on, missing: ${ready.join(", ")}` : "One video a day") : "Daily off" }),
+          x.daily && !x.wp_ok ? h("span", { class: "pill short", title: "Add the WordPress login to put each video in its article too", text: "Pin only (no WordPress login)" }) : null,
           h("button", { class: "btn small ghost", type: "button", "aria-expanded": String(open), text: open ? "Close" : "Settings", onclick: () => { pinUi.open[x.id] = !open; render(); } }))),
       h("p", { class: "muted small", text: `${x.articles_count} articles · ${tally.done || 0} with video · ${tally.making || 0} being made · ${tally.review || 0} waiting for you · ${tally.failed || 0} stopped${x.synced_at ? ` · read ${ago(x.synced_at)}` : ""}` }),
       open ? h("div", { class: "site-settings" },
