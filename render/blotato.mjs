@@ -47,7 +47,7 @@ export function blotatoPost({ row, target = {}, mediaUrl, coverUrl, scheduledTim
   if (row.platform === "tiktok") {
     platformTarget = {
       targetType: "tiktok", privacyLevel: target.privacy || "PUBLIC_TO_EVERYONE", disabledComments: false, disabledDuet: false, disabledStitch: false,
-      isBrandedContent: false, isYourBrand: false, isAiGenerated: target.ai !== false,
+      isBrandedContent: false, isYourBrand: !!target.your_brand, isAiGenerated: target.ai !== false,
     };
   } else if (isX) {
     platformTarget = { targetType: "twitter" };
