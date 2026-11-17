@@ -385,6 +385,7 @@ const MAKE_STYLES = {
   story: { label: "Story stick", hint: "A stick-figure film Claude draws in code. Best for stories and \"what if\".", cost: 0.3,
     looks: [["noir", "Noir (night, cinematic)"], ["paper", "Storybook"], ["pop", "Pop (bright comic)"]] },
 };
+const LANG_NAMES_UI = { en: "English", fr: "French", de: "German", es: "Spanish", ar: "Arabic", it: "Italian", pt: "Portuguese", nl: "Dutch" };
 const PLATFORM_LABELS = { youtube: "YouTube", tiktok: "TikTok", facebook: "Facebook", instagram: "Instagram", twitter: "X", pinterest: "Pinterest" };
 async function controlCall(body) {
   const { data, error } = await sb.functions.invoke("control", { body });
@@ -398,7 +399,7 @@ function makeVideosDialog(c, suggested) {
   let style = MAKE_STYLES[remembered.style] ? remembered.style : "stock";
   const count = h("input", { id: "mk-count", class: "field", type: "number", min: 1, max: 12, value: Math.max(1, Math.min(12, suggested || remembered.count || 3)) });
   const look = h("select", { id: "mk-look", class: "field" });
-  const publish = h("select", { id: "mk-publish", class: "field" }, h("option", { value: "next", text: "Schedule them in the free slots" }), h("option", { value: "ask", text: "Send them to Review first" }));
+  const publish = h("select", { id: "mk-publish", class: "field" }, h("option", { value: "next", text: "Schedule in free slots" }), h("option", { value: "ask", text: "Review first" }));
   publish.value = remembered.publish === "ask" ? "ask" : "next";
   const saved = h("input", { type: "checkbox", checked: remembered.saved !== false });
   const estimate = h("p", { class: "small", style: "margin:0", role: "status" });
@@ -485,13 +486,14 @@ VIEWS.home = async () => {
 
   // ----- what needs you
   const need = [];
-  if (reviewCount()) need.push({ n: reviewCount(), text: "videos waiting for your review", href: "#/review", tone: "cue" });
-  if (stopped.length) need.push({ n: stopped.length, text: "videos stopped (last 3 days)", href: "#stopped", tone: "alert" });
-  if (failedPosts.length) need.push({ n: failedPosts.length, text: "posts failed (last 7 days)", href: "#/automation", tone: "alert" });
+  const pl = (n, one, many) => (n === 1 ? one : many);
+  if (reviewCount()) need.push({ n: reviewCount(), text: `${pl(reviewCount(), "video", "videos")} waiting for your review`, href: "#/review", tone: "cue" });
+  if (stopped.length) need.push({ n: stopped.length, text: `${pl(stopped.length, "video", "videos")} stopped (last 3 days)`, href: "#stopped", tone: "alert" });
+  if (failedPosts.length) need.push({ n: failedPosts.length, text: `${pl(failedPosts.length, "post", "posts")} failed (last 7 days)`, href: "#/automation", tone: "alert" });
   if (brokenPages.length) need.push({ n: brokenPages.length, text: `Facebook Page${brokenPages.length === 1 ? "" : "s"} to reconnect`, href: "#/channels", tone: "alert" });
-  if (sitesMissing.length) need.push({ n: sitesMissing.length, text: "sites with Daily on but setup missing", href: "#/pinterest", tone: "cue" });
+  if (sitesMissing.length) need.push({ n: sitesMissing.length, text: `${pl(sitesMissing.length, "site", "sites")} with Daily on but setup missing`, href: "#/pinterest", tone: "cue" });
   if (capTight) need.push({ n: aiCap.used, text: `of ${fmt(aiCap.cap)} AI runs used in 24 h: new videos wait for room (raise the limit in Settings)`, href: "#/settings", tone: "cue" });
-  if (alerts.length) need.push({ n: alerts.length, text: "alerts", href: "#/stats", tone: alerts.some((a) => a.severity === "critical") ? "alert" : "cue" });
+  if (alerts.length) need.push({ n: alerts.length, text: pl(alerts.length, "alert", "alerts"), href: "#/stats", tone: alerts.some((a) => a.severity === "critical") ? "alert" : "cue" });
   const needBox = h("section", { class: "card", "aria-label": "Needs you" },
     h("div", { class: "card-head" }, h("h2", { text: need.length ? "Needs you" : "All clear" }),
       h("span", { class: "muted small", text: `AI this week: ${usd(totalCost)}${unassignedCost ? ` (incl. ${usd(unassignedCost)} for research and ideas)` : ""}` })),
@@ -527,7 +529,7 @@ VIEWS.home = async () => {
       h("div", { class: "net-head" },
         c.thumbnail_url ? h("img", { src: c.thumbnail_url, alt: "", width: 40, height: 40 }) : h("span", { class: "net-avatar", text: c.title.slice(0, 1) }),
         h("div", { style: "min-width:0;flex:1" }, h("h3", { dir: "auto", text: c.title }),
-          h("div", { class: "muted small", text: [String(c.video_style?.language || c.language || "").toUpperCase(), (c.markets || []).join(" · "), sc.enabled ? `${sc.times.length} post${sc.times.length === 1 ? "" : "s"} a day` : "auto-publish off"].filter(Boolean).join(" · ") })),
+          h("div", { class: "muted small", text: [LANG_NAMES_UI[String(c.video_style?.language || c.language || "").toLowerCase()] || "", (c.markets || []).join(" "), sc.enabled ? `${sc.times.length} post${sc.times.length === 1 ? "" : "s"} a day` : "auto-publish off"].filter(Boolean).join(" · ") })),
         h("a", { class: "btn small ghost", href: `#/channel/${c.id}`, text: "Open" })),
       h("div", { class: "net-chips" }, chips.map((x) => h("span", { class: `pill ${x.ok ? "ok" : "crit"}`, title: x.why || "Connected", text: x.ok ? x.p : `${x.p}: ${x.why}` }))),
       h("div", { class: "net-stats" },
