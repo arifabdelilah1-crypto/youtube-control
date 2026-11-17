@@ -2401,7 +2401,7 @@ VIEWS.automation = async () => {
     q(sb.from("render_jobs").select("id,status,channel_id,project_id,idea_id,params,output_path,run_url,duration_s,finished_at,created_at").eq("status", "done").gte("created_at", since).order("created_at", { ascending: false })),
     q(sb.from("channel_tokens").select("channel_id")),
   ]);
-  const connected = new Set(tokens.map((t) => t.channel_id));
+  const connected = new Set(state.channels.filter((c) => c.connected).map((c) => c.id));  // the tokens table is not readable from the browser
   const schedOf = (id) => ({ ...DEFAULT_SCHED, ...(scheds.find((x) => x.channel_id === id) || {}) });
   const channels = state.channel === "all" ? state.channels : state.channels.filter((c) => c.id === state.channel);
   const active = (r) => ["queued", "uploading", "scheduled"].includes(r.status);
@@ -2526,7 +2526,7 @@ VIEWS.schedule = async () => {
     q(sb.from("render_jobs").select("id,channel_id,idea_id,params,created_at").eq("status", "done").gte("created_at", since).order("created_at")),
     q(sb.from("channel_tokens").select("channel_id")),
   ]);
-  const connected = new Set(tokens.map((t) => t.channel_id));
+  const connected = new Set(state.channels.filter((c) => c.connected).map((c) => c.id));  // the tokens table is not readable from the browser
   const channels = state.channel === "all" ? state.channels : state.channels.filter((c) => c.id === state.channel);
   const now = Date.now();
   const queuedJobs = new Set(queue.map((r) => r.render_job_id));
@@ -2665,7 +2665,7 @@ VIEWS.review = async () => {
   const trackOf = new Map(projects.map((p) => [p.id, p.settings?.music?.found]));
   const posters = new Map();
   for (const s of scenes) if (!posters.has(s.project_id) && (s.clip?.thumb || s.clip?.preview)) posters.set(s.project_id, s.clip.thumb || s.clip.preview);
-  const connected = new Set(tokens.map((t) => t.channel_id));
+  const connected = new Set(state.channels.filter((c) => c.connected).map((c) => c.id));  // the tokens table is not readable from the browser
 
   const card = (j) => {
     const i = ideas.get(j.idea_id);
