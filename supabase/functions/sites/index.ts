@@ -111,6 +111,12 @@ Deno.serve(async (req) => {
       return json({ accounts: out });
     }
 
+    // every account connected in Blotato (any platform), to link new ones to networks
+    if (body.action === "blotato_all") {
+      const all = await blotato("/users/me/accounts");
+      return json({ accounts: (Array.isArray(all) ? all : all.items || all.accounts || []).map((x: any) => ({ id: String(x.id), platform: x.platform, name: x.username || x.fullname || x.name || null })) });
+    }
+
     // is the Blotato key good for uploads? (the publish job uses its own copy, in the GitHub repo secrets)
     if (body.action === "blotato_check") {
       const r = await fetch(`${BLOTATO_API}/media/uploads`, { method: "POST", headers: { "blotato-api-key": BLOTATO, "Content-Type": "application/json" }, body: JSON.stringify({ filename: "check.mp4" }) });
