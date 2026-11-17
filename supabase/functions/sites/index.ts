@@ -111,6 +111,12 @@ Deno.serve(async (req) => {
       return json({ accounts: out });
     }
 
+    // is the Blotato key good for uploads? (the publish job uses its own copy, in the GitHub repo secrets)
+    if (body.action === "blotato_check") {
+      const r = await fetch(`${BLOTATO_API}/media/uploads`, { method: "POST", headers: { "blotato-api-key": BLOTATO, "Content-Type": "application/json" }, body: JSON.stringify({ filename: "check.mp4" }) });
+      return json({ status: r.status, ok: r.ok });
+    }
+
     if (body.action === "test") {
       const { site, user, password } = await auth(body.site_id);
       if (!user || !password) return json({ ok: false, error: "Add the WordPress user and application password first." });
