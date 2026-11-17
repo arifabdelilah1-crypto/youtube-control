@@ -8,7 +8,7 @@ export const VOICES = {
   ar: [["ar-MA-JamalNeural-Male", "Jamal (Morocco, male)"], ["ar-MA-MounaNeural-Female", "Mouna (Morocco, female)"], ["ar-SA-HamedNeural-Male", "Hamed (Saudi, male)"],
        ["ar-SA-ZariyahNeural-Female", "Zariyah (Saudi, female)"], ["ar-EG-ShakirNeural-Male", "Shakir (Egypt, male)"], ["ar-EG-SalmaNeural-Female", "Salma (Egypt, female)"]],
   es: [["es-ES-AlvaroNeural-Male", "Álvaro (male)"], ["es-ES-ElviraNeural-Female", "Elvira (female)"]],
-  de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"]],
+  de: [["de-DE-ConradNeural-Male", "Conrad (male)"], ["de-DE-FlorianMultilingualNeural-Male", "Florian (male)"], ["de-DE-KatjaNeural-Female", "Katja (female)"], ["de-DE-AmalaNeural-Female", "Amala (female, warm)"]],
 };
 // Supertonic-3: the same ten voices in every language, made on the GitHub machine (collectors/supertonic_voice.py).
 const SUPERTONIC_VOICES = [["M", "male"], ["F", "female"]].flatMap(([k, g]) => [1, 2, 3, 4, 5].map((n) => [`supertonic-${k}${n}`, `Supertonic ${k}${n} (${g})`]));
