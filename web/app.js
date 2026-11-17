@@ -373,7 +373,203 @@ function stackedCols(weeks, label, fmtV = (v) => String(Math.round(v)), floor = 
 const HOME_METRICS = { views: ["Views", (d) => Number(d.views || 0), ""], watch: ["Watch hours", (d) => Number(d.watch_minutes || 0) / 60, " h"],
   subs: ["Net subscribers", (d) => Number(d.subs_gained || 0) - Number(d.subs_lost || 0), ""], shorts: ["Shorts views", (d) => Number(d.shorts_views || 0), ""] };
 
+// ==================================================================
+// Home: the control center. What needs you, what's being made, and one card per network: where it posts (and what's broken),
+// its next 7 days, its videos in the making and in review, its views and AI cost, and "Make videos" (supabase/functions/control:
+// the best saved ideas first, new ones written for it, then started a few at a time by the video-orders cron).
+// ==================================================================
+const MAKE_STYLES = {
+  stock: { label: "Real footage", hint: "Stock video and photos, voice, captions. The cheapest.", cost: 0.02, looks: null },
+  mix: { label: "Footage + drawings", hint: "Real footage, with Claude's animated drawings for numbers and ideas.", cost: 0.06,
+    looks: [["glow", "Glow"], ["clean", "Clean"], ["comic", "Comic"], ["neon", "Neon"], ["sunset", "Sunset"], ["whiteboard", "Whiteboard"]] },
+  story: { label: "Story stick", hint: "A stick-figure film Claude draws in code. Best for stories and \"what if\".", cost: 0.3,
+    looks: [["noir", "Noir (night, cinematic)"], ["paper", "Storybook"], ["pop", "Pop (bright comic)"]] },
+};
+const PLATFORM_LABELS = { youtube: "YouTube", tiktok: "TikTok", facebook: "Facebook", instagram: "Instagram", twitter: "X", pinterest: "Pinterest" };
+async function controlCall(body) {
+  const { data, error } = await sb.functions.invoke("control", { body });
+  if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+function makeVideosDialog(c, suggested) {
+  const remembered = (() => { try { return JSON.parse(localStorage.getItem(`ytc.make.${c.id}`) || "{}"); } catch { return {}; } })();
+  let style = MAKE_STYLES[remembered.style] ? remembered.style : "stock";
+  const count = h("input", { id: "mk-count", class: "field", type: "number", min: 1, max: 12, value: Math.max(1, Math.min(12, suggested || remembered.count || 3)) });
+  const look = h("select", { id: "mk-look", class: "field" });
+  const publish = h("select", { id: "mk-publish", class: "field" }, h("option", { value: "next", text: "Schedule them in the free slots" }), h("option", { value: "ask", text: "Send them to Review first" }));
+  publish.value = remembered.publish === "ask" ? "ask" : "next";
+  const saved = h("input", { type: "checkbox", checked: remembered.saved !== false });
+  const estimate = h("p", { class: "small", style: "margin:0", role: "status" });
+  const msg = h("p", { class: "small idea-error", role: "alert", hidden: true });
+  const cards = h("div", { class: "make-styles", role: "radiogroup", "aria-label": "Style" });
+  const paint = () => {
+    cards.replaceChildren(...Object.entries(MAKE_STYLES).map(([k, st]) => h("button", { type: "button", role: "radio", "aria-checked": String(k === style), class: "make-style",
+      onclick: () => { style = k; paint(); } },
+      h("strong", { text: st.label }), h("span", { class: "muted small", text: st.hint }), h("span", { class: "small", text: `about $${st.cost.toFixed(2)} a video` }))));
+    const st = MAKE_STYLES[style];
+    look.replaceChildren(...(st.looks || [["", "—"]]).map(([v, l]) => h("option", { value: v, text: l })));
+    if (st.looks && st.looks.some(([v]) => v === remembered.look)) look.value = remembered.look;
+    look.closest(".field-wrap")?.toggleAttribute("hidden", !st.looks);
+    const n = Math.max(1, Math.min(12, Number(count.value) || 1));
+    estimate.textContent = `${n} video${n === 1 ? "" : "s"} · about $${(n * st.cost).toFixed(2)} in AI · ready in about ${n > 8 ? "30–60" : "10–20"} minutes. ${publish.value === "next" ? "Each goes to the network's next free slot when it passes the final checks." : "They wait for you in Review."}`;
+  };
+  count.addEventListener("input", paint); publish.addEventListener("change", paint);
+  const go = h("button", { class: "btn primary", type: "submit", text: "Make the videos" });
+  const dialog = h("dialog", { class: "gen-dialog", "aria-labelledby": "mk-title" }, h("form", { class: "gen-form", onsubmit: async (e) => {
+    e.preventDefault();
+    go.disabled = true; go.textContent = "Finding ideas…"; msg.hidden = true;
+    const choice = { style, count: Number(count.value) || 3, look: look.value || null, publish: publish.value, saved: saved.checked };
+    try { localStorage.setItem(`ytc.make.${c.id}`, JSON.stringify(choice)); } catch { /* fine */ }
+    try {
+      const out = await controlCall({ action: "make", channel_id: c.id, count: choice.count, style, look: choice.look, publish: choice.publish, use_saved: choice.saved });
+      dialog.close();
+      toast(`${out.queued} video${out.queued === 1 ? "" : "s"} on the way for ${c.title}: ${out.ideas.slice(0, 2).map((i) => `“${i.title}”`).join(", ")}${out.ideas.length > 2 ? "…" : ""}`);
+      render();
+    } catch (err) { msg.textContent = err.message; msg.hidden = false; go.disabled = false; go.textContent = "Make the videos"; }
+  } },
+    h("h2", { id: "mk-title", text: `Make videos for ${c.title}` }),
+    cards,
+    h("div", { class: "form-grid" },
+      h("div", { class: "field-wrap" }, h("label", { for: "mk-count", text: "How many" }), count),
+      h("div", { class: "field-wrap" }, h("label", { for: "mk-look", text: "Look" }), look),
+      h("div", { class: "field-wrap" }, h("label", { for: "mk-publish", text: "When they're ready" }), publish)),
+    h("label", { class: "row small" }, saved, " Use the best saved ideas first (new ones are written for the rest)"),
+    estimate, msg,
+    h("div", { class: "row gen-actions" }, h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: () => dialog.close() }), go)));
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  paint();
+  dialog.showModal();
+}
+
 VIEWS.home = async () => {
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  const [overview, scheds, tokens, pages, sites, upcoming, failedPosts, runs, orders, ideaRows, aiRows, alerts, doneJobs, sentIdeas, siteDone] = await Promise.all([
+    networkOverview(7).catch(() => []),
+    q(sb.from("publish_schedules").select("*")),
+    q(sb.from("channel_tokens").select("channel_id")),
+    q(sb.from("meta_pages").select("page_id,name,needs_reconnect,reconnect_error")).catch(() => []),
+    q(sb.from("sites").select("id,name,channel_id,pinterest_board_id,pinterest_account_name,tiktok_account_name,daily,wp_ok,pin")).catch(() => []),
+    q(sb.from("publish_queue").select("channel_id,platform,status,slot_at").in("status", ["queued", "uploading", "scheduled"]).limit(3000)),
+    q(sb.from("publish_queue").select("id,channel_id,platform,title,error,updated_at").eq("status", "failed").gte("updated_at", iso(now - 7 * 864e5)).order("updated_at", { ascending: false }).limit(200)),
+    q(sb.from("video_runs").select("*, ideas(title, video_title)").gte("created_at", iso(now - 4 * 864e5)).order("created_at", { ascending: false }).limit(400)),
+    q(sb.from("video_orders").select("channel_id,status").eq("status", "pending")).catch(() => []),
+    q(sb.from("ideas").select("channel_id").in("stage", ["new", "shortlisted", "assigned"]).limit(10000)),
+    q(sb.from("ai_runs").select("model,prompt_tokens,completion_tokens,created_at,ideas(channel_id)").gte("created_at", iso(now - 7 * 864e5)).limit(10000)),
+    q(sb.from("alerts").select("id,severity,title").is("resolved_at", null).limit(50)).catch(() => []),
+    q(sb.from("render_jobs").select("id,channel_id,idea_id").eq("status", "done").not("idea_id", "is", null).gte("created_at", iso(now - 30 * 864e5)).limit(3000)),
+    q(sb.from("publish_queue").select("idea_id").neq("status", "cancelled").not("idea_id", "is", null).limit(10000)),
+    q(sb.from("site_articles").select("idea_id").in("status", ["done", "embedding"]).not("idea_id", "is", null)).catch(() => []),
+  ]);
+  const latest = new Map(); for (const r of runs) if (!latest.has(r.idea_id)) latest.set(r.idea_id, r);
+  const runsLatest = [...latest.values()];
+  const active = runsLatest.filter(isActiveRun);
+  const stopped = runsLatest.filter((r) => r.status === "failed" && Date.parse(r.created_at) > now - 72 * 3600e3);
+  // waiting for you: a finished video that hasn't gone anywhere yet (not queued, not on a site)
+  const gone = new Set([...sentIdeas.map((r) => r.idea_id), ...siteDone.map((r) => r.idea_id)]);
+  const reviewByIdea = new Map();
+  for (const j of doneJobs) if (!gone.has(j.idea_id) && !isActiveRun(latest.get(j.idea_id))) reviewByIdea.set(j.idea_id, j.channel_id);
+  const reviewCount = (id) => [...reviewByIdea.values()].filter((x) => !id || x === id).length;
+  const brokenPages = pages.filter((p) => p.needs_reconnect);
+  const sitesMissing = sites.filter((x) => x.daily && (!x.wp_ok || (x.pin && !x.pinterest_board_id)));
+  const tokenSet = new Set(tokens.map((t) => t.channel_id));
+  const costOf = (id) => aiRows.filter((r) => r.ideas?.channel_id === id).reduce((t, r) => t + aiCost({ ...r, peak: deepseekPeak(r.created_at) }), 0);
+  const unassignedCost = aiRows.filter((r) => !r.ideas?.channel_id).reduce((t, r) => t + aiCost({ ...r, peak: deepseekPeak(r.created_at) }), 0);
+  const totalCost = aiRows.reduce((t, r) => t + aiCost({ ...r, peak: deepseekPeak(r.created_at) }), 0);
+
+  // ----- what needs you
+  const need = [];
+  if (reviewCount()) need.push({ n: reviewCount(), text: "videos waiting for your review", href: "#/review", tone: "cue" });
+  if (stopped.length) need.push({ n: stopped.length, text: "videos stopped (last 3 days)", href: "#stopped", tone: "alert" });
+  if (failedPosts.length) need.push({ n: failedPosts.length, text: "posts failed (last 7 days)", href: "#/automation", tone: "alert" });
+  if (brokenPages.length) need.push({ n: brokenPages.length, text: `Facebook Page${brokenPages.length === 1 ? "" : "s"} to reconnect`, href: "#/channels", tone: "alert" });
+  if (sitesMissing.length) need.push({ n: sitesMissing.length, text: "sites with Daily on but setup missing", href: "#/pinterest", tone: "cue" });
+  if (alerts.length) need.push({ n: alerts.length, text: "alerts", href: "#/stats", tone: alerts.some((a) => a.severity === "critical") ? "alert" : "cue" });
+  const needBox = h("section", { class: "card", "aria-label": "Needs you" },
+    h("div", { class: "card-head" }, h("h2", { text: need.length ? "Needs you" : "All clear" }),
+      h("span", { class: "muted small", text: `AI this week: ${usd(totalCost)}${unassignedCost ? ` (incl. ${usd(unassignedCost)} for research and ideas)` : ""}` })),
+    need.length ? h("div", { class: "need-list" }, need.map((x) => h("a", { class: "need", href: x.href, "data-tone": x.tone, onclick: x.href === "#stopped" ? (e) => { e.preventDefault(); document.getElementById("stopped")?.scrollIntoView({ behavior: "smooth" }); } : null },
+      h("span", { class: "need-n", text: fmt(x.n) }), h("span", { text: x.text }))))
+      : h("p", { class: "muted small", style: "margin:0", text: "Nothing is waiting for you: no video to review, nothing stopped, every connection works." }));
+
+  // ----- one card per network
+  const card = (c) => {
+    const ov = overview.find((r) => r.channel_id === c.id) || {};
+    const sc = { ...DEFAULT_SCHED, ...(scheds.find((x) => x.channel_id === c.id) || {}) };
+    const targets = targetsOfSchedule(sc);
+    const site = sites.find((x) => x.channel_id === c.id);
+    const chips = [];
+    chips.push(tokenSet.has(c.id) ? { p: "YouTube", ok: true } : { p: "YouTube", ok: false, why: "not connected" });
+    for (const t of targets.filter((t) => t.platform !== "youtube")) {
+      const page = t.platform === "facebook" && t.method === "meta" ? pages.find((p) => p.page_id === t.page_id) : null;
+      chips.push(page?.needs_reconnect ? { p: PLATFORM_LABELS[t.platform], ok: false, why: "reconnect" } : { p: PLATFORM_LABELS[t.platform] || t.platform, ok: true });
+    }
+    if (site) chips.push(site.pinterest_board_id ? { p: "Pinterest", ok: true } : { p: "Pinterest", ok: false, why: "pick a board" });
+    const mine = upcoming.filter((r) => r.channel_id === c.id);
+    const week = mine.filter((r) => r.slot_at && Date.parse(r.slot_at) > now && Date.parse(r.slot_at) < now + 7 * 864e5);
+    const slots = sc.enabled ? slotsBetween(sc, now, 7) : [];
+    const ytTaken = week.filter((r) => r.platform === "youtube").map((r) => Date.parse(r.slot_at));
+    const empty = slots.filter((t) => !ytTaken.some((x) => Math.abs(x - t) < 30 * 60e3)).length;
+    const soonEmpty = sc.enabled ? slotsBetween(sc, now, 3).filter((t) => !ytTaken.some((x) => Math.abs(x - t) < 30 * 60e3)).length : 0;
+    const making = active.filter((r) => r.channel_id === c.id).length + orders.filter((o) => o.channel_id === c.id).length;
+    const review = reviewCount(c.id);
+    const ideasN = ideaRows.filter((i) => i.channel_id === c.id).length;
+    const delta = ov.views_prev ? Math.round(((ov.views - ov.views_prev) / ov.views_prev) * 100) : null;
+    const stat = (label, value, note, tone) => h("div", { class: "net-stat", "data-tone": tone || "" }, h("span", { class: "muted small", text: label }), h("strong", { text: value }), note ? h("span", { class: "small muted", text: note }) : null);
+    return h("article", { class: "card net-card" },
+      h("div", { class: "net-head" },
+        c.thumbnail_url ? h("img", { src: c.thumbnail_url, alt: "", width: 40, height: 40 }) : h("span", { class: "net-avatar", text: c.title.slice(0, 1) }),
+        h("div", { style: "min-width:0;flex:1" }, h("h3", { dir: "auto", text: c.title }),
+          h("div", { class: "muted small", text: [String(c.video_style?.language || c.language || "").toUpperCase(), (c.markets || []).join(" · "), sc.enabled ? `${sc.times.length} post${sc.times.length === 1 ? "" : "s"} a day` : "auto-publish off"].filter(Boolean).join(" · ") })),
+        h("a", { class: "btn small ghost", href: `#/channel/${c.id}`, text: "Open" })),
+      h("div", { class: "net-chips" }, chips.map((x) => h("span", { class: `pill ${x.ok ? "ok" : "crit"}`, title: x.why || "Connected", text: x.ok ? x.p : `${x.p}: ${x.why}` }))),
+      h("div", { class: "net-stats" },
+        stat("Views, 7 days", fmtc(ov.views || 0), delta === null ? null : `${delta >= 0 ? "+" : ""}${delta}%`, delta !== null && delta < 0 ? "down" : ""),
+        stat("Next 7 days", `${week.length} post${week.length === 1 ? "" : "s"}`, sc.enabled ? (empty ? `${empty} empty YouTube slot${empty === 1 ? "" : "s"}` : "every slot filled") : null, empty ? "warn" : ""),
+        stat("Being made", fmt(making), review ? `${review} to review` : null, review ? "warn" : ""),
+        stat("AI, 7 days", usd(costOf(c.id)), `${fmt(ideasN)} ideas saved`)),
+      h("div", { class: "row" },
+        h("button", { class: "btn primary small", type: "button", text: "Make videos", onclick: () => makeVideosDialog(c, soonEmpty) }),
+        review ? h("a", { class: "btn small", href: "#/review", onclick: () => setChannel(c.id), text: `Review ${review}` }) : null,
+        h("a", { class: "btn small ghost", href: "#/calendar", onclick: () => { state.channel = c.id; store.set("ytc.channel", c.id); }, text: "Calendar" }),
+        orders.some((o) => o.channel_id === c.id) ? h("button", { class: "btn small ghost", type: "button", text: "Cancel waiting", onclick: async () => {
+          try { const out = await controlCall({ action: "cancel", channel_id: c.id }); toast(`${out.cancelled} cancelled`); render(); } catch (e) { toast(e.message); } } }) : null));
+  };
+  const list = state.channel === "all" ? state.channels : state.channels.filter((c) => c.id === state.channel);
+
+  // ----- being made now, and what stopped
+  const runRowLite = (r) => h("div", { class: "listrow", style: "align-items:flex-start" },
+    h("div", { style: "flex:1;min-width:0" }, h("a", { href: `#/studio/${r.idea_id}`, dir: "auto", text: runTitle(r) }),
+      h("div", { class: "muted small", text: [channelById(r.channel_id)?.title, { story: "Story stick", mix: r.options?.recipe ? "Recipe / product" : "Footage + drawings", explainer: "Animation" }[r.options?.video_style] || "Real footage", ago(r.created_at)].filter(Boolean).join(" · ") }),
+      isActiveRun(r) ? runProgress(r) : h("p", { class: "small idea-error", text: r.error || "It stopped before the end." })),
+    isActiveRun(r) ? null : h("button", { class: "btn small", type: "button", text: "Try again", onclick: async (e) => {
+      e.currentTarget.disabled = true;
+      const fn = r.options?.video_style === "story" ? "story" : r.options?.recipe ? "recipe" : r.options?.video_style === "mix" || r.options?.video_style === "explainer" ? "explainer" : "ai";
+      try {
+        if (fn === "ai") await aiCall({ action: "auto_start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } });
+        else await aiCall({ action: "start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } }, fn);
+        toast("Making it again"); render();
+      } catch (err) { toast(err.message); e.currentTarget.disabled = false; }
+    } }));
+  const waitingN = orders.length;
+  const makingBox = active.length || waitingN ? h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "Being made now" }), h("span", { class: "muted small", text: `${active.length} in progress${waitingN ? ` · ${waitingN} waiting to start (8 at a time)` : ""}` })),
+    active.slice(0, 12).map(runRowLite)) : null;
+  const stoppedBox = stopped.length ? h("section", { class: "card", id: "stopped" },
+    h("div", { class: "card-head" }, h("h2", { text: "Stopped" }), h("span", { class: "muted small", text: "Last 3 days. Try again keeps the script already written." })),
+    stopped.slice(0, 15).map(runRowLite)) : null;
+
+  if (state.timer) { clearInterval(state.timer); state.timer = null; }
+  if (active.length || waitingN) state.timer = setInterval(() => { if ((location.hash || "#/home").replace(/^#\/?/, "").split(/[/?]/)[0] === "home" || !location.hash) render(); }, 20000);
+  return [pageHead("Control center", "Every network at a glance: where it posts, what's coming, what's being made, and what needs you.",
+    h("a", { class: "btn ghost", href: "#/stats", text: "Stats" })),
+    needBox, makingBox, h("div", { class: "net-grid" }, list.map(card)), stoppedBox];
+};
+
+VIEWS.stats = async () => {
   const days = state.period;
   const net = state.channel;
   const one = net !== "all";
