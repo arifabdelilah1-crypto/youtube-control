@@ -508,12 +508,17 @@ VIEWS.home = async () => {
     const targets = targetsOfSchedule(sc);
     const site = sites.find((x) => x.channel_id === c.id);
     const chips = [];
-    chips.push(tokenSet.has(c.id) ? { p: "YouTube", ok: true } : { p: "YouTube", ok: false, why: "not connected" });
+    // channels.connected: the YouTube channel's Google login is saved (the tokens themselves are never readable from the browser)
+    const siteOnly = !c.youtube_channel_id && sites.some((x) => x.channel_id === c.id);
+    if (!siteOnly) chips.push(c.connected ? { p: "YouTube", ok: true } : { p: "YouTube", ok: false, why: "not connected" });
+    else chips.push({ p: "Videos for your sites", ok: true, neutral: true });
     for (const t of targets.filter((t) => t.platform !== "youtube")) {
       const page = t.platform === "facebook" && t.method === "meta" ? pages.find((p) => p.page_id === t.page_id) : null;
       chips.push(page?.needs_reconnect ? { p: PLATFORM_LABELS[t.platform], ok: false, why: "reconnect" } : { p: PLATFORM_LABELS[t.platform] || t.platform, ok: true });
     }
-    if (site) chips.push(site.pinterest_board_id ? { p: "Pinterest", ok: true } : { p: "Pinterest", ok: false, why: "pick a board" });
+    const mySites = sites.filter((x) => x.channel_id === c.id);
+    if (mySites.length) chips.push(mySites.every((x) => x.pinterest_board_id || !x.pin) ? { p: `Pinterest${mySites.length > 1 ? ` (${mySites.length} sites)` : ""}`, ok: true }
+      : { p: "Pinterest", ok: false, why: `pick ${mySites.filter((x) => x.pin && !x.pinterest_board_id).length > 1 ? "the boards" : "a board"}` });
     const mine = upcoming.filter((r) => r.channel_id === c.id);
     const week = mine.filter((r) => r.slot_at && Date.parse(r.slot_at) > now && Date.parse(r.slot_at) < now + 7 * 864e5);
     const slots = sc.enabled ? slotsBetween(sc, now, 7) : [];
@@ -531,7 +536,7 @@ VIEWS.home = async () => {
         h("div", { style: "min-width:0;flex:1" }, h("h3", { dir: "auto", text: c.title }),
           h("div", { class: "muted small", text: [LANG_NAMES_UI[String(c.video_style?.language || c.language || "").toLowerCase()] || "", (c.markets || []).join(" "), sc.enabled ? `${sc.times.length} post${sc.times.length === 1 ? "" : "s"} a day` : "auto-publish off"].filter(Boolean).join(" · ") })),
         h("a", { class: "btn small ghost", href: `#/channel/${c.id}`, text: "Open" })),
-      h("div", { class: "net-chips" }, chips.map((x) => h("span", { class: `pill ${x.ok ? "ok" : "crit"}`, title: x.why || "Connected", text: x.ok ? x.p : `${x.p}: ${x.why}` }))),
+      h("div", { class: "net-chips" }, chips.map((x) => h("span", { class: `pill ${x.neutral ? "short" : x.ok ? "ok" : "crit"}`, title: x.why || "Connected", text: x.ok ? x.p : `${x.p}: ${x.why}` }))),
       h("div", { class: "net-stats" },
         stat("Views, 7 days", fmtc(ov.views || 0), delta === null ? null : `${delta >= 0 ? "+" : ""}${delta}%`, delta !== null && delta < 0 ? "down" : ""),
         stat("Next 7 days", `${week.length} post${week.length === 1 ? "" : "s"}`, sc.enabled ? (empty ? `${empty} empty YouTube slot${empty === 1 ? "" : "s"}` : "every slot filled") : null, empty ? "warn" : ""),
