@@ -1254,7 +1254,7 @@ VIEWS.animation = async () => {
 
   // the animations made so far
   const list = h("div", { class: "idea-list", "aria-live": "off" });
-  let ideas = [], runs = [];
+  let ideas = [], runs = [], costs = new Map();
   const sheets = new Map();  // contact sheet path -> signed link (render/autovideo.mjs makes one per drawn film)
   const load = async () => {
     let iq = sb.from("ideas").select("id,title,video_title,channel_id,stage,created_at").not("stage", "in", "(archived,published)").order("created_at", { ascending: false }).limit(200);
@@ -1262,6 +1262,7 @@ VIEWS.animation = async () => {
     const [rows, all] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(200))]);
     ideas = rows;
     runs = all.filter((r) => ["explainer", "story", "mix"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
+    costs = await runCosts(runs);
     const missing = runs.map((r) => r.contact_sheet).filter((p) => p && !sheets.has(p));
     if (missing.length) {
       const { data } = await sb.storage.from("renders").createSignedUrls(missing, 6 * 3600);
@@ -1285,7 +1286,9 @@ VIEWS.animation = async () => {
       h("div", { class: "idea-main" },
         h("a", { class: "title", dir: "auto", href: `#/studio/${r.idea_id}`, text: runTitle(r) }),
         h("div", { class: "idea-meta muted small" }, h("span", { text: look.label }), h("span", { text: r.options?.aspect === "16:9" ? "YouTube video 16:9" : "Short 9:16" }), h("span", { text: channelById(r.channel_id)?.title || "" }),
-          plan ? h("span", { text: plan }) : null, h("span", { text: ago(r.created_at) })),
+          plan ? h("span", { text: plan }) : null,
+          costs.has(r.id) ? h("span", { title: "What the AI calls of this video cost. Voice and rendering are free.", text: `${isActiveRun(r) ? "AI so far" : "AI cost"} ${usd(costs.get(r.id))}` }) : null,
+          h("span", { text: ago(r.created_at) })),
         isActiveRun(r) ? runProgress(r) : null,
         sheets.get(r.contact_sheet) ? h("a", { class: "anim-sheet", href: sheets.get(r.contact_sheet), target: "_blank", rel: "noopener", title: "Open the six frames in full size" },
           h("img", { src: sheets.get(r.contact_sheet), alt: `Six frames of "${runTitle(r)}"`, loading: "lazy" })) : null,
@@ -1389,10 +1392,11 @@ VIEWS.recipes = async () => {
 
   // the recipe videos made so far
   const list = h("div", { class: "idea-list" });
-  let runs = [];
+  let runs = [], costs = new Map();
   const load = async () => {
     const all = await q(sb.from("video_runs").select("*, ideas(title, video_title)").eq("options->>recipe", "true").order("created_at", { ascending: false }).limit(40));
     runs = all.filter((r) => state.channel === "all" || r.channel_id === state.channel);
+    costs = await runCosts(runs);
   };
   const reload = async () => { await load(); paint(); };
   const row = (r) => {
@@ -1402,7 +1406,9 @@ VIEWS.recipes = async () => {
       h("div", { class: "idea-main" },
         h("a", { class: "title", dir: "auto", href: `#/studio/${r.idea_id}`, text: runTitle(r) }),
         h("div", { class: "idea-meta muted small" }, h("span", { text: channelById(r.channel_id)?.title || "" }), h("span", { text: r.options?.length === "short60" ? "60 s" : "45 s" }),
-          h("span", { text: r.options?.publish === "next" ? "Scheduled when ready" : "Review first" }), h("span", { text: ago(r.created_at) })),
+          h("span", { text: r.options?.publish === "next" ? "Scheduled when ready" : "Review first" }),
+          costs.has(r.id) ? h("span", { title: "What the AI calls cost (Claude plan, clip choice and checks). Voice and rendering are free.", text: `${isActiveRun(r) ? "AI so far" : "AI cost"} ${usd(costs.get(r.id))}` }) : null,
+          h("span", { text: ago(r.created_at) })),
         isActiveRun(r) ? runProgress(r) : null,
         r.status === "failed" ? h("p", { class: "small idea-error", role: "alert", text: r.error || "It stopped before the end." }) : null),
       h("div", { class: "idea-side" }, h("span", { class: "idea-lamp small", "data-lamp": lamp[1], text: lamp[0] }), h("div", { class: "idea-acts" }, acts)));
@@ -1587,11 +1593,27 @@ const AI_PRICES = {
 };
 const priceFor = (model) => AI_PRICES[model] || (/^deepseek/.test(model) ? AI_PRICES["deepseek-flash"] : /^claude/.test(model) ? AI_PRICES["claude-opus-5-5"] : null);
 const aiCost = (r) => { const p = priceFor(r.model); return p ? ((Number(r.prompt_tokens) * p.in + Number(r.completion_tokens) * p.out) / 1e6) * (r.peak && p.peak ? p.peak : 1) : 0; };
+// DeepSeek's weekday peak hours (UTC), when its price doubles
+const deepseekPeak = (iso) => { const d = new Date(iso); const hr = d.getUTCHours(), wd = d.getUTCDay(); return wd >= 1 && wd <= 5 && ((hr >= 1 && hr < 4) || (hr >= 6 && hr < 10)); };
+/** What each video run's AI calls cost: the ai_runs of its idea while it ran (voices and rendering are free). Map run id -> $. */
+async function runCosts(runs) {
+  const list = runs.filter((r) => r.idea_id && r.created_at);
+  if (!list.length) return new Map();
+  const since = list.reduce((m, r) => (r.created_at < m ? r.created_at : m), list[0].created_at);
+  const rows = await q(sb.from("ai_runs").select("idea_id,model,prompt_tokens,completion_tokens,created_at").in("idea_id", [...new Set(list.map((r) => r.idea_id))]).gte("created_at", since).limit(5000)).catch(() => []);
+  const out = new Map();
+  for (const r of list) {
+    const from = Date.parse(r.created_at) - 5000, to = isActiveRun(r) ? Infinity : Date.parse(r.updated_at || r.created_at) + 120000;
+    out.set(r.id, rows.filter((x) => x.idea_id === r.idea_id && Date.parse(x.created_at) >= from && Date.parse(x.created_at) <= to)
+      .reduce((t, x) => t + aiCost({ ...x, peak: deepseekPeak(x.created_at) }), 0));
+  }
+  return out;
+}
 const usd = (v) => (!v ? "$0" : v >= 100 ? `$${Math.round(v)}` : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(v >= 0.1 ? 2 : 3)}`);
 const AI_TASKS = {
   script: "Writing scripts", review: "Reviewing scripts", clips: "Choosing clips", clip_check: "Checking clips by eye", sounds: "Choosing sound effects",
   thumbnail: "Thumbnail text", brief: "Production brief", blueprint: "Outlier blueprints", hooks: "Other openings", translate: "Translations",
-  trends: "Picking trends", trend_ideas: "Trends into ideas", brain: "Brain chat", explainer: "Animation plans", explainer_outline: "Animation outlines", explainer_chapter: "Animation chapters",
+  trends: "Picking trends", trend_ideas: "Trends into ideas", brain: "Brain chat", explainer: "Animation plans", explainer_mix: "Mix plans", recipe: "Recipe plans", explainer_outline: "Animation outlines", explainer_chapter: "Animation chapters",
   clipper: "Clipper", clipper_memory: "Clipper", clipper_narrate: "Clipper", clipper_lines: "Clipper",
 };
 const COST_PERIODS = [["7", "7 days"], ["30", "30 days"], ["month", "This month"], ["90", "90 days"]];

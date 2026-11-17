@@ -233,32 +233,51 @@ export function chapterUser(base: string, outline: any, index: number) {
   });
 }
 
-/** A cooking video made from a recipe article of our own blog: its photos carry the video (the Recipes page). */
+/** A cooking video made from a recipe article of our own blog: its photos show the dish, stock clips and real photos show the cooking
+ * and the ingredients, Claude's drawings show the numbers (the Recipes page). */
+// spoken numbers ("20 bis 25 Minuten bei 170 Grad") take long to say: fewer words than an explainer of the same length
+const RECIPE_LENGTHS: Record<string, { words: string; scenes: string; duration: string }> = {
+  short45: { duration: "about 45 seconds", words: "80 to 95", scenes: "9 to 11" },
+  short60: { duration: "about 60 seconds", words: "110 to 125", scenes: "11 to 13" },
+};
 export function recipeSystem(language: string, length: string, look = "clean", aspect = "9:16", photos = 0) {
-  const L = LENGTHS[length];
+  const L = RECIPE_LENGTHS[length] || RECIPE_LENGTHS.short45;
   return `${rules(language, look)}
 
-THIS IS A COOKING VIDEO MADE FROM A RECIPE ARTICLE OF OUR OWN BLOG. You get the article's text and its ${photos} photos, numbered 1 to ${photos},
-each with its alt text and the heading it sits under. Every scene has a "kind" and an "image" (the number of the article photo it shows, or 0):
-- "footage" with an image: the photo full screen, with a slow zoom. layout "title", heading "", items [], number 0, highlight 0, footage [].
-  Optional name card on a photo of that very dish: card_name = the dish's short name (max 30 characters), card_stat = its time and/or temperature
-  exactly as the article gives them ("15 Min · 200 °C"), else "" and "".
-- "overlay" with an image: the photo dimmed, with one light drawing on top: the ingredients as a checklist (2 to 4 items), or a stat
-  (minutes or °C, with number_suffix " Min" or " °C"), and a short heading. footage [].
-- "footage" with image 0: a stock video for a cooking moment the photos don't show (chopping, oil poured, an air fryer basket opened):
-  exactly 2 entries of kind "video", 2 to 4 simple ENGLISH words a stock site has. Never a different dish presented as this one. Use it rarely.
-- "drawn" (image 0, footage []): a drawing only (the layouts above): a quick tip or a comparison. At most 2 drawn scenes in the whole video.
-How to use the photos:
-- The photo must show exactly what the voice says in that scene: read its alt text and heading. Each photo at most once, except the opening
-  photo, which may come back in the last scene. At least 70% of the scenes show an article photo.
-- Open with the most appetising photo and a hook: the result, how fast it is, or a surprise. Never "In this video".
-- A list of several dishes: pick the 4 to 6 best ones that have a photo, one scene each (its name, the one thing that makes it great, its
-  time or temperature), and say how many ideas the article has in total. One recipe: the dish, the ingredients, 3 to 5 steps, the result.
+THIS IS A COOKING VIDEO MADE FROM A RECIPE ARTICLE OF OUR OWN BLOG. It must look like a polished food channel: fast, appetising, varied.
+You get the article's text and its ${photos} photos, numbered 1 to ${photos}, each with its alt text and the heading it sits under.
+Every scene has a "kind" and an "image" (the number of the article photo it shows, or 0). Four sources of pictures, all in one video:
+
+1. THE ARTICLE'S PHOTOS (image 1 to ${photos}): the only pictures of the finished dish. Whenever the voice names or shows the dish, it is
+   the article's own photo of THAT dish (read its alt text and heading). About 40 to 55% of the scenes.
+   - "footage" with an image: the photo full screen with a slow zoom. layout "title", heading "", items [], number 0, highlight 0, footage [].
+     Name card on a photo of that very dish: card_name = its short name (max 30 characters), card_stat = time and/or temperature exactly
+     as the article gives them ("15 Min · 200 °C"), else "" and "".
+   - "overlay" with an image: the photo dimmed, with a light drawing on top (see 4). footage [].
+   Each photo at most once, except the opening photo, which may come back in the last scene.
+2. STOCK VIDEO (image 0, kind "footage", 2 entries of kind "video"): Pexels and Pixabay clips of the cooking itself, the moments the
+   photos don't show: hands seasoning or oiling, a knife cutting vegetables, an air fryer basket opened, steam rising, food sizzling,
+   a thermometer in meat. 2 to 4 simple ENGLISH words a stock site really has ("hands seasoning chicken", "air fryer basket", "cutting
+   red pepper"). 2 to 3 scenes. Never a finished dish standing in for this recipe's dish, never a brand.
+3. A REAL PHOTO OF ONE INGREDIENT (image 0, kind "footage", first entry kind "image" with the ingredient's exact common English name,
+   e.g. "Halloumi", "Gnocchi", "Smoked paprika", second entry a "video" search): 0 or 1 scene, only for a notable ingredient.
+4. CLAUDE'S DRAWINGS: 2 to 3 scenes, the numbers and the method made visual:
+   - "overlay" on an article photo or on a stock video (then 2 "video" entries in footage): a stat counter for the time or the
+     temperature (number, number_suffix " Min" or " °C", a short heading), or the ingredients as a checklist (2 to 4 items, icons).
+   - "drawn" (image 0, footage []): a journey of the steps (e.g. season → air fryer → rest), or a compare when the article gives both
+     numbers (e.g. oven vs air fryer time). At most 2 drawn scenes, never two in a row.
+Order and pacing:
+- Open on the most appetising article photo with a hook in the first sentence: the result, how fast it is, or a surprise. Never "In this video".
+- Alternate the sources: never 3 scenes in a row from the same source. Short scenes: one sentence each, 6 to 12 words.
+- A list of several dishes: the 4 to 6 best ones that have a photo, one scene each (its name, what makes it great, its time or
+  temperature), with stock or drawn scenes between them, and say how many ideas the article has. One recipe: the dish, the
+  ingredients, the key steps (the ones with a time or temperature), the result.
 - Times, temperatures and quantities only from the article, exactly as written. No health claims, nothing the article doesn't say.
-- The last line sends people to the full recipe: "the recipe is in the link" in the video's language. Never read a web address aloud.
+- The last scene: the dish's photo, and "the recipe is in the link" in the video's language. Never read a web address aloud.
 - No music: music_mood "none".
 
-Write a ${format(aspect)} of ${L.duration}: ${L.words} words of narration in total, ${L.scenes} scenes.
+Write a ${format(aspect)} of ${L.duration}: ${L.words} words of narration in total (numbers count as the words said aloud, so keep
+them few), ${L.scenes} scenes. Stay inside the word count: a longer script makes the video too long.
 
 ${META_RULES}`;
 }
