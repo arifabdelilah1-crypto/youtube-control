@@ -89,7 +89,7 @@ const POSES = {
 };
 export const MOODS = ["neutral", "happy", "sad", "worried", "surprised", "angry", "sly", "scared", "sleepy"];
 
-function Face({ mood, blink, r, ink, lookX = 0 }) {
+function Face({ mood, blink, r, ink, lookX = 0, brows = 0.09 }) {
   const eyeY = -r * 0.08, ex = r * 0.34, er = r * 0.11;
   const shut = blink ? 0.12 : 1;
   const dx = lookX * r * 0.14;
@@ -114,7 +114,7 @@ function Face({ mood, blink, r, ink, lookX = 0 }) {
     [-1, 1].map((side) => {
       const by = eyeY - r * 0.3, sly = mood === "sly" && side < 0 ? 0.6 : 1;
       return h("line", { key: `b${side}`, x1: side * ex + side * er * 1.7 + dx, y1: by - brow[1] * r * sly, x2: side * ex - side * er * 1.4 + dx, y2: by - brow[0] * r * sly,
-        stroke: ink, strokeWidth: r * 0.09, strokeLinecap: "round" });
+        stroke: ink, strokeWidth: r * brows, strokeLinecap: "round" });
     }),
     mouth ? h("path", { d: mouth, fill: "none", stroke: ink, strokeWidth: r * 0.09, strokeLinecap: "round", strokeLinejoin: "round" })
       : h("ellipse", { cx: 0, cy: r * 0.46, rx: r * 0.14, ry: r * 0.18, fill: ink }));
@@ -127,13 +127,18 @@ const limb = (x, y, ang, len, facing) => { const a = (ang * Math.PI) / 180; retu
  *  coat: costume colour (use T.cast[i]); pose: one of POSES; f: the frame, for walking, breathing and blinking;
  *  hat: "none" | "cap" | "beanie" | "top" | "bow"; hair: "none" | "tuft" | "bun" | "long"; tie: true; bag: true;
  *  holding: a React element drawn at the right hand (e.g. <Phone s={0.5}/>); lookX: -1..1 (eyes); speed: walk speed.
+ *  char: a network's mascot (CHARACTERS[name], e.g. char={CHARACTERS.yassine}): a bigger head with skin, hair, beard, headwear
+ *        and a hoodie; it overrides coat, hat and hair, so the mascot looks the same in every film.
  */
 export function Figure({ x = 0, y = 0, s = 1, facing = 1, coat, mood = "neutral", pose = "stand", f = 0, seed = "a",
-  armL, armR, bendL, bendR, legL, legR, hat = "none", hair = "none", tie = false, bag = false, holding = null, lookX = 0, speed = 1, opacity = 1, tilt = 0 }) {
+  armL, armR, bendL, bendR, legL, legR, hat = "none", hair = "none", tie = false, bag = false, holding = null, lookX = 0, speed = 1, opacity = 1, tilt = 0, char = null }) {
   const T = useTheme();
   const P = POSES[pose] || POSES.stand;
   const ink = T.ink, L = T.line;
-  const r = 56;
+  const C = char && typeof char === "object" ? char : null;
+  if (C) { coat = C.hoodie || coat; hat = "none"; hair = "none"; }
+  const r = C ? 84 : 56;
+  const skin = C ? C.skin : T.head;
   const walkPh = (P.walk || P.run) ? f * 0.32 * speed * (P.run ? 1.5 : 1) : 0;
   const swing = P.walk ? 28 : P.run ? 50 : 0;
   const breathe = P.walk || P.run ? Math.abs(Math.sin(walkPh)) * -8 : wave(f, 0.07, 2.5, rnd(seed) * 6);
@@ -146,8 +151,13 @@ export function Figure({ x = 0, y = 0, s = 1, facing = 1, coat, mood = "neutral"
   const lL = legL ?? P.lL - (swing ? Math.sin(walkPh) * swing * 0.9 : 0);
   const lR = legR ?? P.lR + (swing ? Math.sin(walkPh) * swing * 0.9 : 0);
   const blink = (Math.floor(f + rnd(seed) * 97) % 97) < 3;
-  const arm = (side, [ang, bend]) => {
-    const sx = side * 36, [ex, ey] = limb(sx, shoulderY + 12, ang, 80, facing), [hx, hy] = limb(ex, ey, ang + bend * (side > 0 ? 1 : 1), 74, facing);
+  // a mascot's big head: raised arms open outwards instead of crossing the face, from wider shoulders
+  const open = (a) => (C && Math.abs(a) > 90 ? Math.sign(a) * (90 + (Math.abs(a) - 90) * 0.45) : a);
+  const arm = (side, [ang0, bend]) => {
+    // raised arms always open towards their own side, whichever way the mascot faces
+    const ang = C && Math.abs(ang0) > 90 ? side * facing * Math.abs(open(ang0)) : open(ang0);
+    if (C && Math.abs(ang0) > 90) bend = bend * 0.35;
+    const sx = side * (C ? 46 : 36), [ex, ey] = limb(sx, shoulderY + 12, ang, 80, facing), [hx, hy] = limb(ex, ey, ang + bend * (side > 0 ? 1 : 1), 74, facing);
     return { d: `M ${sx} ${shoulderY + 12} L ${ex} ${ey} L ${hx} ${hy}`, hx, hy };
   };
   const leg = (side, ang) => {
@@ -185,15 +195,84 @@ export function Figure({ x = 0, y = 0, s = 1, facing = 1, coat, mood = "neutral"
     h("path", { d: torso, fill: "none", stroke: ink, strokeWidth: L, strokeLinejoin: "round" }),
     tie ? h("path", { d: `M 0 ${shoulderY + 2} l -8 14 l 8 50 l 8 -50 z`, fill: T.ink }) : null,
     h("line", { x1: 0, y1: neckY, x2: 0, y2: shoulderY + 2, stroke: ink, strokeWidth: L * 1.3, strokeLinecap: "round" }),
-    A.map((a, i) => h("path", { key: `a${i}`, d: a.d, ...stroke })),
-    A.map((a, i) => h("circle", { key: `h${i}`, cx: a.hx, cy: a.hy, r: 15, fill: T.head, stroke: ink, strokeWidth: L * 0.85 })),
-    holding ? h("g", { transform: `translate(${A[1].hx} ${A[1].hy})` }, holding) : null,
+    C ? null : A.map((a, i) => h("path", { key: `a${i}`, d: a.d, ...stroke })),
+    C?.hood ? h("g", null, [-1, 1].map((sd) => h("path", { key: `ds${sd}`, d: `M ${sd * 12} ${shoulderY + 4} l ${sd * 3} 54`, stroke: C.strings || "#f5f5f5", strokeWidth: L * 0.9, strokeLinecap: "round" })),
+      h("path", { d: `M -30 ${hipY - 34} L 30 ${hipY - 34} L 38 ${hipY + 4} L -38 ${hipY + 4} Z`, fill: "#000", opacity: 0.12, stroke: ink, strokeWidth: L * 0.6, strokeLinejoin: "round" })) : null,
+    C?.badge ? h("g", { transform: `translate(${-22 * facing} ${shoulderY + 44}) scale(0.9)` }, h("path", { d: STAR8, fill: C.badge, stroke: ink, strokeWidth: L * 0.5, strokeLinejoin: "round" })) : null,
+    C ? null : A.map((a, i) => h("circle", { key: `h${i}`, cx: a.hx, cy: a.hy, r: 15, fill: skin, stroke: ink, strokeWidth: L * 0.85 })),
+    C || !holding ? null : h("g", { transform: `translate(${A[1].hx} ${A[1].hy})` }, holding),
     hair === "long" ? hairEl : null,
     h("g", { transform: `translate(0 ${headY})` },
-      h("circle", { cx: 0, cy: 0, r, fill: T.head, stroke: ink, strokeWidth: L }),
-      h("g", { transform: `scale(${facing} 1)` }, h(Face, { mood, blink, r, ink, lookX: lookX * facing }))),
+      C ? h(CharBack, { C, r, ink, L, facing }) : null,
+      h("circle", { cx: 0, cy: 0, r, fill: skin, stroke: ink, strokeWidth: L }),
+      C ? h(CharFront, { C, r, ink, L, facing }) : null,
+      h("g", { transform: `scale(${facing} 1)` }, h(Face, { mood, blink, r, ink, lookX: lookX * facing, brows: C ? 0.12 : 0.09 })),
+      C?.mustache ? h("path", { d: `M ${-r * 0.26} ${r * 0.33} Q 0 ${r * 0.2} ${r * 0.26} ${r * 0.33} Q 0 ${r * 0.27} ${-r * 0.26} ${r * 0.33} Z`, fill: C.hairColor, stroke: C.hairColor, strokeWidth: L * 0.6, strokeLinejoin: "round" }) : null,
+      C ? h(CharTop, { C, r, ink, L, facing }) : null),
     hair !== "long" ? hairEl : null,
-    hatEl);
+    hatEl,
+    // a mascot's big head would hide raised arms: its arms come last, sleeves in the hoodie's colour
+    C ? A.map((a, i) => h("path", { key: `a${i}`, d: a.d, ...stroke })) : null,
+    C ? A.map((a, i) => h("circle", { key: `h${i}`, cx: a.hx, cy: a.hy, r: 17, fill: skin, stroke: ink, strokeWidth: L * 0.85 })) : null,
+    C && holding ? h("g", { transform: `translate(${A[1].hx} ${A[1].hy})` }, holding) : null);
+}
+
+// ---------- mascots: one per network, the same in every film ----------
+const STAR8 = (() => { const p = []; for (let i = 0; i < 16; i++) { const a = (i * Math.PI) / 8, rr = i % 2 ? 9 : 20; p.push(`${(Math.sin(a) * rr).toFixed(1)} ${(-Math.cos(a) * rr).toFixed(1)}`); } return `M ${p.join(" L ")} Z`; })();
+/**
+ * The mascots. skin/hairColor/hoodie: colours that stay the same in every look. hair: "curly" | "wavy" | "fade";
+ * beard: "stubble" | "short" | null; mustache; headwear: "shemagh" (white or red-checked scarf with a black agal cord) | null;
+ * hood: a hood behind the head and drawstrings; badge: a small eight-point star (zellige) on the chest.
+ */
+export const CHARACTERS = {
+  yassine: { name: "Yassine", skin: "#c98d5e", hairColor: "#1d1410", hair: "curly", beard: "stubble", mustache: false, hoodie: "#1f3b73", strings: "#f2f2f2", hood: true, badge: "#d6a531" },
+  karim:   { name: "Karim", skin: "#b9784a", hairColor: "#15100d", hair: "wavy", beard: "short", mustache: true, hoodie: "#8c1c2b", strings: "#f2f2f2", hood: true, badge: "#1f8a5b" },
+  sami:    { name: "Sami", skin: "#d39a6a", hairColor: "#1a1210", hair: "fade", beard: "short", mustache: true, hoodie: "#f1ede4", strings: "#2a2a2a", hood: false, badge: null, headwear: "shemagh", cloth: "#ffffff", check: "#c0392b" },
+};
+/** Behind the head: the hood, the ears, the back of a head scarf. */
+function CharBack({ C, r, ink, L }) {
+  return h("g", null,
+    C.hood ? h("path", { d: `M ${-r * 1.18} ${r * 0.55} Q ${-r * 1.3} ${-r * 0.6} 0 ${-r * 0.95} Q ${r * 1.3} ${-r * 0.6} ${r * 1.18} ${r * 0.55} Q 0 ${r * 1.45} ${-r * 1.18} ${r * 0.55} Z`,
+      fill: mix(C.hoodie, "#000000", 0.18), stroke: ink, strokeWidth: L, strokeLinejoin: "round" }) : null,
+    C.headwear === "shemagh" ? h("path", { d: `M ${-r * 1.08} ${-r * 0.2} Q ${-r * 1.3} ${r * 0.7} ${-r * 1.0} ${r * 1.28} Q ${-r * 0.5} ${r * 1.12} 0 ${r * 1.2} Q ${r * 0.5} ${r * 1.12} ${r * 1.0} ${r * 1.28} Q ${r * 1.3} ${r * 0.7} ${r * 1.08} ${-r * 0.2} Z`,
+      fill: C.cloth, stroke: ink, strokeWidth: L, strokeLinejoin: "round" }) : null,
+    C.headwear ? null : [-1, 1].map((sd) => h("circle", { key: `ear${sd}`, cx: sd * r * 0.98, cy: r * 0.06, r: r * 0.2, fill: C.skin, stroke: ink, strokeWidth: L * 0.85 })));
+}
+/** On the face, under the features: the beard. */
+function CharFront({ C, r, ink, L }) {
+  if (!C.beard) return null;
+  const d = `M ${-r * 0.9} ${r * 0.02} Q ${-r * 0.82} ${r * 0.98} 0 ${r * 1.0} Q ${r * 0.82} ${r * 0.98} ${r * 0.9} ${r * 0.02} Q ${r * 0.62} ${r * 0.5} ${r * 0.34} ${r * 0.58} Q 0 ${r * 0.72} ${-r * 0.34} ${r * 0.58} Q ${-r * 0.62} ${r * 0.5} ${-r * 0.9} ${r * 0.02} Z`;
+  return h("path", { d, fill: C.hairColor, opacity: C.beard === "stubble" ? 0.32 : 0.92, stroke: C.beard === "stubble" ? "none" : ink, strokeWidth: L * 0.5, strokeLinejoin: "round" });
+}
+/** On top: the hair, or the scarf and its cord. */
+function CharTop({ C, r, ink, L, facing }) {
+  if (C.headwear === "shemagh") {
+    const top = `M ${-r * 1.1} ${-r * 0.18} Q ${-r * 1.15} ${-r * 1.28} 0 ${-r * 1.3} Q ${r * 1.15} ${-r * 1.28} ${r * 1.1} ${-r * 0.18} Q ${r * 0.9} ${-r * 0.5} 0 ${-r * 0.56} Q ${-r * 0.9} ${-r * 0.5} ${-r * 1.1} ${-r * 0.18} Z`;
+    const checks = [];
+    for (let i = -4; i <= 4; i++) checks.push(h("path", { key: `c${i}`, d: `M ${i * r * 0.24} ${-r * 1.3} L ${i * r * 0.24 + r * 0.25} ${-r * 0.3}`, stroke: C.check, strokeWidth: L * 0.55, opacity: 0.8 }));
+    for (let j = 0; j < 3; j++) checks.push(h("path", { key: `d${j}`, d: `M ${-r * 1.1} ${-r * (1.05 - j * 0.24)} L ${r * 1.1} ${-r * (1.05 - j * 0.24)}`, stroke: C.check, strokeWidth: L * 0.45, opacity: 0.55 }));
+    return h("g", null,
+      h("defs", null, h("clipPath", { id: "shemaghTop" }, h("path", { d: top }))),
+      h("path", { d: top, fill: C.cloth }),
+      C.check ? h("g", { clipPath: "url(#shemaghTop)" }, checks) : null,
+      h("path", { d: top, fill: "none", stroke: ink, strokeWidth: L, strokeLinejoin: "round" }),
+      // the agal: two black cords around the head
+      h("path", { d: `M ${-r * 0.96} ${-r * 0.82} Q 0 ${-r * 1.08} ${r * 0.96} ${-r * 0.82}`, fill: "none", stroke: "#111111", strokeWidth: L * 1.7, strokeLinecap: "round" }),
+      h("path", { d: `M ${-r * 1.0} ${-r * 0.68} Q 0 ${-r * 0.94} ${r * 1.0} ${-r * 0.68}`, fill: "none", stroke: "#111111", strokeWidth: L * 1.3, strokeLinecap: "round" }));
+  }
+  const hc = C.hairColor;
+  if (C.hair === "curly") {
+    const curls = [];
+    for (let i = 0; i <= 8; i++) { const a = Math.PI * (1.08 + (i / 8) * 0.84); curls.push(h("circle", { key: `k${i}`, cx: Math.cos(a) * r * 0.86, cy: Math.sin(a) * r * 0.86 - r * 0.06, r: r * 0.27, fill: hc, stroke: ink, strokeWidth: L * 0.7 })); }
+    return h("g", null, h("path", { d: `M ${-r * 0.98} ${-r * 0.1} Q ${-r * 0.95} ${-r * 1.18} 0 ${-r * 1.15} Q ${r * 0.95} ${-r * 1.18} ${r * 0.98} ${-r * 0.1} Q ${r * 0.6} ${-r * 0.62} 0 ${-r * 0.6} Q ${-r * 0.6} ${-r * 0.62} ${-r * 0.98} ${-r * 0.1} Z`, fill: hc }), curls);
+  }
+  if (C.hair === "wavy") {
+    return h("path", { d: `M ${-r * 1.0} ${-r * 0.05} Q ${-r * 1.08} ${-r * 1.2} ${-r * 0.1} ${-r * 1.22} Q ${r * 0.9} ${-r * 1.25} ${r * 1.02} ${-r * 0.3} Q ${r * 0.7} ${-r * 0.7} ${r * 0.25} ${-r * 0.55} Q ${r * 0.05} ${-r * 0.85} ${-r * 0.35} ${-r * 0.62} Q ${-r * 0.75} ${-r * 0.55} ${-r * 1.0} ${-r * 0.05} Z`,
+      fill: hc, stroke: ink, strokeWidth: L * 0.8, strokeLinejoin: "round", transform: `scale(${facing} 1)` });
+  }
+  // fade: short on the sides, a flat top
+  return h("path", { d: `M ${-r * 0.97} ${-r * 0.25} Q ${-r * 0.92} ${-r * 1.1} 0 ${-r * 1.08} Q ${r * 0.92} ${-r * 1.1} ${r * 0.97} ${-r * 0.25} Q ${r * 0.8} ${-r * 0.62} 0 ${-r * 0.66} Q ${-r * 0.8} ${-r * 0.62} ${-r * 0.97} ${-r * 0.25} Z`,
+    fill: hc, stroke: ink, strokeWidth: L * 0.8, strokeLinejoin: "round" });
 }
 
 // ---------- props (all sized around s = 1; x, y = where they stand or their centre) ----------
