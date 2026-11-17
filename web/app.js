@@ -1647,46 +1647,36 @@ const ARTICLE_STATUS = { new: ["short", "No video yet"], making: ["warn", "Makin
 const SITE_VIDEO_STYLE = { voice: "de-DE-AmalaNeural-Female", aspect: "9:16", language: "de", voice_rate: 1.05, editor: { sfx: { volume: 0.5, enabled: false }, hook: { text: "", enabled: true },
   music: { mood: "none", start: 0, volume: 0, track_id: null }, captions: { size: 100, color: "#FFFFFF", words: 2, enabled: true, position: "bottom", highlight: "#F97316", uppercase: true },
   progress: { color: "#F97316", enabled: true } } };
-const pinUi = { accounts: null, accountsError: null, open: {} };
+const pinUi = { accounts: null, accountsError: null, open: {}, list: {}, pick: {} };
 
-VIEWS.pinterest = async () => {
-  const sites = await q(sb.from("sites").select("*").order("created_at"));
-  const ids = sites.map((x) => x.id);
-  const [articles, counts] = await Promise.all([
-    ids.length ? q(sb.from("site_articles").select("id,site_id,title,url,status,published_at,video_url,pin_url,pinned_at,tiktok_url,tiktok_at,error,video_run_id,updated_at").in("site_id", ids)
-      .neq("status", "new").order("updated_at", { ascending: false }).limit(300)) : [],
-    ids.length ? q(sb.from("site_articles").select("site_id,status").in("site_id", ids).limit(20000)) : [],
-  ]);
-  const has = new Map(await Promise.all(sites.map(async (x) => [x.id, (await sb.rpc("site_has_wp_password", { p_site: x.id })).data === true])));
-  // the Articles panel of each site opened: every article, newest first
-  pinUi.list ||= {};
-  const allArticles = new Map(await Promise.all(sites.filter((x) => pinUi.list[x.id]).map(async (x) => [x.id,
-    await q(sb.from("site_articles").select("id,title,url,status,published_at,video_url,pin_url,pinned_at,tiktok_url,tiktok_at,error,updated_at").eq("site_id", x.id).order("published_at", { ascending: false, nullsFirst: false }).limit(2000))])));
-  if (!pinUi.accounts && !pinUi.accountsError) {
-    try { pinUi.accounts = (await sitesCall({ action: "pinterest_accounts" })).accounts || []; } catch (e) { pinUi.accountsError = e.message; }
-    pinUi.tiktoks = ((await sitesCall({ action: "blotato_all" }).catch(() => ({ accounts: [] }))).accounts || []).filter((a) => a.platform === "tiktok");
-  }
-  const accounts = pinUi.accounts || [];
-  const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("p", { class: "muted small", style: "margin:4px 0 0", text: hint }) : null);
+const favicon = (url) => { try { return `https://www.google.com/s2/favicons?domain=${new URL(url).hostname}&sz=64`; } catch { return ""; } };
+const domainOf = (url) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
+const ARTICLE_SHORT = { new: ["idle", "No video"], making: ["cue", "Making"], review: ["cue", "Waiting for you"], embedding: ["cue", "Sending"], done: ["ready", "Published"], failed: ["alert", "Stopped"], skipped: ["idle", "Skipped"] };
+const SITE_FILTERS = [["all", "All"], ["new", "No video"], ["done", "Published"], ["failed", "Stopped"]];
 
-  // ----- Pinterest accounts in Blotato
-  const accBox = h("section", { class: "card" },
-    h("div", { class: "card-head" }, h("h2", { text: "Pinterest accounts (Blotato)" }),
-      h("button", { class: "btn small", type: "button", text: "Refresh", onclick: () => { pinUi.accounts = null; pinUi.accountsError = null; render(); } })),
-    pinUi.accountsError ? h("p", { class: "small idea-error", role: "alert", text: pinUi.accountsError })
-      : accounts.length ? h("div", { class: "pin-accounts" }, accounts.map((a) => h("div", { class: "listrow" }, h("strong", { text: a.name }),
-        h("span", { class: "muted small", text: `${a.username ? "@" + a.username + " · " : ""}${a.boards.length} board${a.boards.length === 1 ? "" : "s"}` }))))
-        : empty("No Pinterest account in Blotato yet. Connect it in Blotato, then Refresh."));
+/** The places a site's videos go, each on or off: Pinterest, TikTok, YouTube, the article. */
+function siteDestinations(x, net) {
+  return [
+    { k: "pin", label: "Pinterest", on: !!(x.pin && x.pinterest_board_id), detail: x.pinterest_board_name || "pick a board", ready: !!x.pinterest_board_id },
+    { k: "tiktok", label: "TikTok", on: !!x.tiktok_account_id, detail: x.tiktok_account_name ? `@${x.tiktok_account_name}` : "not linked", ready: !!x.tiktok_account_id },
+    { k: "youtube", label: "YouTube", on: false, detail: net?.connected && net?.youtube_channel_id ? net.title : "no channel", ready: !!(net?.connected && net?.youtube_channel_id) },
+    { k: "embed", label: "Article", on: !!(x.embed && x.wp_ok), detail: x.wp_ok ? "WordPress connected" : "no WordPress login", ready: !!x.wp_ok },
+  ];
+}
 
-  // ----- add a site
+function addSiteDialog() {
+  const field = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
   const nm = h("input", { id: "s-name", class: "field", placeholder: "Airfryer Rezepte", required: true });
   const url = h("input", { id: "s-url", class: "field", type: "url", placeholder: "https://airfryer-rezepte.blog", required: true });
-  const net = h("select", { id: "s-net", class: "field" }, h("option", { value: "", text: "Make a new German network for it" }), ...state.channels.map((c) => h("option", { value: c.id, text: c.title })));
-  const add = h("form", { class: "card", onsubmit: async (e) => {
+  const net = h("select", { id: "s-net", class: "field" }, h("option", { value: "", text: "A new German network for it" }), ...state.channels.map((c) => h("option", { value: c.id, text: c.title })));
+  const msg = h("p", { class: "small idea-error", role: "alert", hidden: true });
+  const submit = h("button", { class: "btn primary", type: "submit", text: "Add the site" });
+  const dialog = h("dialog", { class: "gen-dialog", "aria-labelledby": "s-title" }, h("form", { class: "gen-form", onsubmit: async (e) => {
     e.preventDefault();
     let base;
-    try { base = new URL(url.value.trim()).origin; } catch { return toast("Paste the site's address (https://…)"); }
-    if (!base.startsWith("https://")) return toast("Only https sites");
+    try { base = new URL(url.value.trim()).origin; } catch { msg.textContent = "Paste the site's address (https://…)"; msg.hidden = false; return; }
+    if (!base.startsWith("https://")) { msg.textContent = "Only https sites"; msg.hidden = false; return; }
+    submit.disabled = true; submit.textContent = "Adding…";
     try {
       let channelId = net.value;
       if (!channelId) {
@@ -1695,173 +1685,255 @@ VIEWS.pinterest = async () => {
         await loadShared().catch(() => {});
       }
       const [site] = await q(sb.from("sites").insert({ name: nm.value.trim(), base_url: base, channel_id: channelId }).select("id"));
-      pinUi.open[site.id] = true;
-      toast("Site added: reading its articles…");
       await sitesCall({ action: "sync", site_id: site.id }).catch((err) => toast(err.message));
-      render();
-    } catch (err) { toast(err.message); }
+      dialog.close();
+      go(`#/pinterest/${site.id}?tab=settings`);
+    } catch (err) { msg.textContent = err.message; msg.hidden = false; submit.disabled = false; submit.textContent = "Add the site"; }
   } },
-    h("h2", { text: "Add a site" }),
-    h("div", { class: "recipe-opts" }, field("s-name", "Name", nm), field("s-url", "Address", url), field("s-net", "Network (voice and language)", net)),
-    h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit", text: "Add the site" }), h("span", { class: "muted small", text: "Its published articles are read at once. Nothing is made yet." })));
+    h("h2", { id: "s-title", text: "Add a site" }),
+    h("p", { class: "muted small", style: "margin:0", text: "Its published articles are read at once. Then link its Pinterest board, and optionally its WordPress login and TikTok." }),
+    h("div", { class: "form-grid" }, field("s-name", "Name", nm), field("s-url", "Address", url)),
+    field("s-net", "Network (voice and language of its videos)", net),
+    msg, h("div", { class: "row gen-actions" }, h("button", { class: "btn ghost", type: "button", text: "Cancel", onclick: () => dialog.close() }), submit)));
+  dialog.addEventListener("close", () => dialog.remove());
+  document.body.append(dialog);
+  dialog.showModal();
+}
 
-  // ----- one site
-  const siteCard = (x) => {
-    const mine = articles.filter((a) => a.site_id === x.id);
-    const tally = counts.filter((a) => a.site_id === x.id).reduce((m, a) => ({ ...m, [a.status]: (m[a.status] || 0) + 1 }), {});
-    const acc = h("select", { class: "field", "aria-label": "Pinterest account" }, h("option", { value: "", text: "Choose the account" }),
-      ...accounts.map((a) => h("option", { value: a.id, selected: a.id === x.pinterest_account_id, text: a.name })));
-    const board = h("select", { class: "field", "aria-label": "Pinterest board" });
-    const fillBoards = () => {
-      const a = accounts.find((y) => y.id === acc.value);
-      board.replaceChildren(h("option", { value: "", text: a ? "Choose the board" : "Choose the account first" }),
-        ...(a?.boards || []).map((b) => h("option", { value: b.id, selected: b.id === x.pinterest_board_id, text: b.name })));
-    };
-    fillBoards();
-    acc.addEventListener("change", fillBoards);
-    const user = h("input", { class: "field", value: x.wp_user || "", placeholder: "WordPress user name", autocomplete: "off", "aria-label": "WordPress user" });
-    const pass = h("input", { class: "field", type: "password", placeholder: has.get(x.id) ? "•••• saved (type to replace)" : "Application password", autocomplete: "new-password", "aria-label": "WordPress application password" });
-    const netSel = h("select", { class: "field", "aria-label": "Network" }, ...state.channels.map((c) => h("option", { value: c.id, selected: c.id === x.channel_id, text: c.title })));
-    const model = h("select", { class: "field", "aria-label": "Claude model" }, h("option", { value: "claude-sonnet-5-5", selected: x.ai_model !== "claude-opus-5-5", text: "Sonnet: about $0.05 a video" }),
-      h("option", { value: "claude-opus-5-5", selected: x.ai_model === "claude-opus-5-5", text: "Opus: best, about $0.15 a video" }));
-    const tiktoks = pinUi.tiktoks || [];
-    const tt = h("select", { class: "field", "aria-label": "TikTok account" }, h("option", { value: "", text: "No TikTok" }),
-      ...tiktoks.map((a) => h("option", { value: a.id, selected: a.id === x.tiktok_account_id, text: `@${a.name}` })));
-    const cta = h("input", { class: "field", value: x.tiktok_cta || "", placeholder: "📘 Das Rezeptbuch: Link in der Bio", "aria-label": "TikTok call to action" });
-    const daily = h("input", { type: "checkbox", checked: x.daily });
-    const embed = h("input", { type: "checkbox", checked: x.embed });
-    const pin = h("input", { type: "checkbox", checked: x.pin });
-    const save = async () => {
-      const a = accounts.find((y) => y.id === acc.value), b = a?.boards.find((y) => y.id === board.value);
-      await q(sb.from("sites").update({ wp_user: user.value.trim() || null, channel_id: netSel.value || null, ai_model: model.value, daily: daily.checked, embed: embed.checked, pin: pin.checked,
-        pinterest_account_id: a?.id || null, pinterest_account_name: a?.name || null, pinterest_board_id: b?.id || null, pinterest_board_name: b?.name || null,
-        tiktok_account_id: tt.value || null, tiktok_account_name: tiktoks.find((y) => y.id === tt.value)?.name || null, tiktok_cta: cta.value.trim() || null }).eq("id", x.id));
-      if (pass.value) { const { error } = await sb.rpc("site_set_wp_password", { p_site: x.id, p_password: pass.value }); if (error) throw new Error(error.message); }
-    };
-    const act = (label, fn, cls = "btn small") => h("button", { class: cls, type: "button", text: label, onclick: async (e) => {
-      const b = e.currentTarget; b.disabled = true;
-      try { await fn(); } catch (err) { toast(err.message); } finally { b.disabled = false; }
-    } });
-    // a WordPress login is optional: without it the video is pinned (and posted) but not put in the article
-    const ready = [x.pinterest_board_id || !x.pin ? null : "Pinterest board", x.channel_id ? null : "network"].filter(Boolean);
-    const row = (a) => {
-      const [cls, label] = ARTICLE_STATUS[a.status] || ["short", a.status];
-      return h("div", { class: "listrow", style: "align-items:flex-start" },
-        h("span", { class: `pill ${cls}`, text: label }),
-        h("div", { style: "flex:1 1 220px;min-width:0" },
-          h("a", { href: a.url, target: "_blank", rel: "noopener", dir: "auto", text: a.title }),
-          h("div", { class: "muted small" }, [a.video_url ? h("a", { href: a.video_url, target: "_blank", rel: "noopener", text: "Video" }) : null,
-            a.pin_url ? h("a", { href: a.pin_url, target: "_blank", rel: "noopener", text: "Pin" }) : a.pinned_at ? "Pinned" : null,
-            a.tiktok_url ? h("a", { href: a.tiktok_url, target: "_blank", rel: "noopener", text: "TikTok" }) : a.tiktok_at ? "On TikTok" : null, ago(a.updated_at)].filter(Boolean).flatMap((v, i) => (i ? [" · ", v] : [v]))),
-          a.error ? h("p", { class: "small idea-error", text: a.error }) : null),
-        ["failed", "review"].includes(a.status) ? act("Make it again", async () => { await sitesCall({ action: "make", article_id: a.id }); toast("Making the video again"); render(); }) : null);
-    };
-    const open = !!pinUi.open[x.id];
-    const listOpen = !!pinUi.list[x.id];
-    // ----- the Articles panel: pick any articles, make their videos, choose where they go
-    const articlesPanel = () => {
-      const rows = allArticles.get(x.id) || [];
-      const ui = (pinUi.pick ||= {})[x.id] ||= { q: "", filter: "all", sel: new Set() };
-      const net = state.channels.find((c) => c.id === x.channel_id);
-      const can = { pin: !!x.pinterest_board_id, tiktok: !!x.tiktok_account_id, youtube: !!(net?.connected && net?.youtube_channel_id), embed: !!x.wp_ok };
-      const dest = {
-        pin: h("input", { type: "checkbox", checked: can.pin, disabled: !can.pin }),
-        tiktok: h("input", { type: "checkbox", checked: can.tiktok, disabled: !can.tiktok }),
-        youtube: h("input", { type: "checkbox", checked: false, disabled: !can.youtube }),
-        embed: h("input", { type: "checkbox", checked: can.embed, disabled: !can.embed }),
-      };
-      const label = (k, text, why) => h("label", { class: "row small", title: can[k] ? "" : why, style: can[k] ? "" : "opacity:.5" }, dest[k], ` ${text}`);
-      const model = h("select", { class: "field", "aria-label": "Claude model", style: "width:auto" }, h("option", { value: "claude-sonnet-5-5", text: "Sonnet (~$0.05)" }), h("option", { value: "claude-opus-5-5", text: "Opus (~$0.15)" }));
-      model.value = x.ai_model === "claude-opus-5-5" ? "claude-opus-5-5" : "claude-sonnet-5-5";
-      const search = h("input", { class: "field", type: "search", placeholder: "Search the articles", value: ui.q, "aria-label": "Search the articles", style: "flex:1 1 200px" });
-      const filter = h("select", { class: "field", "aria-label": "Show", style: "width:auto" },
-        [["all", "All"], ["new", "No video yet"], ["done", "With video"], ["failed", "Stopped or waiting"]].map(([v, l]) => h("option", { value: v, selected: ui.filter === v, text: l })));
-      const listEl = h("div", { class: "art-list", role: "list" });
-      const make = h("button", { class: "btn primary small", type: "button" });
-      const busy = (r) => ["making", "embedding"].includes(r.status);
-      const shown = () => rows.filter((r) => (!ui.q || r.title.toLowerCase().includes(ui.q.toLowerCase()))
-        && (ui.filter === "all" || (ui.filter === "new" ? r.status === "new" : ui.filter === "done" ? r.status === "done" : ["failed", "review"].includes(r.status))));
-      const paintList = () => {
-        const list = shown();
-        listEl.replaceChildren(...list.slice(0, 200).map((r) => {
-          const [cls, lbl] = ARTICLE_STATUS[r.status] || ["short", r.status];
-          const box = h("input", { type: "checkbox", checked: ui.sel.has(r.id), disabled: busy(r), "aria-label": `Select ${r.title}`,
-            onchange: (e) => { if (e.target.checked) { if (ui.sel.size >= 10) { e.target.checked = false; return toast("10 at a time"); } ui.sel.add(r.id); } else ui.sel.delete(r.id); paintBar(); } });
-          return h("div", { class: "art-row", role: "listitem" }, box,
-            h("div", { style: "flex:1;min-width:0" },
-              h("a", { href: r.url, target: "_blank", rel: "noopener", dir: "auto", text: r.title }),
-              h("div", { class: "muted small" }, [r.published_at ? new Date(r.published_at).toLocaleDateString() : null,
-                r.video_url ? h("a", { href: r.video_url, target: "_blank", rel: "noopener", text: "Video" }) : null,
-                r.pin_url ? h("a", { href: r.pin_url, target: "_blank", rel: "noopener", text: "Pin" }) : r.pinned_at ? "Pinned" : null,
-                r.tiktok_url ? h("a", { href: r.tiktok_url, target: "_blank", rel: "noopener", text: "TikTok" }) : null].filter(Boolean).flatMap((v, i) => (i ? [" · ", v] : [v]))),
-              r.error && r.status !== "done" ? h("div", { class: "small idea-error", text: r.error }) : null),
-            h("span", { class: `pill ${cls}`, text: lbl }));
-        }), ...(list.length > 200 ? [h("p", { class: "muted small", text: `${list.length - 200} more: search to find them.` })] : []), ...(list.length ? [] : [empty("No article here.")]));
-      };
-      const paintBar = () => {
-        const n = ui.sel.size;
-        make.disabled = !n;
-        make.textContent = n ? `Make ${n} video${n === 1 ? "" : "s"}` : "Select articles";
-      };
-      search.addEventListener("input", () => { ui.q = search.value; paintList(); });
-      filter.addEventListener("change", () => { ui.filter = filter.value; paintList(); });
-      make.addEventListener("click", async () => {
-        const targets = Object.fromEntries(Object.entries(dest).map(([k, el]) => [k, el.checked && !el.disabled]));
-        if (!Object.values(targets).some(Boolean)) return toast("Choose at least one place for the videos");
-        make.disabled = true; make.textContent = "Starting…";
-        try {
-          const out = await sitesCall({ action: "make_many", article_ids: [...ui.sel], targets, ai_model: model.value });
-          const bad = (out.results || []).filter((r) => r.error);
-          toast(bad.length ? `${(out.results || []).length - bad.length} started, ${bad.length} not: ${bad[0].error}` : `${(out.results || []).length} video${(out.results || []).length === 1 ? "" : "s"} on the way: about 10 minutes each`);
-          ui.sel.clear(); render();
-        } catch (err) { toast(err.message); paintBar(); }
-      });
-      paintList(); paintBar();
-      return h("div", { class: "art-panel" },
-        h("div", { class: "row" }, search, filter),
-        listEl,
-        h("div", { class: "art-bar" },
-          h("span", { class: "small muted", text: "Send to:" }),
-          label("pin", `Pinterest${x.pinterest_board_name ? ` (${x.pinterest_board_name})` : ""}`, "Pick the site's Pinterest board in Settings"),
-          label("tiktok", `TikTok${x.tiktok_account_name ? ` @${x.tiktok_account_name}` : ""}`, "No TikTok account for this site (Settings)"),
-          label("youtube", `YouTube${net ? ` (${net.title}, next free slot)` : ""}`, "The site's network has no YouTube channel connected"),
-          label("embed", "In the article", "Add the site's WordPress login (Settings) to put the video in the article"),
-          model, make));
-    };
-    return h("section", { class: "card" },
-      h("div", { class: "card-head" },
-        h("div", null, h("h2", { text: x.name }), h("a", { class: "muted small", href: x.base_url, target: "_blank", rel: "noopener", text: x.base_url })),
-        h("div", { class: "row" },
-          h("span", { class: `pill ${x.daily && !ready.length ? "ok" : "short"}`, text: x.daily ? (ready.length ? `Daily on, missing: ${ready.join(", ")}` : "One video a day") : "Daily off" }),
-          x.daily && !x.wp_ok ? h("span", { class: "pill short", title: "Add the WordPress login to put each video in its article too", text: "Pin only (no WordPress login)" }) : null,
-          h("button", { class: `btn small ${listOpen ? "" : "primary"}`, type: "button", "aria-expanded": String(listOpen), text: listOpen ? "Hide articles" : "Articles", onclick: () => { pinUi.list[x.id] = !listOpen; render(); } }),
-          h("button", { class: "btn small ghost", type: "button", "aria-expanded": String(open), text: open ? "Close" : "Settings", onclick: () => { pinUi.open[x.id] = !open; render(); } }))),
-      h("p", { class: "muted small", text: `${x.articles_count} articles · ${tally.done || 0} with video · ${tally.making || 0} being made · ${tally.review || 0} waiting for you · ${tally.failed || 0} stopped${x.synced_at ? ` · read ${ago(x.synced_at)}` : ""}` }),
-      open ? h("div", { class: "site-settings" },
-        h("div", { class: "recipe-opts" },
-          field(`u-${x.id}`, "WordPress user", user), field(`p-${x.id}`, "Application password", pass, "WordPress → Users → Profile → Application Passwords. Stored in Vault."),
-          field(`a-${x.id}`, "Pinterest account", acc), field(`b-${x.id}`, "Board", board),
-          field(`n-${x.id}`, "Network (voice, language)", netSel), field(`m-${x.id}`, "Claude for the plan", model),
-          field(`t-${x.id}`, "TikTok account (optional)", tt), field(`c-${x.id}`, "TikTok call to action", cta, "Added at the end of the caption, e.g. your product with \"Link in der Bio\".")),
-        h("div", { class: "row" }, h("label", { class: "row small" }, daily, " One video a day"), h("label", { class: "row small" }, embed, " Put it in the article"), h("label", { class: "row small" }, pin, " Pin it")),
-        h("div", { class: "row" },
-          act("Save", async () => { await save(); toast("Saved"); render(); }, "btn small primary"),
-          act("Test WordPress", async () => { await save(); const out = await sitesCall({ action: "test", site_id: x.id }); toast(out.ok ? `Connected as ${out.name}` : out.error); render(); }),
-          act("Read articles", async () => { const out = await sitesCall({ action: "sync", site_id: x.id }); toast(`${out.articles} articles`); render(); }),
-          act("Make one now", async () => {
-            await save();
-            const [next] = await q(sb.from("site_articles").select("id,title").eq("site_id", x.id).eq("status", "new").order("published_at", { ascending: false }).limit(1));
-            if (!next) return toast("Every article already has its video");
-            await sitesCall({ action: "make", article_id: next.id }); toast(`Making: ${next.title}`); render();
-          }))) : null,
-      listOpen ? articlesPanel() : mine.length ? h("div", { class: "pin-articles" }, mine.slice(0, open ? 30 : 5).map(row)) : null);
+VIEWS.pinterest = async (route) => {
+  const sites = await q(sb.from("sites").select("*").order("name"));
+  const site = route?.id ? sites.find((x) => x.id === route.id) : null;
+  if (route?.id && !site) return [pageHead("Pinterest & sites"), empty("This site isn't here any more.", h("a", { class: "btn", href: "#/pinterest", text: "All sites" }))];
+  return site ? sitePage(site, route) : sitesOverview(sites);
+};
+
+async function loadPinAccounts() {
+  if (pinUi.accounts || pinUi.accountsError) return;
+  try { pinUi.accounts = (await sitesCall({ action: "pinterest_accounts" })).accounts || []; } catch (e) { pinUi.accountsError = e.message; }
+  pinUi.tiktoks = ((await sitesCall({ action: "blotato_all" }).catch(() => ({ accounts: [] }))).accounts || []).filter((a) => a.platform === "tiktok");
+}
+
+async function sitesOverview(sites) {
+  const ids = sites.map((x) => x.id);
+  const weekAgo = new Date(Date.now() - 7 * 864e5).toISOString();
+  const today = new Date().toISOString().slice(0, 10);
+  const counts = ids.length ? await q(sb.from("site_articles").select("site_id,status,title,pinned_at,updated_at").in("site_id", ids).limit(20000)) : [];
+  const by = (id) => counts.filter((a) => a.site_id === id);
+  const pinsWeek = counts.filter((a) => a.pinned_at && a.pinned_at >= weekAgo).length;
+  const doneWeek = counts.filter((a) => a.status === "done" && a.updated_at >= weekAgo).length;
+  const noVideo = counts.filter((a) => a.status === "new").length;
+  const live = sites.filter((x) => x.daily && x.pinterest_board_id).length;
+  const kpi = (label, value, foot) => h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "foot" }, h("span", { class: "muted small", text: foot })));
+
+  const card = (x) => {
+    const mine = by(x.id);
+    const total = mine.length || x.articles_count || 0;
+    const withVideo = mine.filter((a) => a.status === "done").length;
+    const busy = mine.filter((a) => ["making", "embedding"].includes(a.status));
+    const stopped = mine.filter((a) => ["failed", "review"].includes(a.status)).length;
+    const todays = mine.filter((a) => a.updated_at?.slice(0, 10) === today && a.status !== "new").sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))[0];
+    const net = state.channels.find((c) => c.id === x.channel_id);
+    const pct = total ? Math.round((withVideo / total) * 100) : 0;
+    const ready = x.pinterest_board_id || !x.pin;
+    return h("a", { class: "site-card", href: `#/pinterest/${x.id}` },
+      h("div", { class: "site-top" },
+        h("img", { class: "site-fav", src: favicon(x.base_url), alt: "", width: 32, height: 32, loading: "lazy" }),
+        h("div", { class: "site-name" }, h("strong", { text: x.name }), h("span", { class: "muted small", text: domainOf(x.base_url) })),
+        h("span", { class: "idea-lamp small", "data-lamp": x.daily && ready ? "ready" : x.daily ? "cue" : "idle", text: x.daily ? (ready ? "Daily" : "Setup needed") : "Paused" })),
+      h("div", { class: "dest-row" }, siteDestinations(x, net).filter((d) => d.k !== "youtube" || d.ready).map((d) =>
+        h("span", { class: "dest", "data-on": String(d.k === "youtube" ? d.ready : d.on), title: d.detail, text: d.label }))),
+      h("div", { class: "cover" },
+        h("div", { class: "cover-bar", role: "img", "aria-label": `${pct}% of the articles have a video` }, h("span", { style: `width:${pct}%` })),
+        h("div", { class: "cover-legend small" }, h("span", { text: `${fmt(withVideo)} of ${fmt(total)} articles with a video` }), h("span", { class: "muted", text: `${pct}%` }))),
+      h("div", { class: "site-foot small" },
+        busy.length ? h("span", { class: "dot-cue", text: `Making: ${busy[0].title}` })
+          : todays ? h("span", { class: todays.status === "done" ? "dot-ready" : todays.status === "failed" ? "dot-alert" : "dot-cue", text: `Today: ${todays.title}` })
+            : h("span", { class: "muted", text: x.daily ? "Next video at the morning run" : "Daily videos paused" }),
+        stopped ? h("span", { class: "dot-alert", text: `${stopped} stopped` }) : null));
   };
 
+  await loadPinAccounts();
+  const nAcc = (pinUi.accounts || []).length;
+  return [pageHead("Pinterest & sites", "One recipe video a day for each site: made from the article's photos, pinned with its link, and posted where you choose.",
+      h("button", { class: "btn ghost", type: "button", title: pinUi.accountsError || "", text: pinUi.accountsError ? "Blotato: error" : `${nAcc} Pinterest account${nAcc === 1 ? "" : "s"}`,
+        onclick: () => { pinUi.accounts = null; pinUi.accountsError = null; render(); } }),
+      h("button", { class: "btn primary", type: "button", text: "Add a site", onclick: addSiteDialog })),
+    h("div", { class: "kpis kpis-4" },
+      kpi("Sites live", `${live} / ${sites.length}`, "daily video on and a board picked"),
+      kpi("Videos this week", fmt(doneWeek), "made and sent"),
+      kpi("Pins this week", fmt(pinsWeek), "with the article's link"),
+      kpi("Articles without video", fmt(noVideo), "the daily run takes the newest first")),
+    sites.length ? h("div", { class: "site-grid" }, sites.map(card)) : empty("No site yet.", h("button", { class: "btn primary", type: "button", text: "Add a site", onclick: addSiteDialog }))];
+}
+
+async function sitePage(x, route) {
+  const tab = ["articles", "activity", "settings"].includes(route.params.get("tab")) ? route.params.get("tab") : "articles";
+  const [rows, hasPw] = await Promise.all([
+    q(sb.from("site_articles").select("id,title,url,status,published_at,video_url,pin_url,pinned_at,tiktok_url,tiktok_at,error,updated_at").eq("site_id", x.id).order("published_at", { ascending: false, nullsFirst: false }).limit(3000)),
+    sb.rpc("site_has_wp_password", { p_site: x.id }).then((r) => r.data === true),
+  ]);
+  if (tab === "settings") await loadPinAccounts();
+  const net = state.channels.find((c) => c.id === x.channel_id);
+  const dests = siteDestinations(x, net);
+  const stat = (label, value, tone) => h("div", { class: "mini-stat", "data-tone": tone || "" }, h("span", { class: "muted small", text: label }), h("strong", { text: value }));
+  const n = (st) => rows.filter((a) => (Array.isArray(st) ? st.includes(a.status) : a.status === st)).length;
+  const setTab = (t) => go(`#/pinterest/${x.id}?tab=${t}`);
+  const act = (label, fn, cls = "btn small") => h("button", { class: cls, type: "button", text: label, onclick: async (e) => {
+    const b = e.currentTarget; b.disabled = true;
+    try { await fn(); } catch (err) { toast(err.message); } finally { b.disabled = false; }
+  } });
+
+  const head = h("section", { class: "site-hero card" },
+    h("div", { class: "site-top" },
+      h("img", { class: "site-fav lg", src: favicon(x.base_url), alt: "", width: 44, height: 44 }),
+      h("div", { class: "site-name" }, h("h1", { class: "site-h1", text: x.name }), h("a", { class: "muted small", href: x.base_url, target: "_blank", rel: "noopener", text: domainOf(x.base_url) })),
+      h("div", { class: "row" },
+        act(x.daily ? "Pause daily videos" : "Start daily videos", async () => { await q(sb.from("sites").update({ daily: !x.daily }).eq("id", x.id)); toast(x.daily ? "Daily videos paused" : "One video a day from tomorrow morning"); render(); }, "btn small ghost"),
+        act("Make the next one now", async () => {
+          const next = rows.find((a) => a.status === "new");
+          if (!next) return toast("Every article already has its video");
+          await sitesCall({ action: "make", article_id: next.id }); toast(`Making: ${next.title}`); render();
+        }, "btn small primary"))),
+    h("div", { class: "dest-row" }, dests.map((d) => h("span", { class: "dest lg", "data-on": String(d.k === "youtube" ? d.ready : d.on) },
+      h("strong", { text: d.label }), h("span", { class: "small", text: d.k === "youtube" && d.ready ? `${d.detail} · when you choose it` : d.detail })))),
+    h("div", { class: "mini-stats" },
+      stat("Articles", fmt(rows.length)), stat("Published with video", fmt(n("done")), "ready"),
+      stat("Being made", fmt(n(["making", "embedding"])), n(["making", "embedding"]) ? "cue" : ""), stat("Stopped", fmt(n(["failed", "review"])), n(["failed", "review"]) ? "alert" : "")));
+
+  const tabs = h("div", { class: "tabs", role: "tablist" }, [["articles", "Articles"], ["activity", "Activity"], ["settings", "Settings"]].map(([k, l]) =>
+    h("button", { type: "button", role: "tab", "aria-selected": String(tab === k), text: l, onclick: () => setTab(k) })));
+
+  let body;
+  if (tab === "articles") body = articlesTab(x, rows, dests);
+  else if (tab === "activity") {
+    const recent = rows.filter((a) => a.status !== "new").sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1)).slice(0, 60);
+    body = h("section", { class: "card" }, recent.length ? h("div", { class: "art-table" }, recent.map((a) => articleRow(a, null, act))) : empty("No video yet for this site."));
+  } else body = siteSettings(x, hasPw, act);
+
   if (state.timer) { clearInterval(state.timer); state.timer = null; }
-  if (articles.some((a) => ["making", "embedding"].includes(a.status))) state.timer = setInterval(() => { if (location.hash.startsWith("#/pinterest")) render(); }, 20000);
-  return [pageHead("Pinterest & sites", "Your WordPress sites, each with its Pinterest board. Every day one article per site gets its recipe video, put in the article and pinned with the article's link."),
-    accBox, ...sites.map(siteCard), add];
-};
+  if (rows.some((a) => ["making", "embedding"].includes(a.status))) state.timer = setInterval(() => { if (location.hash.startsWith(`#/pinterest/${x.id}`) && !document.querySelector(".art-bar[data-open='true']")) render(); }, 20000);
+  return [h("a", { class: "back-link small", href: "#/pinterest", text: "← All sites" }), head, tabs, body];
+}
+
+/** One article in a list: its title and date, its status, links to what went out. */
+function articleRow(a, box, act) {
+  const [lamp, label] = ARTICLE_SHORT[a.status] || ["idle", a.status];
+  const out = [a.video_url ? ["Video", a.video_url] : null, a.pin_url ? ["Pin", a.pin_url] : null, a.tiktok_url ? ["TikTok", a.tiktok_url] : null].filter(Boolean);
+  return h("div", { class: "art-row", role: "row", "data-selected": box?.checked ? "true" : "false" },
+    box ? h("div", { class: "art-cell art-check", role: "cell" }, box) : null,
+    h("div", { class: "art-cell art-title", role: "cell" },
+      h("a", { href: a.url, target: "_blank", rel: "noopener", dir: "auto", text: a.title }),
+      a.error && a.status !== "done" ? h("span", { class: "small idea-error", text: a.error }) : null),
+    h("div", { class: "art-cell art-date muted small", role: "cell", text: a.published_at ? new Date(a.published_at).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—" }),
+    h("div", { class: "art-cell art-status", role: "cell" }, h("span", { class: "idea-lamp small", "data-lamp": lamp, text: label })),
+    h("div", { class: "art-cell art-out small", role: "cell" }, out.length ? out.flatMap(([l, u], i) => [i ? h("span", { class: "muted", text: "·" }) : null, h("a", { href: u, target: "_blank", rel: "noopener", text: l })]).filter(Boolean)
+      : ["failed", "review"].includes(a.status) && act ? act("Make again", async () => { await sitesCall({ action: "make", article_id: a.id }); toast("Making it again"); render(); }, "btn small ghost") : h("span", { class: "muted", text: "—" })));
+}
+
+function articlesTab(x, rows, dests) {
+  const ui = (pinUi.pick ||= {})[x.id] ||= { q: "", filter: "all", sel: new Set(), dest: null, model: x.ai_model === "claude-opus-5-5" ? "claude-opus-5-5" : "claude-sonnet-5-5" };
+  ui.dest ||= Object.fromEntries(dests.map((d) => [d.k, d.k === "youtube" ? false : d.on]));
+  const busy = (r) => ["making", "embedding"].includes(r.status);
+  const search = h("input", { class: "field", type: "search", placeholder: `Search ${fmt(rows.length)} articles`, value: ui.q, "aria-label": "Search the articles" });
+  const seg = h("div", { class: "seg", role: "group", "aria-label": "Show" });
+  const table = h("div", { class: "art-table", role: "table", "aria-label": "Articles" });
+  const bar = h("div", { class: "art-bar", "data-open": "false", role: "region", "aria-label": "Make videos for the selected articles" });
+  const shown = () => rows.filter((r) => (!ui.q || r.title.toLowerCase().includes(ui.q.toLowerCase()))
+    && (ui.filter === "all" || (ui.filter === "new" ? r.status === "new" : ui.filter === "done" ? r.status === "done" : ["failed", "review"].includes(r.status))));
+  const paintSeg = () => seg.replaceChildren(...SITE_FILTERS.map(([v, l]) => {
+    const c = v === "all" ? rows.length : rows.filter((r) => (v === "new" ? r.status === "new" : v === "done" ? r.status === "done" : ["failed", "review"].includes(r.status))).length;
+    return h("button", { type: "button", "aria-pressed": String(ui.filter === v), onclick: () => { ui.filter = v; paintSeg(); paintTable(); } }, `${l} `, h("span", { class: "muted", text: fmt(c) }));
+  }));
+  const paintTable = () => {
+    const list = shown();
+    const visible = list.slice(0, 250);
+    const all = h("input", { type: "checkbox", "aria-label": "Select the first 10 shown", checked: visible.filter((r) => !busy(r)).slice(0, 10).every((r) => ui.sel.has(r.id)) && ui.sel.size > 0,
+      onchange: (e) => { ui.sel.clear(); if (e.target.checked) for (const r of visible.filter((r) => !busy(r)).slice(0, 10)) ui.sel.add(r.id); paintTable(); paintBar(); } });
+    table.replaceChildren(
+      h("div", { class: "art-row art-headrow", role: "row" },
+        h("div", { class: "art-cell art-check", role: "columnheader" }, all), h("div", { class: "art-cell art-title", role: "columnheader", text: "Article" }),
+        h("div", { class: "art-cell art-date", role: "columnheader", text: "Published" }), h("div", { class: "art-cell art-status", role: "columnheader", text: "Status" }),
+        h("div", { class: "art-cell art-out", role: "columnheader", text: "Out" })),
+      ...visible.map((r) => {
+        const box = h("input", { type: "checkbox", checked: ui.sel.has(r.id), disabled: busy(r), "aria-label": `Select ${r.title}`,
+          onchange: (e) => {
+            if (e.target.checked) { if (ui.sel.size >= 10) { e.target.checked = false; return toast("10 articles at a time"); } ui.sel.add(r.id); } else ui.sel.delete(r.id);
+            e.target.closest(".art-row").dataset.selected = String(e.target.checked); paintBar();
+          } });
+        return articleRow(r, box, null);
+      }),
+      ...(list.length > 250 ? [h("p", { class: "muted small art-more", text: `${fmt(list.length - 250)} more: search to find them.` })] : []),
+      ...(list.length ? [] : [h("div", { class: "art-empty muted", text: "No article matches." })]));
+  };
+  const paintBar = () => {
+    const nSel = ui.sel.size;
+    bar.dataset.open = String(nSel > 0);
+    const chip = (d) => h("button", { type: "button", class: "dest-toggle", "aria-pressed": String(!!ui.dest[d.k] && d.ready), disabled: !d.ready, title: d.ready ? d.detail : `Not available: ${d.detail}`,
+      onclick: () => { ui.dest[d.k] = !ui.dest[d.k]; paintBar(); } }, h("strong", { text: d.label }), h("span", { class: "small", text: d.ready ? d.detail : "not set up" }));
+    const model = h("div", { class: "seg", role: "group", "aria-label": "Claude model" }, [["claude-sonnet-5-5", "Sonnet ~$0.05"], ["claude-opus-5-5", "Opus ~$0.15"]].map(([v, l]) =>
+      h("button", { type: "button", "aria-pressed": String(ui.model === v), text: l, onclick: () => { ui.model = v; paintBar(); } })));
+    const targets = Object.fromEntries(dests.map((d) => [d.k, !!ui.dest[d.k] && d.ready]));
+    const any = Object.values(targets).some(Boolean);
+    const go = h("button", { class: "btn primary", type: "button", disabled: !any, text: `Make ${nSel} video${nSel === 1 ? "" : "s"}`, onclick: async () => {
+      go.disabled = true; go.textContent = "Starting…";
+      try {
+        const out = await sitesCall({ action: "make_many", article_ids: [...ui.sel], targets, ai_model: ui.model });
+        const bad = (out.results || []).filter((r) => r.error);
+        toast(bad.length ? `${(out.results || []).length - bad.length} started, ${bad.length} not: ${bad[0].error}` : `${(out.results || []).length} video${(out.results || []).length === 1 ? "" : "s"} on the way (about 10 minutes each)`);
+        ui.sel.clear(); render();
+      } catch (err) { toast(err.message); go.disabled = false; go.textContent = `Make ${nSel} videos`; }
+    } });
+    bar.replaceChildren(
+      h("div", { class: "art-bar-head" }, h("strong", { text: `${nSel} selected` }), h("button", { class: "btn small ghost", type: "button", text: "Clear", onclick: () => { ui.sel.clear(); paintTable(); paintBar(); } })),
+      h("div", { class: "art-bar-dests" }, h("span", { class: "muted small", text: "Send to" }), dests.map(chip)),
+      h("div", { class: "art-bar-go" }, model, h("span", { class: "muted small", text: `≈ $${(nSel * (ui.model === "claude-opus-5-5" ? 0.15 : 0.05)).toFixed(2)}` }), go));
+  };
+  search.addEventListener("input", () => { ui.q = search.value; paintTable(); });
+  paintSeg(); paintTable(); paintBar();
+  return h("section", { class: "card art-card" }, h("div", { class: "art-toolbar" }, search, seg), table, bar);
+}
+
+function siteSettings(x, hasPw, act) {
+  const accounts = pinUi.accounts || [];
+  const tiktoks = pinUi.tiktoks || [];
+  const field = (id, label, el, hint) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el, hint ? h("p", { class: "muted small", style: "margin:4px 0 0", text: hint }) : null);
+  const acc = h("select", { id: "st-acc", class: "field" }, h("option", { value: "", text: "Choose the account" }), ...accounts.map((a) => h("option", { value: a.id, selected: a.id === x.pinterest_account_id, text: a.name })));
+  const board = h("select", { id: "st-board", class: "field" });
+  const fillBoards = () => { const a = accounts.find((y) => y.id === acc.value);
+    board.replaceChildren(h("option", { value: "", text: a ? "Choose the board" : "Choose the account first" }), ...(a?.boards || []).map((b) => h("option", { value: b.id, selected: b.id === x.pinterest_board_id, text: b.name }))); };
+  fillBoards(); acc.addEventListener("change", fillBoards);
+  const user = h("input", { id: "st-user", class: "field", value: x.wp_user || "", placeholder: "WordPress user name", autocomplete: "off" });
+  const pass = h("input", { id: "st-pass", class: "field", type: "password", placeholder: hasPw ? "•••• saved (type to replace)" : "Application password", autocomplete: "new-password" });
+  const tt = h("select", { id: "st-tt", class: "field" }, h("option", { value: "", text: "No TikTok" }), ...tiktoks.map((a) => h("option", { value: a.id, selected: a.id === x.tiktok_account_id, text: `@${a.name}` })));
+  const cta = h("input", { id: "st-cta", class: "field", value: x.tiktok_cta || "", placeholder: "📘 Das Rezeptbuch: Link in der Bio" });
+  const netSel = h("select", { id: "st-net", class: "field" }, ...state.channels.map((c) => h("option", { value: c.id, selected: c.id === x.channel_id, text: c.title })));
+  const model = h("select", { id: "st-model", class: "field" }, h("option", { value: "claude-sonnet-5-5", text: "Sonnet: about $0.05 a video" }), h("option", { value: "claude-opus-5-5", text: "Opus: best, about $0.15 a video" }));
+  model.value = x.ai_model === "claude-opus-5-5" ? "claude-opus-5-5" : "claude-sonnet-5-5";
+  const sw = (label, checked, hint) => { const el = h("input", { type: "checkbox", role: "switch", checked }); return [el, h("label", { class: "switch-row" }, el, h("span", null, h("strong", { text: label }), h("span", { class: "muted small", text: hint })))]; };
+  const [daily, dailyRow] = sw("One video a day", x.daily, "Every morning, the newest article without a video.");
+  const [pin, pinRow] = sw("Pin it on Pinterest", x.pin, "With the article's link, on the board above.");
+  const [embed, embedRow] = sw("Put it in the article", x.embed, "Needs the WordPress login. Never two videos in one article.");
+  const save = async () => {
+    const a = accounts.find((y) => y.id === acc.value), b = a?.boards.find((y) => y.id === board.value);
+    await q(sb.from("sites").update({ wp_user: user.value.trim() || null, channel_id: netSel.value || null, ai_model: model.value, daily: daily.checked, embed: embed.checked, pin: pin.checked,
+      ...(accounts.length ? { pinterest_account_id: a?.id || null, pinterest_account_name: a?.name || null, pinterest_board_id: b?.id || null, pinterest_board_name: b?.name || null } : {}),
+      tiktok_account_id: tt.value || null, tiktok_account_name: tiktoks.find((y) => y.id === tt.value)?.name || null, tiktok_cta: cta.value.trim() || null }).eq("id", x.id));
+    if (pass.value) { const { error } = await sb.rpc("site_set_wp_password", { p_site: x.id, p_password: pass.value }); if (error) throw new Error(error.message); }
+  };
+  const group = (title, hint, ...kids) => h("div", { class: "set-group" }, h("div", { class: "set-head" }, h("h3", { text: title }), hint ? h("p", { class: "muted small", text: hint }) : null), h("div", { class: "set-body" }, ...kids));
+  return h("section", { class: "card set-card" },
+    group("Pinterest", pinUi.accountsError ? `Blotato: ${pinUi.accountsError}` : "The Blotato account and the board the pins go to.", h("div", { class: "form-grid" }, field("st-acc", "Account", acc), field("st-board", "Board", board))),
+    group("WordPress", x.wp_ok ? "Connected: the videos can go into the articles." : "Optional: without it the videos are pinned and posted, not put in the articles.",
+      h("div", { class: "form-grid" }, field("st-user", "User", user), field("st-pass", "Application password", pass, "WordPress → Users → Profile → Application Passwords. Stored encrypted (Vault)."))),
+    group("TikTok", "Optional: the site's videos also go to this account, with your call to action at the end of the caption.",
+      h("div", { class: "form-grid" }, field("st-tt", "Account", tt), field("st-cta", "Call to action", cta))),
+    group("Videos", "The voice and language come from the network.", h("div", { class: "form-grid" }, field("st-net", "Network", netSel), field("st-model", "Claude for the plan", model))),
+    group("Automation", null, dailyRow, pinRow, embedRow),
+    h("div", { class: "row set-actions" },
+      act("Save", async () => { await save(); toast("Saved"); render(); }, "btn primary"),
+      act("Test WordPress", async () => { await save(); const out = await sitesCall({ action: "test", site_id: x.id }); toast(out.ok ? `Connected as ${out.name}` : out.error); render(); }),
+      act("Read the articles again", async () => { const out = await sitesCall({ action: "sync", site_id: x.id }); toast(`${out.articles} articles`); render(); }, "btn ghost")));
+}
 
 // ==================================================================
 // Brain: one per network plus a general one (All networks). You talk to it; it reads the app, remembers, adds ideas,
