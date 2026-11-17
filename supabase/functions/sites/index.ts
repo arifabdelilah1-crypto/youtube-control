@@ -69,17 +69,27 @@ async function sync(siteId: string) {
   return { read: n, articles: count || 0 };
 }
 
-async function make(articleId: string, secret: string) {
+/** One article's video. opts (made by hand): targets {pin, tiktok, youtube, embed}, ai_model, look; a video already made is made again. */
+async function make(articleId: string, secret: string, opts: any = {}) {
   const { data: a } = await db.from("site_articles").select("*, sites(*)").eq("id", articleId).single();
   if (!a) throw new Error("article not found");
   const site = a.sites;
   if (!site.channel_id) throw new Error(`Pick the network (voice and language) for ${site.name} first.`);
   if (["making", "embedding"].includes(a.status)) return { already: true };
-  await db.from("site_articles").update({ status: "making", error: null }).eq("id", a.id);
+  const t = opts.targets && typeof opts.targets === "object" ? opts.targets : null;
+  const targets = t ? { pin: !!t.pin, tiktok: !!t.tiktok, youtube: !!t.youtube, embed: !!t.embed } : null;
+  // made again: a new video goes out again (the article keeps the video it already has: never two in one article)
+  const again = a.status === "done" || a.video_url ? { video_url: null, wp_media_id: null, blotato_post_id: null, pin_url: null, pinned_at: null,
+    tiktok_post_id: null, tiktok_url: null, tiktok_at: null } : {};
+  await db.from("site_articles").update({ status: "making", error: null, targets, ...again }).eq("id", a.id);
   try {
     const parsed = await callFn("recipe", { action: "parse", url: a.url, channel_id: site.channel_id }, secret);
+    const model = ["claude-sonnet-5-5", "claude-opus-5-5"].includes(opts.ai_model) ? opts.ai_model : site.ai_model || "claude-sonnet-5-5";
+    // YouTube: the network's next free slot, YouTube only (the site sends its own pin and TikTok, with their call to action)
+    const youtube = !!targets?.youtube;
     const started = await callFn("recipe", { action: "start", idea_id: parsed.idea_id, channel_id: site.channel_id,
-      options: { length: "short45", look: site.look || "clean", publish: "ask", ai_model: site.ai_model || "claude-sonnet-5-5", site_article_id: a.id } }, secret);
+      options: { length: "short45", look: site.look || "clean", publish: youtube ? "next" : "ask", ai_model: model, site_article_id: a.id,
+        ...(youtube ? { only_platforms: ["youtube"] } : {}) } }, secret);
     await db.from("site_articles").update({ idea_id: parsed.idea_id, video_run_id: started.run_id }).eq("id", a.id);
     return { run_id: started.run_id };
   } catch (e) {
@@ -135,7 +145,16 @@ Deno.serve(async (req) => {
     }
 
     if (body.action === "sync") return json(await sync(body.site_id));
-    if (body.action === "make") return json(await make(body.article_id, secret));
+    if (body.action === "make") return json(await make(body.article_id, secret, body));
+    // several articles at once (the Articles list): each is started like "make", 10 at most
+    if (body.action === "make_many") {
+      const ids = (Array.isArray(body.article_ids) ? body.article_ids : []).filter((x: string) => UUID.test(x)).slice(0, 10);
+      const out = [];
+      for (const id of ids) {
+        try { out.push({ id, ...(await make(id, secret, body)) }); } catch (e) { out.push({ id, error: String((e as Error).message || e).slice(0, 200) }); }
+      }
+      return json({ results: out });
+    }
 
     if (body.action === "daily") {
       const today = new Date().toISOString().slice(0, 10);
@@ -157,7 +176,11 @@ Deno.serve(async (req) => {
 
     if (body.action === "wp_auth") {
       const { site, user, password } = await auth(body.site_id);
-      return json({ base_url: site.base_url, user, password, embed: site.embed, pin: site.pin, tiktok: !!site.tiktok_account_id });
+      // one article's own choice (made by hand) wins over the site's settings
+      const { data: art } = UUID.test(body.article_id || "") ? await db.from("site_articles").select("targets").eq("id", body.article_id).maybeSingle() : { data: null };
+      const t = art?.targets || null;
+      return json({ base_url: site.base_url, user, password, embed: t ? t.embed && site.embed !== false : site.embed, pin: t ? t.pin : site.pin,
+        tiktok: !!site.tiktok_account_id && (t ? t.tiktok : true) });
     }
 
     if (body.action === "pin") {

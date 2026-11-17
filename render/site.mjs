@@ -18,7 +18,7 @@ export async function deliverToSite({ articleId, job, idea, call, rest, log, dow
   const set = (v) => rest("PATCH", "site_articles", `?id=eq.${articleId}`, v);
   const [article] = await rest("GET", "site_articles", `?id=eq.${articleId}&select=*`);
   if (!article) throw new Error("The article isn't in Pinterest & sites any more.");
-  const site = await call("sites", { action: "wp_auth", site_id: article.site_id });
+  const site = await call("sites", { action: "wp_auth", site_id: article.site_id, article_id: articleId });
   // without a WordPress login the video can't go into the article, but it can still be pinned (and posted): Blotato hosts it then
   const wp = !!(site.user && site.password) && site.embed !== false;
   const A = wp ? { Authorization: basic(site.user, site.password), "User-Agent": "YouTubeControl/1.0" } : {};

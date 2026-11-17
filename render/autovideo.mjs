@@ -615,7 +615,10 @@ async function main(id) {
   const clean = checks.every((c) => c.ok) && !warnings.length;
   await report({ status: clean ? "ready" : "review" });
   if (clean && options.publish === "next") {
-    await saveSettings(projectId, { publish: { ...(final.settings?.publish || {}), mode: "next" } });
+    // only_platforms (e.g. a site's video: YouTube only, the site posts its own pin and TikTok): the others are left out
+    const only = Array.isArray(options.only_platforms) && options.only_platforms.length ? options.only_platforms : null;
+    await saveSettings(projectId, { publish: { ...(final.settings?.publish || {}), mode: "next",
+      ...(only ? { exclude: ["youtube", "tiktok", "facebook", "instagram", "twitter"].filter((x) => !only.includes(x)) } : {}) } });
     const out = await call("publish", { action: "auto", render_job_id: job.id }).catch((e) => ({ error: e.message }));
     log(out.skipped ? `Not queued: ${out.skipped}` : out.error ? `Not queued: ${out.error}` : `Queued for ${out.row?.slot_at || "now"}`);
     if (out.error || out.skipped) await warn(`It didn't go out: ${out.error || out.skipped}`);
