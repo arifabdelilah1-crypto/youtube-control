@@ -18,7 +18,7 @@ import { deliverToSite } from "./site.mjs";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const URL_ = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-const FN = { ai: process.env.AI_FUNCTION || "ai", studio: process.env.STUDIO_FUNCTION || "studio", publish: "publish", explainer: "explainer", story: "story" };
+const FN = { ai: process.env.AI_FUNCTION || "ai", studio: process.env.STUDIO_FUNCTION || "studio", publish: "publish", explainer: "explainer", story: "story", sites: "sites" };
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 const log = (m) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -537,6 +537,20 @@ async function main(id) {
   if (!run) throw new Error("run not found");
   if (run.status === "cancelled") return;
   const options = run.options || {};
+  // a site's video already made (ready, or waiting on a soft warning) that didn't reach its site: started again, it only delivers
+  if (options.site_article_id && run.render_job_id && ["ready", "review"].includes(run.status)) {
+    const job = await one("render_jobs", run.render_job_id);
+    if (job?.status === "done") {
+      log("Already made: delivering to the site only");
+      const set = (v) => rest("PATCH", "site_articles", `?id=eq.${options.site_article_id}`, v).catch(() => null);
+      try {
+        const url = await deliverToSite({ articleId: options.site_article_id, job, idea: await one("ideas", run.idea_id), call, rest, log, downloadFromVds, vdsPath });
+        log(`On the site: ${url}`);
+        if (run.status === "review") await report({ status: "ready" });
+      } catch (e) { log(`site: ${e.message}`); await set({ status: "failed", error: String(e.message).slice(0, 480) }); throw e; }
+      return;
+    }
+  }
   await report({ status: "running", run_url: process.env.RUN_URL || null, steps: STEPS.map((key) => ({ key, status: "waiting", detail: "" })), warnings: [], checks: [], error: null });
   const channel = await one("channels", run.channel_id);
   if (!channel) throw new Error("The network no longer exists.");
@@ -612,7 +626,9 @@ async function main(id) {
 
   const final = await one("video_projects", projectId);
   if (options.music !== false && brief.music_mood !== "none" && !foundMusic(final.settings?.music)) log("no music on this video");
-  const clean = checks.every((c) => c.ok) && !warnings.length;
+  // a site's daily video doesn't wait for a soft warning (a drawn scene, say): only a failed check stops it
+  const clean = checks.every((c) => c.ok) && (!warnings.length || !!options.site_article_id);
+  if (clean && warnings.length) log(`Going on despite: ${warnings.join(" · ")}`);
   await report({ status: clean ? "ready" : "review" });
   if (clean && options.publish === "next") {
     // only_platforms (e.g. a site's video: YouTube only, the site posts its own pin and TikTok): the others are left out

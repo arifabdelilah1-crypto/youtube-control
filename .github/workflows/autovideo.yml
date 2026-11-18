@@ -27,6 +27,17 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null
           pip install -q faster-whisper==1.2.1
+      - name: ffmpeg from npm when apt was too slow
+        continue-on-error: true
+        timeout-minutes: 3
+        run: |
+          command -v ffprobe >/dev/null && command -v ffmpeg >/dev/null && exit 0
+          npm i -g --silent ffmpeg-static@5.2.0 @ffprobe-installer/ffprobe@2.1.2
+          G=$(npm root -g)
+          sudo ln -sf "$G/ffmpeg-static/ffmpeg" /usr/local/bin/ffmpeg
+          sudo ln -sf "$(ls $G/@ffprobe-installer/*/ffprobe | head -1)" /usr/local/bin/ffprobe
+          ffprobe -version | head -1
+          pip install -q faster-whisper==1.2.1 || true
       - name: Generate
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
