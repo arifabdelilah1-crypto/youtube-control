@@ -4,6 +4,7 @@
 //   POST {action:"sync", site_id}                      (team or cron) -> reads the site's published posts into site_articles
 //   POST {action:"make", article_id}                   (team or cron) -> reads the article and starts its recipe video (recipe function)
 //   POST {action:"daily"}                              (cron) -> one article per site with "daily" on, at most 4 sites per call
+//   POST {action:"pin_status"}                       (cron or dashboard) -> fills in the links of pins Blotato finished later
 //   POST {action:"wp_auth", site_id}                   (cron: the video job) -> {base_url, user, password}
 //   POST {action:"pin", article_id, media_url, title, description} (cron: the video job) -> pins the video with the article's link
 //   POST {action:"tiktok", article_id, media_url, description}      (cron: the video job) -> posts it on the site's TikTok, with its call to action
@@ -46,6 +47,19 @@ async function callFn(name: string, body: unknown, secret: string) {
   const out = await r.json().catch(() => ({}));
   if (!r.ok || out.error) throw new Error(out.error || `${name} ${r.status}`);
   return out;
+}
+
+/** Pins Blotato was still publishing when the job moved on: their link, or why they failed (20 at a time). */
+async function pinStatus() {
+  const { data: rows } = await db.from("site_articles").select("id,blotato_post_id").not("blotato_post_id", "is", null).is("pin_url", null)
+    .gte("pinned_at", new Date(Date.now() - 7 * 864e5).toISOString()).is("error", null).limit(20);
+  let found = 0, failed = 0;
+  for (const a of rows || []) {
+    const st = await blotato(`/posts/${encodeURIComponent(a.blotato_post_id)}`).catch(() => null);
+    if (st?.status === "published" && st.publicUrl) { await db.from("site_articles").update({ pin_url: st.publicUrl }).eq("id", a.id); found++; }
+    else if (st?.status === "failed") { await db.from("site_articles").update({ error: `Pin: ${String(st.errorMessage || "Blotato couldn't publish the pin").slice(0, 300)}` }).eq("id", a.id); failed++; }
+  }
+  return { checked: rows?.length || 0, found, failed };
 }
 
 async function sync(siteId: string) {
@@ -156,7 +170,9 @@ Deno.serve(async (req) => {
       return json({ results: out });
     }
 
+    if (body.action === "pin_status") return json(await pinStatus());
     if (body.action === "daily") {
+      await pinStatus().catch(() => null);
       const today = new Date().toISOString().slice(0, 10);
       const { count: active } = await db.from("video_runs").select("id", { count: "exact", head: true }).in("status", ["queued", "running"]);
       let room = Math.max(0, 8 - (active || 0));
