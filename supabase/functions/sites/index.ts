@@ -189,11 +189,14 @@ Deno.serve(async (req) => {
       const site = a.sites;
       if (!site.pinterest_account_id || !site.pinterest_board_id) return json({ error: `Pick the Pinterest account and board for ${site.name}.` }, 400);
       const title = String(body.title || a.title).slice(0, 100);
-      const text = String(body.description || a.title).replace(/(^|\n)Credits:[\s\S]*$/, "").slice(0, 480);
+      let text = String(body.description || a.title).replace(/(^|\n)Credits:[\s\S]*$/, "");
+      // Pinterest refuses this site's links, in the pin and in its text (sites.pin_no_link)
+      if (site.pin_no_link) text = text.replace(/^.*https?:\/\/\S+.*$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+      text = text.slice(0, 480);
       const post = await blotato("/posts", { method: "POST", body: JSON.stringify({ post: {
         accountId: site.pinterest_account_id,
         content: { platform: "pinterest", text, mediaUrls: [String(body.media_url)] },
-        target: { targetType: "pinterest", boardId: site.pinterest_board_id, title, link: a.url, altText: title },
+        target: { targetType: "pinterest", boardId: site.pinterest_board_id, title, ...(site.pin_no_link ? {} : { link: a.url }), altText: title },
       } }) });
       const id = String(post.postSubmissionId || post.id || "");
       await db.from("site_articles").update({ blotato_post_id: id, pinned_at: new Date().toISOString() }).eq("id", a.id);
