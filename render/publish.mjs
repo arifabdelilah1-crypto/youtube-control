@@ -157,6 +157,7 @@ async function toBlotato(row, sched, job) {
   const saved = (Array.isArray(sched.targets) ? sched.targets : []).find((x) => x.platform === row.platform) || {};
   // YouTube's visibility and labels are set with the channel's schedule in Publish
   const target = { ...(row.platform === "youtube" ? { ...saved, privacy: sched.privacy, notify: sched.notify_subscribers, synthetic: sched.synthetic_media } : saved), ...(row.options || {}) };
+  if (row.platform === "pinterest" && !target.board_id) throw new Error("Pick the Pinterest board for this network.");
   if (row.platform === "facebook" && !target.page_id) throw new Error("Pick the Facebook Page for this network.");
   const future = row.slot_at && Date.parse(row.slot_at) > Date.now() + 5 * 60e3;
   const mediaUrl = await uploadToBlotato(BLOTATO, await videoFile(job), "video.mp4", "video/mp4");

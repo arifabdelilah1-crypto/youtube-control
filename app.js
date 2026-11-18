@@ -2538,8 +2538,8 @@ async function publishCall(body) {
   return data;
 }
 
-const PLATFORM_NAMES = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", twitter: "X", facebook: "Facebook" };
-const PLATFORM_TAGS = { youtube: "YT", tiktok: "TT", instagram: "IG", twitter: "X", facebook: "FB" };
+const PLATFORM_NAMES = { youtube: "YouTube", tiktok: "TikTok", instagram: "Instagram", twitter: "X", facebook: "Facebook", pinterest: "Pinterest" };
+const PLATFORM_TAGS = { youtube: "YT", tiktok: "TT", instagram: "IG", twitter: "X", facebook: "FB", pinterest: "PIN" };
 /** Where a network posts. A schedule from before networks existed posts to YouTube with its one method. */
 const targetsOfSchedule = (sc) => (Array.isArray(sc?.targets) ? sc.targets : sc?.channel_id ? [{ platform: "youtube", method: sc.method, account_id: sc.blotato_account_id }] : []);
 
@@ -4534,6 +4534,20 @@ function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
   instagram.addEventListener("change", showIg); showIg();
   const igHint = h("span", { class: "muted small", text: igMeta.length ? "Reels of 3 to 90 s, 9:16. They go out at their slot." : "To post Reels directly, link an Instagram professional account to your Facebook Page, then Reconnect Facebook." });
   const x = menu("twitter", "Don't post");
+  // Pinterest (through Blotato): the account, then the board the video pins go to. The pin links to the recipe or product page.
+  const pinterest = menu("pinterest", "Don't post");
+  const pinBoard = h("select", { class: "field", "aria-label": "Pinterest board" });
+  const fillBoards = () => {
+    const acc = accountsFor("pinterest").find((a) => keyOf(a) === pinterest.value);
+    const savedBoard = savedOf("pinterest")?.board_id ? String(savedOf("pinterest").board_id) : "";
+    const boards = acc?.boards || [];
+    pinBoard.replaceChildren(h("option", { value: "", text: boards.length ? "Choose a board" : "No board found" }),
+      ...boards.map((b) => h("option", { value: b.id, selected: b.id === savedBoard, text: b.name })),
+      ...(savedBoard && !boards.some((b) => b.id === savedBoard) ? [h("option", { value: savedBoard, selected: true, text: savedOf("pinterest")?.board_name || `Board ${savedBoard}` })] : []));
+    if (!pinBoard.value && boards.length === 1) pinBoard.value = boards[0].id;
+    pinBoard.hidden = !pinterest.value;
+  };
+  pinterest.addEventListener("change", fillBoards); fillBoards();
   // Facebook: a Page connected directly (Connect Facebook), or one through Blotato
   const fbSaved = savedOf("facebook");
   const fbCurrent = fbSaved?.method === "meta" && fbSaved.page_id ? `meta:${fbSaved.page_id}` : fbSaved?.account_id ? (fbSaved.page_id ? `${fbSaved.account_id}:${fbSaved.page_id}` : String(fbSaved.account_id)) : "";
@@ -4571,12 +4585,14 @@ function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
   const name = h("input", { id: `net-name-${id}`, class: "field", maxlength: 60, value: chRow.title });
   const save = h("button", { class: "btn primary", type: "button", text: "Save accounts", onclick: async () => {
     if (ytMethod.value === "blotato" && !ytBlotato.value) return toast("Choose the YouTube account in Blotato");
+    if (pinterest.value && !pinBoard.value) return toast("Choose the Pinterest board");
     const blotatoTarget = (platform, select, extra = {}) => { if (!select.value) return []; const [account_id, page_id] = select.value.split(":"); return [{ platform, method: "blotato", account_id, ...(page_id ? { page_id } : {}), ...extra }]; };
     const targets = [
       ...(ytMethod.value === "off" ? [] : [{ platform: "youtube", method: ytMethod.value, account_id: ytMethod.value === "blotato" ? ytBlotato.value : null }]),
       ...blotatoTarget("tiktok", tiktok, { privacy: ttPrivacy.value, ai: ttAi.checked }),
       ...(instagram.value.startsWith("meta:") ? [{ platform: "instagram", method: "meta", page_id: instagram.value.slice(5) }] : blotatoTarget("instagram", instagram)),
       ...blotatoTarget("twitter", x),
+      ...blotatoTarget("pinterest", pinterest, { board_id: pinBoard.value, board_name: pinBoard.selectedOptions[0]?.text || null }),
       ...(facebook.value.startsWith("meta:") ? [{ platform: "facebook", method: "meta", page_id: facebook.value.slice(5) }] : blotatoTarget("facebook", facebook)),
     ];
     try {
@@ -4591,11 +4607,12 @@ function networkPanels(chRow, sc, blotato, metaPages = [], fbFailed = 0) {
     h("div", { class: "card-head" }, h("h2", { text: "Accounts" }), h("a", { class: "small", href: "https://my.blotato.com/accounts", target: "_blank", rel: "noopener", text: "Connect accounts in Blotato" })),
     h("div", { class: "field-wrap" }, h("label", { for: `net-name-${id}`, text: "Network name" }), name),
     blotato.error ? h("p", { class: "muted small", style: "margin:0", text: `Blotato's accounts couldn't load: ${blotato.error}` }) : null,
-    noAccounts ? h("p", { class: "muted small", style: "margin:0", text: "No TikTok, Instagram, X or Facebook account in Blotato yet. Connect them there, then reload this page." }) : null,
+    noAccounts ? h("p", { class: "muted small", style: "margin:0", text: "No TikTok, Instagram, X, Facebook or Pinterest account in Blotato yet. Connect them there, then reload this page." }) : null,
     row("youtube", ytPill, ytMethod, ytWrap, h("button", { class: `btn small${chRow.connected ? "" : " primary"}`, type: "button", text: chRow.connected ? "Reconnect Google" : "Connect with Google", onclick: () => startOAuth(id) })),
     row("tiktok", status("tiktok", tiktok), tiktok, ttPrivacy, h("label", { class: "pub-check small" }, ttAi, "Mark as AI-generated")),
     row("instagram", igPill, instagram, igHint),
     row("twitter", status("twitter", x), x, h("span", { class: "muted small", text: "Posts the title, 280 characters at most." })),
+    row("pinterest", status("pinterest", pinterest), pinterest, pinBoard, h("span", { class: "muted small", text: "Video pins of 4 s to 5 min, linked to the recipe or product page." })),
     row("facebook", fbPill, facebook, h("button", { class: `btn small${metaPages.length && !fbBroken ? "" : " primary"}`, type: "button", text: metaPages.length ? "Reconnect Facebook" : "Connect Facebook",
       title: "Log in with the Facebook profile that manages your Pages: they all appear in this list", onclick: (e) => { e.currentTarget.disabled = true; startMetaOAuth(id); } }),
       fbResend, h("span", { class: "muted small", text: "Pages only. Shorts go up as Reels." })),

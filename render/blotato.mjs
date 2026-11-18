@@ -1,4 +1,4 @@
-// Sending a finished video to Blotato (https://help.blotato.com): TikTok, Instagram Reels, X, Facebook Reels and YouTube.
+// Sending a finished video to Blotato (https://help.blotato.com): TikTok, Instagram Reels, X, Facebook Reels, Pinterest video pins and YouTube.
 import fs from "node:fs";
 
 const API = "https://backend.blotato.com/v2";
@@ -53,6 +53,12 @@ export function blotatoPost({ row, target = {}, mediaUrl, coverUrl, scheduledTim
     platformTarget = { targetType: "twitter" };
   } else if (row.platform === "facebook") {
     platformTarget = { targetType: "facebook", pageId: target.page_id, mediaType: "reel" };
+  } else if (row.platform === "pinterest") {
+    // the pin links to the recipe or product page named in the description ("Zum Rezept: …")
+    const link = target.link || String(row.description || "").match(/https?:\/\/[^\s)]+/)?.[0];
+    shared.content.text = String(row.description || row.title || "").replace(/(^|\n)Credits:\n[\s\S]*$/, "").trim().slice(0, 500);
+    platformTarget = { targetType: "pinterest", boardId: target.board_id, title: String(row.title || "").slice(0, 100),
+      ...(link ? { link } : {}), altText: String(row.title || "").slice(0, 500) };
   } else if (row.platform === "instagram") {
     platformTarget = { targetType: "instagram", mediaType: "reel", shareToFeed: true, ...(coverUrl ? { coverImageUrl: coverUrl } : {}) };
   } else {

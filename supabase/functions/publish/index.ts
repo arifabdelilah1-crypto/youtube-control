@@ -24,7 +24,7 @@ const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const BLOTATO = Deno.env.get("BLOTATO_API_KEY") ?? "";
 const BLOTATO_API = "https://backend.blotato.com/v2";
-const PLATFORMS = new Set(["youtube", "tiktok", "instagram", "twitter", "facebook"]);
+const PLATFORMS = new Set(["youtube", "tiktok", "instagram", "twitter", "facebook", "pinterest"]);
 const cors = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
@@ -53,7 +53,7 @@ function artifactInputs(job: any): Record<string, string> {
 }
 
 /** Where a channel posts. A schedule saved before targets existed posts to YouTube with its one method. */
-function targetsOf(schedule: any): { platform: string; method: string; account_id: string | null; page_id?: string | null }[] {
+function targetsOf(schedule: any): { platform: string; method: string; account_id: string | null; page_id?: string | null; board_id?: string | null }[] {
   if (!Array.isArray(schedule.targets)) return [{ platform: "youtube", method: schedule.method, account_id: schedule.blotato_account_id || null }];
   return schedule.targets.filter((x: any) => PLATFORMS.has(x?.platform))
     .map((x: any) => ({
@@ -62,6 +62,7 @@ function targetsOf(schedule: any): { platform: string; method: string; account_i
       // with the Page's own token
       method: x.platform === "youtube" ? (x.method !== "blotato" ? "youtube" : "blotato") : (x.platform === "facebook" || x.platform === "instagram") && x.method === "meta" ? "meta" : "blotato",
       account_id: x.account_id ? String(x.account_id) : null, page_id: x.page_id ? String(x.page_id) : null,
+      board_id: x.board_id ? String(x.board_id) : null,
     }));
 }
 
@@ -85,6 +86,7 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
   const targets = targetsOf(schedule).filter((x) => !excluded.has(x.platform));
   if (!targets.length) return { error: excluded.size ? "Every account is switched off for this video. Turn one on in its Publish tab." : "This network posts nowhere yet. Pick its accounts on its Networks page.", status: 400 };
   if (targets.some((x) => x.method === "blotato" && !x.account_id)) return { error: "Pick the Blotato account on this network's page.", status: 400 };
+  if (targets.some((x) => x.platform === "pinterest" && !x.board_id)) return { error: "Pick the Pinterest board on this network's page.", status: 400 };
   if (targets.some((x) => x.method === "meta" && !x.page_id)) return { error: "Pick the Facebook Page on this network's page.", status: 400 };
   const igMeta = targets.find((x) => x.platform === "instagram" && x.method === "meta");
   if (igMeta) {
@@ -260,6 +262,14 @@ Deno.serve(async (req) => {
       const accounts: any[] = [];
       for (const x of list.filter((a: any) => PLATFORMS.has(a.platform))) {
         const name = x.username || x.fullname || String(x.id);
+        if (x.platform === "pinterest") {
+          // a pin needs a board: each board is its own choice
+          const b = await fetch(`${BLOTATO_API}/social/pinterest/boards?accountId=${encodeURIComponent(x.id)}`, { headers: { "blotato-api-key": BLOTATO } });
+          const bd = b.ok ? await b.json().catch(() => ({})) : {};
+          const boards = Array.isArray(bd) ? bd : bd.items || bd.boards || [];
+          accounts.push({ id: String(x.id), platform: "pinterest", name, boards: boards.map((y: any) => ({ id: String(y.id), name: y.name || String(y.id) })) });
+          continue;
+        }
         if (x.platform !== "facebook") { accounts.push({ id: String(x.id), platform: x.platform, name }); continue; }
         // Blotato posts to a Page, never to a personal profile
         const pages = await fetch(`${BLOTATO_API}/users/me/accounts/${encodeURIComponent(x.id)}/subaccounts`, { headers: { "blotato-api-key": BLOTATO } });
