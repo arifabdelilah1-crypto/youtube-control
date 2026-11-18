@@ -175,7 +175,17 @@ async function toBlotato(row, sched, job) {
   // saved before waiting, so the post can still be followed if this job stops
   await rest("PATCH", "publish_queue", `?id=eq.${row.id}`, { blotato_post_id: id });
   if (future) return { blotato_post_id: id, status: "scheduled", warning };
-  return { blotato_post_id: id, ...(await waitForPost(BLOTATO, id)), warning };
+  try {
+    return { blotato_post_id: id, ...(await waitForPost(BLOTATO, id)), warning };
+  } catch (e) {
+    // Pinterest blocks some sites' links: the pin goes up without its link, and the link stays in the description
+    if (row.platform !== "pinterest" || target.link === false || !/doesn't allow you to save Pins/i.test(e.message)) throw e;
+    log("Pinterest refuses this site's links: pinning without the link");
+    const retry = await createPost(BLOTATO, blotatoPost({ row, target: { ...target, link: false }, mediaUrl, coverUrl }));
+    await rest("PATCH", "publish_queue", `?id=eq.${row.id}`, { blotato_post_id: retry, options: { ...(row.options || {}), link: false } });
+    return { blotato_post_id: retry, ...(await waitForPost(BLOTATO, retry)),
+      warning: "Pinterest doesn't accept links to this site, so the pin has no link. Check the domain in Pinterest's settings (claim the website)." };
+  }
 }
 
 // ---------- Facebook Pages, directly (Connect Facebook on a network's page; no Blotato) ----------

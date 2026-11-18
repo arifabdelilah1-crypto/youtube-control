@@ -55,7 +55,8 @@ export function blotatoPost({ row, target = {}, mediaUrl, coverUrl, scheduledTim
     platformTarget = { targetType: "facebook", pageId: target.page_id, mediaType: "reel" };
   } else if (row.platform === "pinterest") {
     // the pin links to the recipe or product page named in the description ("Zum Rezept: …")
-    const link = target.link || String(row.description || "").match(/https?:\/\/[^\s)]+/)?.[0];
+    // link: false when Pinterest refuses the site's links ("This site doesn't allow you to save Pins"): the pin goes up without one
+    const link = target.link === false ? null : target.link || String(row.description || "").match(/https?:\/\/[^\s)]+/)?.[0];
     shared.content.text = String(row.description || row.title || "").replace(/(^|\n)Credits:\n[\s\S]*$/, "").trim().slice(0, 500);
     platformTarget = { targetType: "pinterest", boardId: target.board_id, title: String(row.title || "").slice(0, 100),
       ...(link ? { link } : {}), altText: String(row.title || "").slice(0, 500) };
