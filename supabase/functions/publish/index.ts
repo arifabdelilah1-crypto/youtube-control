@@ -128,14 +128,25 @@ async function queue(jobId: string, when: string, onlyIfAuto: boolean, onlyPlatf
 
   const { data: idea } = job.idea_id ? await db.from("ideas").select("*").eq("id", job.idea_id).single() : { data: null };
   const title = String(idea?.video_title || project?.title || job.params?.title || "New video").replace(/[<>]/g, "").slice(0, 100);
+  // a recipe or product video pins on the Pinterest account of the site it links to (sites table), when there is one
+  let sitePin: { account_id: string; board_id: string } | null = null;
+  if (todo.some((x) => x.platform === "pinterest")) {
+    const link = String(plan.text?.all?.description ?? idea?.video_description ?? "").match(/https?:\/\/[^\s)]+/)?.[0];
+    const host = link ? (() => { try { return new URL(link).origin; } catch { return null; } })() : null;
+    if (host) {
+      const { data: site } = await db.from("sites").select("pinterest_account_id,pinterest_board_id").in("base_url", [host, host.replace("://www.", "://"), host.replace("://", "://www.")]).limit(1).maybeSingle();
+      if (site?.pinterest_account_id && site?.pinterest_board_id) sitePin = { account_id: String(site.pinterest_account_id), board_id: String(site.pinterest_board_id) };
+    }
+  }
   const rows: any[] = [];
   for (const target of todo) {
+    const pin = target.platform === "pinterest" && sitePin;
     const row = {
       render_job_id: jobId, channel_id: channelId, idea_id: job.idea_id || project?.idea_id || null, method: target.method, platform: target.platform,
-      blotato_account_id: target.account_id || null, public_url: null,
+      blotato_account_id: (pin ? sitePin!.account_id : target.account_id) || null, public_url: null,
       title: String(plan.text?.[target.platform]?.title ?? plan.text?.all?.title ?? title).replace(/[<>]/g, "").slice(0, target.platform === "twitter" ? 280 : 100) || title,
       description: String(plan.text?.[target.platform]?.description ?? plan.text?.all?.description ?? idea?.video_description ?? "").slice(0, 4900),
-      tags: (idea?.video_tags || []).slice(0, 30), options: plan.options?.[target.platform] || {},
+      tags: (idea?.video_tags || []).slice(0, 30), options: { ...(pin ? { board_id: sitePin!.board_id } : {}), ...(plan.options?.[target.platform] || {}) },
       slot_at: slot, status: "queued", error: null, youtube_video_id: null, blotato_post_id: null,
     };
     const { data: saved, error } = await db.from("publish_queue").upsert(row, { onConflict: "render_job_id,platform" }).select().single();
