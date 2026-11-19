@@ -35,7 +35,7 @@ jobs:
           npm i -g --silent ffmpeg-static@5.2.0 @ffprobe-installer/ffprobe@2.1.2
           G=$(npm root -g)
           sudo ln -sf "$G/ffmpeg-static/ffmpeg" /usr/local/bin/ffmpeg
-          sudo ln -sf "$(ls $G/@ffprobe-installer/*/ffprobe | head -1)" /usr/local/bin/ffprobe
+          sudo ln -sf "$(find "$G" -type f -name ffprobe -path '*linux-x64*' | head -1)" /usr/local/bin/ffprobe
           ffprobe -version | head -1
           pip install -q faster-whisper==1.2.1 || true
       - name: Generate
