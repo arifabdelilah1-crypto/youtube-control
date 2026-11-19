@@ -237,6 +237,8 @@ Deno.serve(async (req) => {
       if (!isService) return json({ error: "not allowed" }, 403);
       return json(await dispatchDue());
     }
+    // pg_cron "publish-status": Blotato posts whose slot has passed get their result, YouTube ones are marked live
+    if (body.action === "blotato_sync" && isService) return json(await blotatoSync());
     if (body.action === "token" || body.action === "auto") {
       if (!isService) return json({ error: "not allowed" }, 403);
       if (body.action === "auto") {
