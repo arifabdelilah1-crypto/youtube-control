@@ -627,7 +627,10 @@ async function main(id) {
   const final = await one("video_projects", projectId);
   if (options.music !== false && brief.music_mood !== "none" && !foundMusic(final.settings?.music)) log("no music on this video");
   // a site's daily video doesn't wait for a soft warning (a drawn scene, say): only a failed check stops it
-  const clean = checks.every((c) => c.ok) && (!warnings.length || !!options.site_article_id);
+  // a scene drawn because no real clip fit is a fallback, not a fault: it never holds a video back. A site's daily video doesn't
+  // wait for any soft warning. Only a failed check (voice, black screen…) stops it.
+  const hard = warnings.filter((w) => !/drawn instead/i.test(w));
+  const clean = checks.every((c) => c.ok) && (!hard.length || !!options.site_article_id);
   if (clean && warnings.length) log(`Going on despite: ${warnings.join(" · ")}`);
   await report({ status: clean ? "ready" : "review" });
   if (clean && options.publish === "next") {
