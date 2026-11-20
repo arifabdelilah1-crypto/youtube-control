@@ -370,7 +370,7 @@ function keyPhrase(text) {
 }
 
 async function waitForVoice(projectId) {
-  const deadline = Date.now() + 25 * 60e3;
+  const deadline = Date.now() + 60 * 60e3;   // the voice job may wait for a free GitHub machine when many videos run
   let retried = false;
   while (Date.now() < deadline) {
     // a stopped video frees its GitHub slot at once: the voice job may be waiting for that slot
@@ -385,7 +385,7 @@ async function waitForVoice(projectId) {
     }
     await sleep(10000);
   }
-  throw new Error("The voice took more than 25 minutes.");
+  throw new Error("The voice took more than 60 minutes.");
 }
 
 async function saveSettings(projectId, change) {
