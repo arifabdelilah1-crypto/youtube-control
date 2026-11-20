@@ -1316,6 +1316,7 @@ const ANIM_LOOKS = {
   noir: { label: "Story · Noir", story: true, text: "A cinematic stick-figure story: Claude writes it and draws every shot in code. Night sets, one warm light per shot, grain. The ideas are acted out, never written on screen." },
   paper: { label: "Story · Storybook", story: true, text: "The same kind of story drawn like a picture book: warm paper, soft colours, hand-drawn lines that gently move." },
   pop: { label: "Story · Pop", story: true, text: "A bold comic version: bright flat colours, thick outlines, halftone dots and outlined subtitles." },
+  atlas: { label: "Story · Talking maps", story: true, text: "Countries are the characters: real maps light up as each country is named, and the countries themselves talk, react and act out the facts (borders, trade, alliances). Best for “A vs B” subjects like Morocco vs Algeria or USA vs China. DeepSeek writes the narration, Claude draws the film." },
   // Mix (video/Mix.jsx): Claude decides scene by scene between real footage, a drawing, or a drawing over a dimmed real picture
   mix: { label: "Mix: animation + real footage", mix: true, text: "About half the scenes are real stock clips and photos (Pexels, Pixabay, Wikimedia Commons), the others are Claude's drawings, some laid over a dimmed real picture. The same captions and colours throughout. Pick the look of the drawn parts below." },
   glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
@@ -1449,7 +1450,7 @@ VIEWS.animation = async () => {
     go.disabled = false; go.textContent = "Create animation";
   } },
     h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
-    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 3 are Story stick: Claude draws a whole film; then Mix, with real footage)` }), looks, lookNote, mixWrap,
+    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 4 are Story: Claude draws a whole film, Talking maps included; then Mix, with real footage)` }), looks, lookNote, mixWrap,
     h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
     h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-aspect", "Format", f.aspect, formatNote), field("a-length", "Length", f.length)),
     h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
