@@ -3,15 +3,17 @@
 //        options.look (noir | paper | pop), options.ai_model, options.aspect (9:16 | 16:9), options.length (short30 | short45 | short60, or long5 |
 //        long8: a 16:9 episode in chapters), options.film_model (long: the model drawing the chapters), options.mascot (yassine | karim | sami).
 //        Returns {run_id}.
-//   POST {action:"key"}                                    ("Generate video" job, x-cron-secret) -> {key}: the Claude key for the film,
+//   POST {action:"key"}                                    ("Generate video" job, x-cron-secret) -> {key, ds_key}: the Claude key for the film
+//        (and the DeepSeek key for narrations written by DeepSeek),
 //        which takes longer to write than a function may run.
-// Secrets: ANTHROPIC_API_KEY, GITHUB_TOKEN, GITHUB_REPO.
+// Secrets: ANTHROPIC_API_KEY, DEEPSEEK_API_KEY, GITHUB_TOKEN, GITHUB_REPO.
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const KEY = Deno.env.get("ANTHROPIC_API_KEY") ?? "";
+const DS_KEY = Deno.env.get("DEEPSEEK_API_KEY") ?? "";
 const GH_TOKEN = Deno.env.get("GITHUB_TOKEN") ?? "";
 const GH_REPO = Deno.env.get("GITHUB_REPO") ?? "";
 const LOOKS = new Set(["noir", "paper", "pop", "atlas"]);
@@ -38,7 +40,8 @@ Deno.serve(async (req) => {
     if (body.action === "key") {
       if (!isService) return json({ error: "not allowed" }, 403);
       if (!KEY) return json({ error: "Claude isn't set up yet: add ANTHROPIC_API_KEY in Supabase Edge Function secrets." }, 503);
-      return json({ key: KEY });
+      // ds_key: the narration of talking-maps videos (and of any story with options.writer = "deepseek") is written by DeepSeek
+      return json({ key: KEY, ds_key: DS_KEY || null });
     }
 
     // a team member, or Claude's own jobs and tests with the cron secret
@@ -68,7 +71,7 @@ Deno.serve(async (req) => {
         film_model: MODELS.has(o.film_model) ? o.film_model : null, mascot: MASCOTS.has(o.mascot) ? o.mascot : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: ["natural", "dark", "deep"].includes(o.voice_style) ? o.voice_style : null,
         music: o.music === true, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(), publish: o.publish === "next" ? "next" : "ask",
-        video_style: "story", ai_model: MODELS.has(o.ai_model) ? o.ai_model : "claude-opus-5-5", look: LOOKS.has(o.look) ? o.look : "noir",
+        video_style: "story", ai_model: MODELS.has(o.ai_model) ? o.ai_model : "claude-opus-5-5", look: LOOKS.has(o.look) ? o.look : "noir", ...(["claude", "deepseek"].includes(o.writer) ? { writer: o.writer } : {}),
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", id);
       const { data: run, error } = await db.from("video_runs").insert({ idea_id: id, channel_id: channelId, options, owner_id: user?.id ?? null }).select().single();
