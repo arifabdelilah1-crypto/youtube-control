@@ -47,7 +47,9 @@ function settingsOf(raw: any) {
   const channel_id = UUID.test(raw?.channel_id || "") ? raw.channel_id : null;
   // a long video given by a paid campaign (the Campaigns page): its Shorts follow the campaign's rules
   const campaign_id = UUID.test(raw?.campaign_id || "") ? raw.campaign_id : null;
-  return { count, min_s, max_s, language, channel_id, ...(campaign_id ? { campaign_id } : {}) };
+  // layout: "stream" = every scene with the streamer's camera on top and the game below, "single" = never, else found per scene
+  const layout = ["stream", "single"].includes(raw?.layout) ? raw.layout : "auto";
+  return { count, min_s, max_s, language, channel_id, layout, ...(campaign_id ? { campaign_id } : {}) };
 }
 
 async function dispatch(inputs: Record<string, string>): Promise<string | null> {

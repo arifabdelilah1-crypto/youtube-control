@@ -8,8 +8,8 @@
         speak every narrator line of a Short with its voice (Edge TTS), put each MP3 in the 'renders' bucket
         (clipvoice/<clip id>/...) with its word times, so the Clipper page plays the real voice before the final render.
     python collectors/clipper.py render <clips.id>
-        cut the reviewed scenes from the original, crop each to 9:16 (face, centre, left, right, or the whole frame on a
-        blurred background), join them, burn word-by-word captions and the hook, put the Short on the VDS, and file it as an
+        cut the reviewed scenes from the original, crop each to 9:16 (face, centre, left, right, the whole frame on a
+        blurred background, or stream: the streamer's camera on top and the game under it), join them, burn word-by-word captions and the hook, put the Short on the VDS, and file it as an
         idea + a finished render job so it shows on the Review page.
 
 Files on the VDS (vds/media.php only takes these names): videos/<uuid>.mp4 and thumbs/<uuid>-<8 hex>.jpg.
@@ -371,8 +371,12 @@ def analyze(sid: str) -> None:
                 if img is not None:
                     if info["width"] <= info["height"] * 0.6:
                         crop = "fit"
-                    elif faces_in(img):
-                        crop = "face"
+                    elif settings.get("layout") == "stream":
+                        crop = "stack"
+                    elif (found := faces_in(img)):
+                        # a small face in a wide frame is a streamer's camera over the game: camera on top, game below
+                        big = max(found, key=lambda f: f[2] * f[3])
+                        crop = "stack" if settings.get("layout") != "single" and big[2] < img.shape[1] * 0.12 else "face"
                 thumb = None
                 if img is not None:
                     import cv2
@@ -449,7 +453,8 @@ def captions_ass(clip: dict, timed: list) -> str:
         "[V4+ Styles]",
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
         f"Style: Cap,{font},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,-1,0,0,0,100,100,1,0,1,6,2,2,90,90,430,1",
-        f"Style: Hook,{font},70,&H00FFFFFF,&H00FFFFFF,&H1A000000,&H1A000000,-1,0,0,0,100,100,0,0,3,18,0,8,110,110,250,1",
+        # stream layout: the hook sits on the line between the camera and the game, not on the streamer's face
+        f"Style: Hook,{font},70,&H00FFFFFF,&H00FFFFFF,&H1A000000,&H1A000000,-1,0,0,0,100,100,0,0,3,18,0,8,110,110,{CAM_H - 50 if any(sc.get('crop') == 'stack' for sc in clip.get('scenes') or []) else 250},1",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text", *events, ""])
 
 
@@ -475,6 +480,63 @@ def crop_x(original: Path, sc: dict, w: int, h: int, cw: int, start: float, dur:
         return centre
     xs.sort()
     return int(min(max(xs[len(xs) // 2] - cw / 2, 0), w - cw))
+
+
+# ---- stream layout: the streamer's camera on top, the game under it
+CAM_H = 768                 # top part: 1080x768
+GAME_H = OUT_H - CAM_H      # bottom part: 1080x1152
+
+
+def cam_box(original: Path, sc: dict, w: int, h: int, start: float, dur: float) -> tuple[int, int, int, int]:
+    """The camera's rectangle in the original (x, y, cw, ch), at the top part's 1080:768 shape. A box set by hand on the
+    Clipper page (sc["cam"], fractions of the frame) wins; else around the face found in the scene (median of a few frames)."""
+    ar = OUT_W / CAM_H
+    cam = sc.get("cam") if isinstance(sc.get("cam"), dict) else None
+    if cam and all(isinstance(cam.get(k), (int, float)) for k in ("x", "y", "w")):
+        cw = max(64, int(cam["w"] * w))
+        ch = int(cw / ar)
+        x, y = int(cam["x"] * w), int(cam["y"] * h)
+    else:
+        boxes = []
+        n = min(8, max(3, int(dur / 0.7)))
+        for k in range(n):
+            img = frame_at(original, start + dur * (k + 0.5) / n, 640)
+            if img is None:
+                continue
+            found = faces_in(img)
+            if found:
+                fx, fy, fw, fh = max(found, key=lambda f: f[2] * f[3])
+                r = w / img.shape[1]
+                boxes.append(((fx + fw / 2) * r, (fy + fh / 2) * r, fw * r))
+        if boxes:
+            mid = lambda i: sorted(b[i] for b in boxes)[len(boxes) // 2]  # noqa: E731
+            cx, cy, fw = mid(0), mid(1), mid(2)
+            cw = int(min(max(fw * 3.4, w * 0.18), w * 0.6))   # head and shoulders, like the camera overlay itself
+            ch = int(cw / ar)
+            x, y = int(cx - cw / 2), int(cy - ch * 0.45)
+        else:  # no face found: the top-left quarter, where most streamers put their camera
+            cw = int(w * 0.32); ch = int(cw / ar); x, y = 0, 0
+    cw, ch = min(cw, w) // 2 * 2, min(ch, h) // 2 * 2
+    x, y = min(max(x, 0), w - cw), min(max(y, 0), h - ch)
+    return x, y, cw, ch
+
+
+def stack_filter(label: str, sc: dict, info: dict, original: Path, start: float, dur: float, tail: str) -> str:
+    w, h = info["width"], info["height"]
+    x, y, cw, ch = cam_box(original, sc, w, h, start, dur)
+    # the game: the full height at 1080:1152, centred, moved off the camera when they overlap
+    gw = min(int(h * OUT_W / GAME_H) // 2 * 2, w // 2 * 2)
+    gx = (w - gw) // 2
+    if gx < x + cw and x < gx + gw:  # overlap: the side away from the camera, if there is room
+        right, left = x + cw, x - gw
+        gx = right if right + gw <= w else (left if left >= 0 else gx)
+    gh = min(int(gw * GAME_H / OUT_W) // 2 * 2, h // 2 * 2)
+    gy = (h - gh) // 2
+    sep = sc.get("cam_line", "white")
+    line = f",drawbox=x=0:y={CAM_H - 3}:w={OUT_W}:h=6:color={sep}@0.9:t=fill" if sep else ""
+    return (f"[{label}]split=2[c][g];[c]crop={cw}:{ch}:{x}:{y},scale={OUT_W}:{CAM_H}:flags=lanczos,setsar=1[top];"
+            f"[g]crop={gw}:{gh}:{gx}:{gy},scale={OUT_W}:{GAME_H}:flags=lanczos,setsar=1[bot];"
+            f"[top][bot]vstack=inputs=2{line},{tail}")
 
 
 # ---- narrator voice (Microsoft Edge TTS, like the Studio's voice job)
@@ -595,6 +657,10 @@ def visual_filter(label: str, sc: dict, info: dict | None, original: Path | None
     """A filter turning input `label` into 1080x1920, 30 fps, called [v]."""
     tail = f"setsar=1,fps=30,format=yuv420p,trim=duration={dur:.3f},setpts=PTS-STARTPTS[v]"
     w, h = (info or {}).get("width", 0), (info or {}).get("height", 1)
+    if info and sc["crop"] == "stack" and w / h > 1.2:
+        return stack_filter(label, sc, info, original, start, dur, tail)
+    if info and sc["crop"] == "stack":  # not a wide video: no room for two parts, follow the face instead
+        sc = {**sc, "crop": "face"}
     if info and sc["crop"] != "fit" and w / h > OUT_W / OUT_H + 0.02:
         cw = int(h * OUT_W / OUT_H) // 2 * 2
         x = crop_x(original, sc, w, h, cw, start, dur)
@@ -690,7 +756,7 @@ def render(cid: str) -> None:
     scenes = []
     for s in clip["scenes"]:
         s["start"], s["end"] = float(s.get("start") or 0), float(s.get("end") or 0)
-        s["crop"] = s.get("crop") if s.get("crop") in ("face", "center", "left", "right", "fit") else "center"
+        s["crop"] = s.get("crop") if s.get("crop") in ("face", "center", "left", "right", "fit", "stack") else "center"
         if (s.get("kind") == "narrator" and (s.get("text") or "").strip()) or s["end"] - s["start"] >= 0.3:
             scenes.append(s)
     if not scenes:

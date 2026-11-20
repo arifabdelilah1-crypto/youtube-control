@@ -3077,7 +3077,7 @@ VIEWS.results = async () => {
 const CLIP_LIVE = ["uploading", "queued", "downloading", "transcribing", "finding"];
 const CLIP_STATUS = { uploading: ["info", "Uploading"], queued: ["info", "Starting"], downloading: ["info", "Getting the video"], transcribing: ["info", "Transcribing"],
   finding: ["info", "Finding moments"], ready: ["ok", "Ready to review"], failed: ["crit", "Failed"] };
-const CROPS = [["face", "Follow face"], ["center", "Centre"], ["left", "Left"], ["right", "Right"], ["fit", "Whole frame"]];
+const CROPS = [["stack", "Stream: camera on top, game below"], ["face", "Follow face"], ["center", "Centre"], ["left", "Left"], ["right", "Right"], ["fit", "Whole frame"]];
 const CLIP_LENGTHS = [["20-35", "Short (20–35 s)"], ["30-50", "Medium (30–50 s)"], ["45-60", "Long (45–60 s)"], ["50-90", "Up to 90 s"]];
 const CLIP_LANGS = [["auto", "Detect language"], ["en", "English"], ["es", "Spanish"], ["fr", "French"], ["de", "German"], ["ar", "Arabic"], ["pt", "Portuguese"], ["it", "Italian"]];
 const tc = (t) => { t = Math.max(0, Number(t) || 0); const m = Math.floor(t / 60); return `${m}:${(t % 60).toFixed(1).padStart(4, "0")}`; };
@@ -3137,7 +3137,8 @@ async function clipperHome() {
   pickCount(3);
   const length = h("select", { class: "field", id: "cl-len" }, CLIP_LENGTHS.map(([v, t]) => h("option", { value: v, selected: v === "30-50", text: t })));
   const lang = h("select", { class: "field", id: "cl-lang" }, CLIP_LANGS.map(([v, t]) => h("option", { value: v, text: t })));
-  const settings = () => { const [min_s, max_s] = length.value.split("-").map(Number); return { count, min_s, max_s, language: lang.value, channel_id: net.value || null }; };
+  const layout = h("select", { class: "field", id: "cl-layout" }, [["auto", "Automatic"], ["stream", "Stream: camera on top, game below"], ["single", "One picture (no split)"]].map(([v, t]) => h("option", { value: v, text: t })));
+  const settings = () => { const [min_s, max_s] = length.value.split("-").map(Number); return { count, min_s, max_s, language: lang.value, channel_id: net.value || null, layout: layout.value }; };
   const fld = (id, label, el) => h("div", { class: "field-wrap" }, h("label", { for: id, text: label }), el);
   const status = h("p", { class: "muted small", style: "margin:0", hidden: true });
   const start = h("button", { class: "btn primary", type: "submit", text: "Find the Shorts" });
@@ -3162,7 +3163,7 @@ async function clipperHome() {
   } },
     h("h2", { text: "New long video" }),
     h("div", { class: "form-grid" }, fld("cl-link", "Video link", link), fld("cl-title", "Name", title)),
-    h("div", { class: "form-grid" }, fld("cl-net", "For network", net), h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "How many Shorts" }), countSeg), fld("cl-len", "Length", length), fld("cl-lang", "Language spoken", lang)),
+    h("div", { class: "form-grid" }, fld("cl-net", "For network", net), h("div", { class: "field-wrap" }, h("span", { class: "ed-label", text: "How many Shorts" }), countSeg), fld("cl-len", "Length", length), fld("cl-lang", "Language spoken", lang), fld("cl-layout", "Layout", layout)),
     h("div", { class: "row" }, start, upBtn, fileIn, h("span", { class: "muted small", text: "Your own videos only. YouTube, TikTok and Twitch links aren't supported." })),
     status);
 
