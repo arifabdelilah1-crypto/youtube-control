@@ -389,7 +389,7 @@ async function make(body: any, userId: string | null) {
   if (!angle.title) throw new Error("No angle given.");
   const length = Object.hasOwn(LENGTHS, body.length) ? body.length : "short45";
   const ch = await channelOf(body.channel_id);
-  if (body.style === "story") return makeStory(camp, ch, angle, length, ["noir", "paper", "pop"].includes(body.look) ? body.look : "noir", userId);
+  if (body.style === "story") return makeStory(camp, ch, angle, length, ["noir", "paper", "pop", "atlas"].includes(body.look) ? body.look : "noir", userId);
   const out = await deepseek("campaign_script", CAMP_SCRIPT_SYSTEM, JSON.stringify({
     campaign: rulesOf(camp), angle, channel: { name: ch.name, niche: ch.niche, language: ch.language, markets: ch.markets }, length: LENGTHS[length],
   }), userId);

@@ -1,8 +1,9 @@
 // Story stick kit: everything a code-drawn stick-figure story needs. Our own drawing (no outside code).
 // Pure React + SVG, no Remotion import, so a film can be tested in Node before it is rendered (render/story_check.mjs).
 // A film (written by Claude for each video) draws with these pieces; colours come from the look's theme T, so one film
-// works in every look: noir (cinematic night), paper (storybook), pop (bright comic).
+// works in every look: noir (cinematic night), paper (storybook), pop (bright comic), atlas (talking maps).
 import React from "react";
+import { GEO } from "./geo.js";
 
 const h = React.createElement;
 
@@ -46,6 +47,7 @@ export const THEMES = {
     light: "#ffd8a0", glow: "#ffe6b8", cast: ["#e4572e", "#3a86ff", "#ffbe0b", "#8ac926", "#ff4d6d", "#b388eb"],
     money: "#6fbf73", danger: "#ff3b3b", good: "#7bdc8a", screen: "#9fd3ff", paper: "#e8e2d4",
     shadow: 0.55, vignette: 0.75, grain: 0.07, wobble: 0, halftone: 0, caption: { color: "#ffffff", stroke: "rgba(0,0,0,0.85)", weight: 800 },
+    sea: "#0e1a2b", land: "#2a3242", border: "#4a5468",
   },
   paper: {
     name: "paper", bg: "#f2e8d3", sky: ["#cfe3e8", "#f3e5c8"], wall: "#eadbb9", wall2: "#e1cfa7", floor: "#d6bf93", floor2: "#c9ae7c",
@@ -53,6 +55,7 @@ export const THEMES = {
     light: "#fff1c2", glow: "#fff6d8", cast: ["#c8553d", "#2f6690", "#e0a458", "#588157", "#9a6fb0", "#d17a97"],
     money: "#5c9a5a", danger: "#c0392b", good: "#4f8a4b", screen: "#cfe8f2", paper: "#fffdf6",
     shadow: 0.25, vignette: 0.25, grain: 0.05, wobble: 1, halftone: 0, caption: { color: "#2a2018", stroke: "rgba(255,250,240,0.95)", weight: 800 },
+    sea: "#bcd7dc", land: "#efe2c4", border: "#a89070",
   },
   pop: {
     name: "pop", bg: "#ffd23f", sky: ["#3ec1ff", "#a6e8ff"], wall: "#ffd23f", wall2: "#ffb703", floor: "#ff5d8f", floor2: "#e63e72",
@@ -60,6 +63,16 @@ export const THEMES = {
     light: "#ffffff", glow: "#fff7c2", cast: ["#ff3d3d", "#2d6cff", "#11b85c", "#9b5cff", "#ff8a00", "#00b3b3"],
     money: "#11b85c", danger: "#ff2d2d", good: "#11b85c", screen: "#bff4ff", paper: "#ffffff",
     shadow: 0.2, vignette: 0, grain: 0, wobble: 0, halftone: 1, caption: { color: "#ffffff", stroke: "#111111", weight: 900 },
+    sea: "#3ec1ff", land: "#fff3c4", border: "#111111",
+  },
+  // talking maps: an atlas at dusk, countries as characters (Country, MapView)
+  atlas: {
+    name: "atlas", bg: "#0f2740", sky: ["#0f2740", "#1d4a6e"], wall: "#16324d", wall2: "#122a42", floor: "#0f2238", floor2: "#0b1a2c",
+    ink: "#102030", head: "#fff8ec", line: 6, shoe: "#fff8ec", glass: "#9fd3ff", wood: "#8a6a4a", metal: "#7c8a9a", plant: "#4f8a5b",
+    light: "#ffe2a8", glow: "#fff0c8", cast: ["#e85d4a", "#2fa36b", "#f2b134", "#4d8fe0", "#b46fd0", "#f07fa0"],
+    money: "#5cc27a", danger: "#ff4b4b", good: "#5cc27a", screen: "#bfe6ff", paper: "#fbf3e2",
+    shadow: 0.35, vignette: 0.45, grain: 0.04, wobble: 0, halftone: 0, caption: { color: "#ffffff", stroke: "rgba(8,20,32,0.9)", weight: 800 },
+    sea: "#123b5c", land: "#e9dcbf", border: "#7d6b52",
   },
 };
 export const ThemeContext = React.createContext(THEMES.noir);
@@ -540,4 +553,104 @@ export function Shots({ f, shots, W, H }) {
   return h("g", null,
     h("g", { transform: `translate(${fx + dx + sx} ${fy + dy + sy}) scale(${z}) translate(${-fx} ${-fy})` }, s.render(f - s.at, p)),
     dipped || (s.dip && f < s.at + 1) ? h("rect", { x: 0, y: 0, width: W, height: H, fill: "#000" }) : null);
+}
+
+// ---------- talking maps: countries as characters ----------
+const geoOf = (c) => {
+  const k = String(c || "").trim();
+  return GEO[k.toUpperCase()] || Object.values(GEO).find((g) => g.name.toLowerCase() === k.toLowerCase()) || null;
+};
+/** Is this a country the kit can draw? (ISO alpha-2 code like "MA", or the English name like "Morocco") */
+export const hasCountry = (c) => !!geoOf(c);
+
+/**
+ * <Country c="MA" x y size={600} s color mood talk f facing lookX hop opacity face label />
+ *  A country's real outline as a character. x, y = the centre of the shape; size = its longest side in pixels (× s).
+ *  color: its fill (use T.cast[i]); mood: like Figure; talk: 0..1, its mouth moves while it "speaks" (e.g. talk={ramp(f, cue("Morocco"), cueEnd(...))});
+ *  hop: 0..1 a little jump (pop(f, at)); lookX: -1..1 its eyes; label: its name under it (in the video's language).
+ *  map={view}: put it ON a MapView drawn with the same props (view = { W, H, focus, pad, zoom, pan }): exact place and scale, no x/y/size needed.
+ */
+export function Country({ c, x = 0, y = 0, size = 600, s = 1, color, mood = "neutral", talk = 0, f = 0, lookX = 0, hop = 0, opacity = 1, face = true, label = null, tilt = 0, map = null }) {
+  const T = useTheme();
+  const g = geoOf(c);
+  if (!g) return h("g", { opacity }, h("circle", { cx: x, cy: y, r: size * s * 0.3, fill: color || T.cast[0], stroke: T.ink, strokeWidth: T.line }));
+  const [x0, y0, x1, y1] = g.box;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  let k = (size * s) / Math.max(x1 - x0, y1 - y0, 1);
+  // map: the same props as the MapView under it: the character sits exactly on its place on that map, at the map's scale
+  if (map && map.W) {
+    const m = mapFrame(map);
+    k = m.k * s;
+    x = map.W / 2 + (cx - m.cx) * m.k; y = map.H / 2 + (cy - m.cy) * m.k;
+    size = Math.max(x1 - x0, y1 - y0) * m.k; s = 1;
+  }
+  const breathe = 1 + wave(f, 0.07, 0.012, (g.name.length || 1) * 0.7);
+  const jump = -Math.sin(clamp01(hop) * Math.PI) * size * s * 0.12;
+  const fill = color || T.cast[0];
+  // the face sits on the largest part, sized to the shape's smaller side
+  const fx = (g.c[0] - cx) * k, fy = (g.c[1] - cy) * k;
+  const r = Math.max(18, Math.min((x1 - x0) * k, (y1 - y0) * k) * 0.2);
+  const blink = (f + g.name.length * 13) % 117 < 4;
+  const open = clamp01(talk) * (0.35 + 0.65 * Math.abs(Math.sin(f * 0.62 + g.name.length)));
+  const ink = T.ink;
+  return h("g", { opacity, transform: `translate(${x} ${y + jump}) rotate(${tilt}) scale(${breathe})` },
+    map ? null : h("ellipse", { cx: 0, cy: (y1 - cy) * k + size * s * 0.05 - jump, rx: (x1 - x0) * k * 0.45, ry: size * s * 0.04, fill: alpha(ink, T.shadow * 0.6) }),
+    h("path", { d: g.shape || g.full, transform: `scale(${k}) translate(${-cx} ${-cy})`, fill, stroke: ink, strokeWidth: (T.line * 1.1) / k, strokeLinejoin: "round" }),
+    face ? h("g", { transform: `translate(${fx} ${fy})` },
+      h("circle", { cx: -r * 0.34, cy: -r * 0.08, r: r * 0.24, fill: T.head, opacity: 0.95 }),
+      h("circle", { cx: r * 0.34, cy: -r * 0.08, r: r * 0.24, fill: T.head, opacity: 0.95 }),
+      open > 0.02
+        ? h("g", null, h(Face, { mood: mood === "happy" || mood === "sad" || mood === "angry" || mood === "worried" ? mood : "neutral", blink, r, ink, lookX }),
+          h("rect", { x: -r * 0.32, y: r * 0.3, width: r * 0.64, height: r * 0.34, fill: fill }),
+          h("ellipse", { cx: 0, cy: r * 0.44, rx: r * 0.2, ry: r * (0.05 + 0.2 * open), fill: ink }))
+        : h(Face, { mood, blink, r, ink, lookX })) : null,
+    label ? h("text", { x: 0, y: (y1 - cy) * k + size * s * 0.16, textAnchor: "middle", fontSize: Math.max(28, size * s * 0.09), fontWeight: 800,
+      fill: T.caption.color, stroke: T.caption.stroke, strokeWidth: 6, paintOrder: "stroke", fontFamily: "Inter, Noto Sans Arabic, sans-serif" }, label) : null);
+}
+
+/**
+ * <MapView W={W} H={H} focus={["MA", "DZ"]} pad={0.25} highlight={{ MA: T.cast[0], DZ: T.cast[1] }} dim={0.4} zoom={1} pan={[0, 0]} />
+ *  A real map of the region around the focus countries (the sea, every country, borders), framed to fit them. highlight colours some
+ *  countries; dim (0..1) fades the others; zoom > 1 pushes in; pan moves the framing (fractions of W, H). Draw it first, as the set.
+ *  labels: true (English names of the highlighted ones) or { MA: "المغرب", DZ: "الجزائر" } (your own words, in the video's language).
+ *  mapPoint(...) (same props + the country) gives the screen x, y of a country's centre on that map, to put a Country, a pin or an arrow there.
+ */
+function mapFrame({ W, H, focus = [], pad = 0.25, zoom = 1, pan = [0, 0] }) {
+  const gs = [].concat(focus).map(geoOf).filter(Boolean);
+  let [x0, y0, x1, y1] = gs.length ? gs.reduce((b, g) => [Math.min(b[0], g.box[0]), Math.min(b[1], g.box[1]), Math.max(b[2], g.box[2]), Math.max(b[3], g.box[3])], [Infinity, Infinity, -Infinity, -Infinity]) : [0, 300, 4000, 3300];
+  const w = Math.max(x1 - x0, 20), hgt = Math.max(y1 - y0, 20);
+  const k = Math.min(W / (w * (1 + 2 * pad)), H / (hgt * (1 + 2 * pad))) * (zoom || 1);
+  const cx = (x0 + x1) / 2 - (pan[0] || 0) * W / k, cy = (y0 + y1) / 2 - (pan[1] || 0) * H / k;
+  return { k, cx, cy, view: [cx - W / 2 / k, cy - H / 2 / k, cx + W / 2 / k, cy + H / 2 / k] };
+}
+export function mapPoint({ W, H, focus, pad, zoom, pan }, c) {
+  const g = geoOf(c);
+  const m = mapFrame({ W, H, focus, pad, zoom, pan });
+  if (!g) return [W / 2, H / 2];
+  return [W / 2 + (g.c[0] - m.cx) * m.k, H / 2 + (g.c[1] - m.cy) * m.k];
+}
+export function MapView({ W, H, focus = [], pad = 0.25, zoom = 1, pan = [0, 0], highlight = {}, dim = 0, labels = false }) {
+  const T = useTheme();
+  const m = mapFrame({ W, H, focus, pad, zoom, pan });
+  const [vx0, vy0, vx1, vy1] = m.view;
+  const hl = {};
+  for (const [key, col] of Object.entries(highlight || {})) { const g = geoOf(key); if (g) hl[g.name] = col; }
+  const shown = Object.values(GEO).filter((g) => {
+    const [a, b, c2, d] = g.box[0] !== undefined ? g.box : [0, 0, 0, 0];
+    return !(c2 < vx0 || a > vx1 || d < vy0 || b > vy1) || hl[g.name];
+  });
+  const sw = Math.max(0.6, T.line * 0.35) / m.k;
+  return h("g", null,
+    h("rect", { x: 0, y: 0, width: W, height: H, fill: T.sea }),
+    h("g", { transform: `translate(${W / 2} ${H / 2}) scale(${m.k}) translate(${-m.cx} ${-m.cy})` },
+      shown.map((g) => h("path", { key: g.name, d: g.full, fill: hl[g.name] || T.land, opacity: hl[g.name] ? 1 : 1 - clamp01(dim) * 0.6,
+        stroke: hl[g.name] ? T.ink : T.border, strokeWidth: hl[g.name] ? sw * 2.2 : sw, strokeLinejoin: "round" }))),
+    labels ? Object.entries(labels === true ? Object.fromEntries(Object.keys(hl).map((n) => [n, n])) : labels).map(([key, text]) => {
+      const g = geoOf(key);
+      if (!g) return null;
+      const name = text;
+      const px = W / 2 + (g.c[0] - m.cx) * m.k, py = H / 2 + (g.c[1] - m.cy) * m.k;
+      return h("text", { key: `l${key}`, x: px, y: py, textAnchor: "middle", fontSize: Math.max(26, W * 0.03), fontWeight: 800, fill: T.caption.color,
+        stroke: T.caption.stroke, strokeWidth: 6, paintOrder: "stroke", fontFamily: "Inter, Noto Sans Arabic, sans-serif" }, name);
+    }) : null);
 }

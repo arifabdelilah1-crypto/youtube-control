@@ -383,7 +383,7 @@ const MAKE_STYLES = {
   mix: { label: "Footage + drawings", hint: "Real footage, with Claude's animated drawings for numbers and ideas.", cost: 0.06,
     looks: [["glow", "Glow"], ["clean", "Clean"], ["comic", "Comic"], ["neon", "Neon"], ["sunset", "Sunset"], ["whiteboard", "Whiteboard"]] },
   story: { label: "Story stick", hint: "A stick-figure film Claude draws in code. Best for stories and \"what if\".", cost: 0.3,
-    looks: [["noir", "Noir (night, cinematic)"], ["paper", "Storybook"], ["pop", "Pop (bright comic)"]] },
+    looks: [["noir", "Noir (night, cinematic)"], ["paper", "Storybook"], ["pop", "Pop (bright comic)"], ["atlas", "Talking maps (countries as characters)"]] },
 };
 const LANG_NAMES_UI = { en: "English", fr: "French", de: "German", es: "Spanish", ar: "Arabic", it: "Italian", pt: "Portuguese", nl: "Dutch" };
 const PLATFORM_LABELS = { youtube: "YouTube", tiktok: "TikTok", facebook: "Facebook", instagram: "Instagram", twitter: "X", pinterest: "Pinterest" };
@@ -4060,7 +4060,7 @@ VIEWS.campaign = async (route) => {
   // the style: stock footage with a narrator (DeepSeek writes the script), or a Story stick film (Claude writes the story and draws it)
   let mkStyle = "stock", mkLook = "noir";
   const styleBox = h("div", {}), lookBox = h("div", {});
-  const pickLook = (v) => { mkLook = v; lookBox.replaceChildren(seg([["noir", "Noir"], ["paper", "Storybook"], ["pop", "Pop"]], mkLook, pickLook, "Story look")); };
+  const pickLook = (v) => { mkLook = v; lookBox.replaceChildren(seg([["noir", "Noir"], ["paper", "Storybook"], ["pop", "Pop"], ["atlas", "Talking maps"]], mkLook, pickLook, "Story look")); };
   const pickStyle = (v) => { mkStyle = v; styleBox.replaceChildren(seg([["stock", "Stock footage"], ["story", "Story stick"]], mkStyle, pickStyle, "Style")); lookWrap.hidden = v !== "story"; styleNote.textContent = STYLE_NOTES[v]; };
   const STYLE_NOTES = { stock: "DeepSeek writes each script with the campaign's rules; the video uses stock footage and a narrator.",
     story: "Claude writes a stick-figure story with the campaign's rules and draws its film (about $0.30 a video, a few minutes each)." };

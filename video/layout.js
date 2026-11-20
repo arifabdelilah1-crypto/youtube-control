@@ -261,7 +261,7 @@ export function buildProps(project, scenes, urls = {}) {
   });
   return {
     style: story ? "story" : drawn ? "explainer" : mix ? "mix" : "classic",
-    story: story ? { code: String(story.code), look: ["noir", "paper", "pop"].includes(story.look) ? story.look : "noir" } : null,
+    story: story ? { code: String(story.code), look: ["noir", "paper", "pop", "atlas"].includes(story.look) ? story.look : "noir" } : null,
     look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow")
       : mix ? (MIX_LOOKS.includes(project.settings.mix?.look) ? project.settings.mix.look : "glow") : null,
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),

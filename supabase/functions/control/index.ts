@@ -23,7 +23,7 @@ const UUID = /^[0-9a-f-]{36}$/;
 const clean = (s: unknown, n: number) => String(s ?? "").replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 const db = createClient(URL_, SERVICE);
 const LANGS: Record<string, string> = { en: "English", fr: "French", ar: "Arabic", es: "Spanish", de: "German" };
-const STORY_LOOKS = new Set(["noir", "paper", "pop"]);
+const STORY_LOOKS = new Set(["noir", "paper", "pop", "atlas"]);
 const MIX_LOOKS = new Set(["glow", "clean", "whiteboard", "sunset", "notes", "minimal", "comic", "neon", "vintage", "stick", "stickcolor"]);
 
 const IDEAS_SYSTEM = `You are the content strategist of one faceless short-video network (YouTube Shorts, TikTok, Reels).
