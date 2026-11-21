@@ -211,6 +211,8 @@ Deno.serve(async (req) => {
         publish: o.publish === "next" ? "next" : "ask",
         video_style: illustrated ? "illustrated" : o.video_style === "mix" ? "mix" : "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
         look: Object.hasOwn(LOOKS, o.look || "") ? o.look : "glow",
+        // Illustrated: share of painted scenes (0.3-0.85) and picture rhythm (normal | slow): the two cost levers
+        ...(illustrated ? { paint_share: Math.min(0.85, Math.max(0.3, Number(o.paint_share) || 0.75)), rhythm: o.rhythm === "slow" ? "slow" : "normal" } : {}),
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", id);
       const { data: run, error } = await db.from("video_runs").insert({ idea_id: id, channel_id: channelId, options, owner_id: ownerId }).select().single();

@@ -1397,6 +1397,11 @@ VIEWS.animation = async () => {
   f.aspect.addEventListener("change", () => { fillLengths(f.aspect.value === "16:9" ? "long3" : "short45"); showFormat(); showCost(); });
   f.model = h("select", { id: "a-model", class: "field" }, Object.entries(EXPLAINER_MODELS).map(([v, m]) => h("option", { value: v, selected: animUi.model === v, text: m.label })));
   f.voice = h("select", { id: "a-voice", class: "field" });
+  // Illustrated: the two cost levers
+  f.share = h("select", { id: "a-share", class: "field" }, [["0.85", "85% paintings (richest)"], ["0.75", "75% paintings"], ["0.6", "60% paintings"], ["0.5", "50% paintings"], ["0.4", "40% paintings (cheapest)"]]
+    .map(([v, t]) => h("option", { value: v, selected: v === (animUi.share || "0.75"), text: t })));
+  f.rhythm = h("select", { id: "a-rhythm", class: "field" }, [["normal", "A new picture every 12-18 s"], ["slow", "Every 18-24 s (fewer pictures, cheaper)"]]
+    .map(([v, t]) => h("option", { value: v, selected: v === (animUi.rhythm || "normal"), text: t })));
   f.music = h("input", { type: "checkbox", checked: true });
   f.next = h("input", { type: "checkbox" });
   const langNow = () => f.language.value || channelById(f.channel.value)?.video_style?.language || channelById(f.channel.value)?.language || "en";
@@ -1405,17 +1410,27 @@ VIEWS.animation = async () => {
   const showCost = () => {
     animUi.model = f.model.value; animUi.length = f.length.value;
     const docMin = { doc10: 10, doc14: 14, doc20: 20, doc25: 25 }[f.length.value];
-    if (ANIM_LOOKS[animUi.look]?.illustrated) { cost.textContent = `About $${(0.3 + (docMin || 14) * 0.16).toFixed(2)}: the paintings (about $0.03 each) and the plan. DeepSeek's narration, the voice and the render cost almost nothing.`; return; }
+    if (ANIM_LOOKS[animUi.look]?.illustrated) {
+      // pictures: 12 in the first minute, then one every ~15 s (normal) or ~21 s (slow); a share of them painted at $0.02, plus the plan
+      const m = docMin || 14, pictures = 12 + (m - 1) * 60 / (f.rhythm.value === "slow" ? 21 : 15);
+      const paints = Math.round(pictures * Number(f.share.value)) + 1;
+      cost.textContent = `About $${(paints * 0.02 + 0.02 * m + 0.05).toFixed(2)}: ~${Math.round(pictures)} pictures, ~${paints} of them painted ($0.02 each, with the thumbnail), and Claude's plan. Maps, icons, the narration, the voice and the render cost almost nothing.`;
+      return;
+    }
     cost.textContent = ANIM_LOOKS[animUi.look]?.story ? `About $${storyCost(f.model.value, f.length.value).toFixed(2)} for Claude's story and film code. The voice and the render cost nothing.`
       : `About $${animCost(f.model.value, f.length.value).toFixed(2)} for Claude's plan. The voice and the render cost nothing.`;
   };
   f.language.addEventListener("change", fillVoices); f.channel.addEventListener("change", fillVoices);
   [f.model, f.length].forEach((el) => el.addEventListener("change", showCost));
+  [f.share, f.rhythm].forEach((el) => el.addEventListener("change", () => { animUi.share = f.share.value; animUi.rhythm = f.rhythm.value; showCost(); }));
   fillVoices(); showCost(); showFormat();
 
   // a Mix: the look of its drawn scenes
   f.mixLook = h("select", { id: "a-mix-look", class: "field" }, MIX_DRAW_LOOKS.map(([k, l]) => h("option", { value: k, selected: animUi.mixLook === k, text: l.label })));
   f.mixLook.addEventListener("change", () => { animUi.mixLook = f.mixLook.value; });
+  const docWrap = h("div", { class: "form-grid", hidden: !ANIM_LOOKS[animUi.look]?.illustrated },
+    field("a-share", "Painted scenes", f.share, h("p", { class: "muted small", style: "margin:0", text: "The paintings are the cost. The other scenes are maps and icon scenes (free) and a few real photos. The first minute stays mostly painted." })),
+    field("a-rhythm", "Picture rhythm after the first minute", f.rhythm, h("p", { class: "muted small", style: "margin:0", text: "The first minute always changes picture every ~5 s." })));
   const mixWrap = h("div", { class: "form-grid", hidden: !ANIM_LOOKS[animUi.look]?.mix }, field("a-mix-look", "Look of the drawn scenes", f.mixLook,
     h("p", { class: "muted small", style: "margin:0", text: "The real scenes get a light tint of it, and the captions and name cards take its accent colour." })));
 
@@ -1429,7 +1444,7 @@ VIEWS.animation = async () => {
         const kind = (x) => (x?.illustrated ? "illustrated" : x?.story ? "story" : x?.mix ? "mix" : "drawn");
         const was = kind(ANIM_LOOKS[animUi.look]);
         animUi.look = k; paintLooks();
-        mixWrap.hidden = !l.mix;
+        mixWrap.hidden = !l.mix; docWrap.hidden = !l.illustrated;
         // a story or a Mix has no music by default; switching kinds refreshes the lengths and the price
         if (was !== kind(l)) { fillLengths(l.illustrated ? "doc14" : l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); f.music.checked = !l.story && !l.mix && !l.illustrated; showCost(); }
       } },
@@ -1455,7 +1470,7 @@ VIEWS.animation = async () => {
       const isDoc = !!ANIM_LOOKS[animUi.look]?.illustrated;
       await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
         look: isMix ? f.mixLook.value : isDoc ? "glow" : animUi.look, ai_model: f.model.value, aspect: isDoc ? "16:9" : f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
-        music: isDoc ? false : f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask", ...(isMix ? { video_style: "mix" } : isDoc ? { video_style: "illustrated" } : {}) } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
+        music: isDoc ? false : f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask", ...(isMix ? { video_style: "mix" } : isDoc ? { video_style: "illustrated", paint_share: Number(f.share.value), rhythm: f.rhythm.value } : {}) } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
       toast("Making your animation");
       f.subject.value = ""; f.idea.value = "";
       await reload();
@@ -1463,7 +1478,7 @@ VIEWS.animation = async () => {
     go.disabled = false; go.textContent = "Create animation";
   } },
     h("div", { class: "card-head" }, h("h2", { text: "New animation" })),
-    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 4 are Story: Claude draws a whole film, Talking maps included; then Mix, with real footage)` }), looks, lookNote, mixWrap,
+    h("div", { class: "eyebrow", text: `Style · ${Object.keys(ANIM_LOOKS).length} looks (the first 4 are Story: Claude draws a whole film, Talking maps included; then Mix, with real footage)` }), looks, lookNote, mixWrap, docWrap,
     h("div", { class: "form-grid anim-subject" }, field("a-subject", "Subject", f.subject), field("a-idea", "Or one of your ideas", f.idea)),
     h("div", { class: "form-grid" }, field("a-channel", "Network", f.channel), field("a-language", "Language", f.language), field("a-aspect", "Format", f.aspect, formatNote), field("a-length", "Length", f.length)),
     h("div", { class: "form-grid" }, field("a-model", "AI that writes and draws it", f.model, cost), field("a-voice", "Voice", f.voice)),
