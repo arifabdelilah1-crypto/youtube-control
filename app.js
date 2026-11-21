@@ -5158,7 +5158,7 @@ VIEWS.settings = async (route) => {
     keyRow("deepseek", "DeepSeek", "Paste a DeepSeek key (sk-…)", "https://platform.deepseek.com/api_keys"),
     keyRow("openai", "OpenAI", "Paste an OpenAI key (sk-…)", "https://platform.openai.com/api-keys"),
     keyRow("anthropic", "Claude", "Paste a Claude key (sk-ant-…)", "https://console.anthropic.com/settings/keys"),
-    keyRow("alibaba", "Alibaba images", "Paste an Alibaba Model Studio (DashScope) key (sk-…): it paints the illustrated scenes", "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key"));
+    keyRow("alibaba", "Image AI (RunPod or Alibaba)", "Paste a RunPod API key (Qwen-Image public endpoint) or an Alibaba Model Studio key (sk-…): it paints the illustrated scenes", "https://www.runpod.io/console/user/settings"));
 
   // the AI safety cap (migration 0037): AI calls allowed in 24 h, all tasks together. A video that reaches it waits for room.
   const capRow = (await q(sb.rpc("ai_runs_status")).catch(() => []))?.[0];

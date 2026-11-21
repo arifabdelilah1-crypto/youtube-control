@@ -1,5 +1,5 @@
 // "Illustrated" long videos (options.video_style = "illustrated", 16:9, 10 to 25 minutes): a documentary told by a narrator, shown as
-//   paint  a painted scene (Alibaba Model Studio text-to-image) with the channel's stick-figure character, slow camera move
+//   paint  a painted scene (Qwen-Image: on RunPod's public endpoint with a RunPod key, or Alibaba Model Studio with an sk- key), slow camera move
 //   map    a real map, coded (video/Mix.jsx MapScene): countries lit and named, a year badge, a ship along a route
 //   icons  a big word and up to 4 icons, coded (video/Mix.jsx IconsScene)
 //   photo  a real photo or clip from Wikimedia Commons / Pixabay / Pexels (the normal clip search, with credits)
@@ -95,7 +95,38 @@ async function claude({ key, system, user, maxTokens = 16000, log }) {
 const DASH_HOSTS = ["https://dashscope-intl.aliyuncs.com", "https://dashscope.aliyuncs.com"];
 const DASH_MODELS = [["qwen-image", "1664*928"], ["wan2.2-t2i-flash", "1280*720"]];
 let dashHost = null, dashModel = null;
+/** A key from RunPod (not "sk-"): the RunPod public endpoint for Qwen-Image (pay per image, nothing to keep running). */
+const isRunpod = (key) => !String(key).startsWith("sk-");
+async function paintRunpod(key, prompt, log) {
+  let lastError = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const r = await fetch("https://api.runpod.ai/v2/qwen-image-t2i/runsync", {
+      method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ input: { prompt: prompt.slice(0, 2000), negative_prompt: NEGATIVE, size: "1536*864", seed: -1, enable_safety_checker: true } }),
+      signal: AbortSignal.timeout(300000),
+    }).catch((e) => ({ ok: false, status: 0, json: async () => ({ error: e.message }) }));
+    let data = await r.json().catch(() => ({}));
+    // a long queue: runsync hands back the job, which is then followed until it ends
+    for (let i = 0; data.id && ["IN_QUEUE", "IN_PROGRESS"].includes(data.status) && i < 60; i++) {
+      await wait(5000);
+      data = await fetch(`https://api.runpod.ai/v2/qwen-image-t2i/status/${data.id}`, { headers: { Authorization: `Bearer ${key}` } }).then((x) => x.json()).catch(() => data);
+    }
+    const url = data.output?.result || data.output?.image_url || (Array.isArray(data.output) ? data.output[0]?.url || data.output[0] : null);
+    if (data.status === "COMPLETED" && typeof url === "string") {
+      const img = await fetch(url);
+      if (!img.ok) throw new Error(`RunPod: the picture couldn't be downloaded (${img.status})`);
+      return Buffer.from(await img.arrayBuffer());
+    }
+    lastError = `${r.status} ${data.status || ""} ${String(data.error || data.output?.error || "").slice(0, 300)}`.trim();
+    log(`RunPod: ${lastError}`);
+    if (r.status === 401 || r.status === 403) break;
+    if (/safety|nsfw/i.test(lastError)) break;  // the same prompt would be refused again
+    await wait(5000 * (attempt + 1));
+  }
+  throw new Error(`RunPod couldn't paint: ${lastError}`);
+}
 async function paint(key, prompt, log) {
+  if (isRunpod(key)) return paintRunpod(key, prompt, log);
   const hosts = dashHost ? [dashHost] : DASH_HOSTS;
   const models = dashModel ? [dashModel] : DASH_MODELS;
   let lastError = "";
