@@ -239,6 +239,30 @@ Deno.serve(async (req) => {
     }
     // pg_cron "publish-status": Blotato posts whose slot has passed get their result, YouTube ones are marked live
     if (body.action === "blotato_sync" && isService) return json(await blotatoSync());
+    // a video already on YouTube gets its idea's current title, description and tags (e.g. the chapters added after the upload)
+    if (body.action === "update_meta" && isService) {
+      if (!UUID.test(body.queue_id || "")) return json({ error: "queue_id required" }, 400);
+      const { data: row } = await db.from("publish_queue").select("*").eq("id", body.queue_id).single();
+      if (!row?.youtube_video_id || row.method !== "youtube") return json({ error: "not a direct YouTube upload" }, 400);
+      const { data: idea } = row.idea_id ? await db.from("ideas").select("video_title,video_description,video_tags").eq("id", row.idea_id).single() : { data: null };
+      const { data: refresh } = await db.rpc("get_channel_refresh_token", { p_channel_id: row.channel_id });
+      if (!refresh) return json({ error: "channel not connected" }, 400);
+      const t = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, refresh_token: refresh, grant_type: "refresh_token" }) })).json();
+      if (!t.access_token) return json({ error: `Google token: ${t.error_description || t.error}` }, 400);
+      const A = { Authorization: `Bearer ${t.access_token}` };
+      const cur = await (await fetch(`https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${row.youtube_video_id}`, { headers: A })).json();
+      const sn = cur.items?.[0]?.snippet;
+      if (!sn) return json({ error: "video not found on YouTube" }, 404);
+      const snippet = { title: String(idea?.video_title || sn.title).slice(0, 100), description: String(idea?.video_description || sn.description).slice(0, 4900),
+        tags: (idea?.video_tags?.length ? idea.video_tags : sn.tags || []).slice(0, 30), categoryId: sn.categoryId, defaultLanguage: sn.defaultLanguage };
+      const r = await fetch("https://www.googleapis.com/youtube/v3/videos?part=snippet", { method: "PUT", headers: { ...A, "Content-Type": "application/json" },
+        body: JSON.stringify({ id: row.youtube_video_id, snippet }) });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) return json({ error: `YouTube ${r.status}: ${JSON.stringify(out).slice(0, 300)}` }, 502);
+      await db.from("publish_queue").update({ title: snippet.title, description: snippet.description }).eq("id", row.id);
+      return json({ ok: true, video: row.youtube_video_id });
+    }
     if (body.action === "token" || body.action === "auto") {
       if (!isService) return json({ error: "not allowed" }, 403);
       if (body.action === "auto") {
