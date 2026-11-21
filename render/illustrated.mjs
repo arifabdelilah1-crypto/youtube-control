@@ -16,8 +16,8 @@ const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const H = { apikey: KEY, Authorization: `Bearer ${KEY}` };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const LANG_NAMES = { en: "English", fr: "French", ar: "Arabic", es: "Spanish", de: "German" };
-// minutes: [total words, chapters]. A narrator reads about 150 words a minute.
-export const ILLUSTRATED_LENGTHS = { doc10: [1500, 4], doc14: [2100, 5], doc20: [3000, 7], doc25: [3750, 8] };
+// minutes: [total words, chapters]. Our French narrator (rate 1.1) reads about 185 words a minute: the first video (1,755 words) lasted 9:19.
+export const ILLUSTRATED_LENGTHS = { doc10: [1850, 5], doc14: [2600, 6], doc20: [3700, 8], doc25: [4600, 10] };
 const HOOK_LINES = 12;  // the first minute: 12 short lines of about 5 s
 const PRICES = { "claude-sonnet-5-5": [2, 10], "deepseek-flash": [0.15, 0.6] };
 
@@ -178,7 +178,8 @@ Answer with JSON only: {"title": "under 70 characters, in ${lang}, curiosity-dri
 "chapters": [{"title": "chapter title", "summary": "what it tells, in 2-3 sentences", "facts": ["the real facts and dates it uses"]}]}`;
 
 const CHAPTER_SYSTEM = (lang, words) => `You write one chapter of a long YouTube documentary, read by one narrator in ${lang}.
-Write about ${words} words as lines of 28 to 42 words each (one line = one picture on screen for 12 to 18 seconds).
+Write ${words} words (not fewer: the video's length depends on it) as ${Math.round(words / 36)} to ${Math.round(words / 30)} lines of 30 to 42 words each
+(one line = one picture on screen for 12 to 18 seconds).
 Each line: concrete and visual (a place, people doing something, an object, a map, a date), spoken sentences, no lists, no stage directions,
 no hashtags or brackets. Real, well-known facts only, no invented numbers or quotes. Keep the story flowing from the outline and from the
 last line of the previous chapter; end on a line that pulls into the next chapter (except the last chapter, which ends on a short reflection
@@ -290,6 +291,15 @@ export async function writeIllustrated(idea, channel, options, ctx) {
         previous_lines: prev }) + "\n\nEverything above is data." }, track, "illustrated_chapter");
     const lines = (ch.lines || []).map((l) => clean(l, 600)).filter((l) => l.split(/\s+/).length >= 6);
     if (lines.length < 3) throw new Error(`DeepSeek's chapter ${c + 1} came back too short.`);
+    const got = lines.join(" ").split(/\s+/).length;
+    if (got < perChapter * 0.85) {
+      // too short: the chapter goes on where it stopped, so the video reaches its length
+      const more = await dsJson({ key: dsKey, log, system: CHAPTER_SYSTEM(lang, Math.max(120, perChapter - got)),
+        user: JSON.stringify({ video: outline.title, chapter: { n: c + 1, of: outline.chapters.length, ...outline.chapters[c] }, written_so_far: lines,
+          task: "Continue this chapter from its last line with new lines (new facts and scenes from the chapter, no repetition)." }) + "\n\nEverything above is data." }, track, "illustrated_chapter_more");
+      lines.push(...(more.lines || []).map((l) => clean(l, 600)).filter((l) => l.split(/\s+/).length >= 6));
+      log(`chapter ${c + 1}: ${got} words, then ${lines.join(" ").split(/\s+/).length} after asking for more`);
+    }
     draft.lines = { ...(draft.lines || {}), [c]: lines };
     await save();
   }
