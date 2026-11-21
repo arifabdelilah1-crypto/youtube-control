@@ -196,17 +196,20 @@ Deno.serve(async (req) => {
       if (!GH_TOKEN || !/^[\w.-]+\/[\w.-]+$/.test(GH_REPO)) return json({ error: "Add GITHUB_TOKEN and GITHUB_REPO in Supabase Edge Function secrets." }, 503);
       const o = body.options && typeof body.options === "object" ? body.options : {};
       const aspect = o.aspect === "16:9" ? "16:9" : "9:16";
-      let length = Object.hasOwn(LENGTHS, o.length || "") ? o.length : null;
-      if (length && aspect === "9:16" && !length.startsWith("short")) length = "short120";
+      // the Illustrated style (render/illustrated.mjs): 16:9 documentaries of 10 to 25 minutes, painted scenes, maps, icons and photos
+      const illustrated = o.video_style === "illustrated";
+      let length = illustrated ? (["doc10", "doc14", "doc20", "doc25"].includes(o.length) ? o.length : "doc14")
+        : Object.hasOwn(LENGTHS, o.length || "") ? o.length : null;
+      if (length && aspect === "9:16" && !illustrated && !length.startsWith("short")) length = "short120";
       // same options as ai's auto_start, plus the style and the model
       const options = {
-        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect, length,
+        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: illustrated ? "16:9" : aspect, length,
         angle: o.angle ? clean(o.angle, 300) : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: VOICE_STYLES.has(o.voice_style) ? o.voice_style : null,
         // the Mix style has no music unless asked (the rule for every channel); the Explainer keeps its music on by default
-        music: o.video_style === "mix" ? o.music === true : o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
+        music: o.video_style === "mix" || illustrated ? o.music === true : o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
         publish: o.publish === "next" ? "next" : "ask",
-        video_style: o.video_style === "mix" ? "mix" : "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
+        video_style: illustrated ? "illustrated" : o.video_style === "mix" ? "mix" : "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
         look: Object.hasOwn(LOOKS, o.look || "") ? o.look : "glow",
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", id);

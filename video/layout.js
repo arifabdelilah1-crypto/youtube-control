@@ -173,7 +173,8 @@ export const EXPLAINER_LAYOUTS = ["title", "row", "journey", "compare", "checkli
 export const EXPLAINER_LOOKS = ["glow", "whiteboard", "kinetic", "blueprint", "chalkboard", "neon", "comic", "terminal", "vintage", "clean", "sunset", "badges", "notes", "minimal", "stick", "stickcolor", "stickdoodle"];
 const EXPLAINER_KINDS = ["icon", "person", "person_hat", "child"];
 // the Mix style (video/Mix.jsx): settings.mix = {look, scenes: [{kind, layout, heading, items, …}]}, one per scene
-export const MIX_KINDS = ["footage", "drawn", "overlay"];
+// map and icons: the Illustrated style's coded scenes (a real map with a route and a year; a big word with icons)
+export const MIX_KINDS = ["footage", "drawn", "overlay", "map", "icons"];
 // the looks a Mix can draw with: the sliding ones (kinetic is a whole different film)
 export const MIX_LOOKS = EXPLAINER_LOOKS.filter((l) => l !== "kinetic");
 /** A Mix scene's kind; a scene without a usable plan shows its clip. */
@@ -246,7 +247,11 @@ export function buildProps(project, scenes, urls = {}) {
       groups: captionGroups(words, story ? 6 : drawn ? 5 : settings.captions.words || 3),
       ...(drawn ? { x: explainerScene(drawn[i], words, sceneSeconds(s)) } : {}),
       // a Mix scene: its kind, and the drawing of drawn and overlay scenes (a footage scene shows its clip)
-      ...(mix ? (() => { const kind = mixKind(mix[i], s.clip); return { kind, ...(kind !== "footage" ? { x: explainerScene(mix[i] || { layout: "title", heading: "" }, words, sceneSeconds(s)) } : {}) }; })() : {}),
+      ...(mix ? (() => {
+        const kind = mixKind(mix[i], s.clip);
+        if (kind === "map" || kind === "icons") return { kind, data: mix[i][kind] || {} };
+        return { kind, ...(kind !== "footage" ? { x: explainerScene(mix[i] || { layout: "title", heading: "" }, words, sceneSeconds(s)) } : {}) };
+      })() : {}),
       clip: {
         type: clip.type || "card",
         url: clip.path ? urls.media?.[clip.path] || null : clip.url || null,
@@ -264,6 +269,7 @@ export function buildProps(project, scenes, urls = {}) {
     story: story ? { code: String(story.code), look: ["noir", "paper", "pop", "atlas"].includes(story.look) ? story.look : "noir" } : null,
     look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow")
       : mix ? (MIX_LOOKS.includes(project.settings.mix?.look) ? project.settings.mix.look : "glow") : null,
+    illustrated: !!(mix && project.settings.mix?.illustrated),
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),
     rtl: RTL_LANGS.has(project.language),
     language: project.language,
@@ -292,7 +298,7 @@ export function preRenderCheck(project, scenes) {
   const mix = project.settings?.style === "mix" ? (project.settings.mix?.scenes || []) : null;
   if ((drawn || mix) && !["9:16", "16:9"].includes(project.aspect)) issues.push({ level: "block", text: "Animations are drawn for 9:16 (Short) or 16:9 (YouTube video). Choose one of them on its Studio page." });
   // a Mix's drawn scenes need no clip
-  const cards = drawn ? 0 : ordered.filter((s, i) => (!mix || mixKind(mix[i], s.clip) !== "drawn") && (!s.clip || ["card", "drawn"].includes(s.clip.type))).length;
+  const cards = drawn ? 0 : ordered.filter((s, i) => (!mix || ["footage", "overlay"].includes(mixKind(mix[i], s.clip))) && (!s.clip || ["card", "drawn"].includes(s.clip.type))).length;
   if (cards) issues.push({ level: "warn", text: `${cards} scene(s) have no clip and will show a text card.` });
   const credited = ordered.filter((s) => creditOf(s.clip)).length;
   if (credited) issues.push({ level: "warn", text: `${credited} scene(s) use footage that gets a credit. The credit lines below go in the video description.` });

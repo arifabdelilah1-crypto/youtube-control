@@ -1317,6 +1317,8 @@ const ANIM_LOOKS = {
   paper: { label: "Story · Storybook", story: true, text: "The same kind of story drawn like a picture book: warm paper, soft colours, hand-drawn lines that gently move." },
   pop: { label: "Story · Pop", story: true, text: "A bold comic version: bright flat colours, thick outlines, halftone dots and outlined subtitles." },
   atlas: { label: "Story · Talking maps", story: true, text: "Countries are the characters: real maps light up as each country is named, and the countries themselves talk, react and act out the facts (borders, trade, alliances). Best for “A vs B” subjects like Morocco vs Algeria or USA vs China. DeepSeek writes the narration, Claude draws the film." },
+  // Illustrated (render/illustrated.mjs): a 10-25 minute documentary of painted scenes (Alibaba), coded maps and icons, real photos
+  illustrated: { label: "Illustrated documentary (10-25 min)", illustrated: true, text: "A long YouTube documentary told by a narrator: painted scenes with our stick-figure character (Alibaba paints them), real maps with routes and dates, big-word icon scenes and a few real photos. A new picture every 5 s in the first minute, then every 12-18 s. DeepSeek writes the narration, Claude plans the pictures. 16:9 only. About $2-4 a video, mostly the paintings." },
   // Mix (video/Mix.jsx): Claude decides scene by scene between real footage, a drawing, or a drawing over a dimmed real picture
   mix: { label: "Mix: animation + real footage", mix: true, text: "About half the scenes are real stock clips and photos (Pexels, Pixabay, Wikimedia Commons), the others are Claude's drawings, some laid over a dimmed real picture. The same captions and colours throughout. Pick the look of the drawn parts below." },
   glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
@@ -1371,6 +1373,14 @@ VIEWS.animation = async () => {
   f.aspect = h("select", { id: "a-aspect", class: "field" }, ANIM_FORMATS.map(([v, t]) => h("option", { value: v, selected: animUi.aspect === v, text: t })));
   f.length = h("select", { id: "a-length", class: "field" });
   const fillLengths = (pick) => {
+    // an Illustrated documentary: 10 to 25 minutes, 16:9 only
+    if (ANIM_LOOKS[animUi.look]?.illustrated) {
+      f.aspect.value = "16:9";
+      const docs = [["doc10", "About 10 min"], ["doc14", "About 14 min"], ["doc20", "About 20 min"], ["doc25", "About 25 min"]];
+      const keepDoc = docs.some(([v]) => v === pick) ? pick : "doc14";
+      f.length.replaceChildren(...docs.map(([v, t]) => h("option", { value: v, selected: v === keepDoc, text: t })));
+      return;
+    }
     // a Mix is planned in one call: 3 minutes at most
     const list = ((ANIM_LOOKS[animUi.look]?.story ? STORY_LENGTHS : ANIM_LENGTHS)[f.aspect.value] || ANIM_LENGTHS["9:16"])
       .filter(([v]) => !ANIM_LOOKS[animUi.look]?.mix || !["long5", "long8", "long10"].includes(v));
@@ -1394,6 +1404,8 @@ VIEWS.animation = async () => {
   const cost = h("p", { class: "muted small", style: "margin:0", "aria-live": "polite" });
   const showCost = () => {
     animUi.model = f.model.value; animUi.length = f.length.value;
+    const docMin = { doc10: 10, doc14: 14, doc20: 20, doc25: 25 }[f.length.value];
+    if (ANIM_LOOKS[animUi.look]?.illustrated) { cost.textContent = `About $${(0.3 + (docMin || 14) * 0.16).toFixed(2)}: the paintings (about $0.03 each) and the plan. DeepSeek's narration, the voice and the render cost almost nothing.`; return; }
     cost.textContent = ANIM_LOOKS[animUi.look]?.story ? `About $${storyCost(f.model.value, f.length.value).toFixed(2)} for Claude's story and film code. The voice and the render cost nothing.`
       : `About $${animCost(f.model.value, f.length.value).toFixed(2)} for Claude's plan. The voice and the render cost nothing.`;
   };
@@ -1414,12 +1426,12 @@ VIEWS.animation = async () => {
     if (!ANIM_LOOKS[animUi.look]) animUi.look = "glow";
     looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
       title: l.text, onclick: () => {
-        const kind = (x) => (x?.story ? "story" : x?.mix ? "mix" : "drawn");
+        const kind = (x) => (x?.illustrated ? "illustrated" : x?.story ? "story" : x?.mix ? "mix" : "drawn");
         const was = kind(ANIM_LOOKS[animUi.look]);
         animUi.look = k; paintLooks();
         mixWrap.hidden = !l.mix;
         // a story or a Mix has no music by default; switching kinds refreshes the lengths and the price
-        if (was !== kind(l)) { fillLengths(l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); f.music.checked = !l.story && !l.mix; showCost(); }
+        if (was !== kind(l)) { fillLengths(l.illustrated ? "doc14" : l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); f.music.checked = !l.story && !l.mix && !l.illustrated; showCost(); }
       } },
       h("img", { src: l.img, alt: "", loading: "lazy", width: 120, height: 213 }),
       h("span", { class: "anim-look-name", text: l.label }))));
@@ -1440,9 +1452,10 @@ VIEWS.animation = async () => {
     try {
       const id = picked ? picked.id : (await q(sb.from("ideas").insert({ title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
       const isMix = !!ANIM_LOOKS[animUi.look]?.mix;
+      const isDoc = !!ANIM_LOOKS[animUi.look]?.illustrated;
       await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
-        look: isMix ? f.mixLook.value : animUi.look, ai_model: f.model.value, aspect: f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
-        music: f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask", ...(isMix ? { video_style: "mix" } : {}) } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
+        look: isMix ? f.mixLook.value : isDoc ? "glow" : animUi.look, ai_model: f.model.value, aspect: isDoc ? "16:9" : f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
+        music: isDoc ? false : f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask", ...(isMix ? { video_style: "mix" } : isDoc ? { video_style: "illustrated" } : {}) } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
       toast("Making your animation");
       f.subject.value = ""; f.idea.value = "";
       await reload();

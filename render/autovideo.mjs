@@ -13,6 +13,7 @@ import { PRESETS, presetFx } from "../web/voicefx.js";
 import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage, voiceThreshold } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 import { writeStoryFilm } from "./story.mjs";
+import { writeIllustrated } from "./illustrated.mjs";
 import { deliverToSite } from "./site.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -207,7 +208,7 @@ async function buildScenes(idea, channel, options, project) {
   const ai = idea.ai || {};
   const drawn = options.video_style === "explainer";
   const story = options.video_style === "story" && ai.story?.code;
-  const mix = options.video_style === "mix" && ai.mix?.scenes?.length;
+  const mix = (options.video_style === "mix" || options.video_style === "illustrated") && ai.mix?.scenes?.length;
   const brief = ai.brief || {};
   const language = options.language || ai.language || style.language || channel.language || "en";
   const voiceStyle = options.voice_style || brief.voice_style || "natural";
@@ -228,7 +229,8 @@ async function buildScenes(idea, channel, options, project) {
       style: "story", story: { code: ai.story.code, look: options.look || ai.story.look || "noir" }, hook: { ...(base.hook || {}), enabled: false },
       captions: { ...(base.captions || {}), enabled: false } } : mix ? {
       // the Mix style (video/Mix.jsx): each scene's kind and drawing, without the narration (the script) or the footage searches (FOOTAGE lines)
-      style: "mix", mix: { look: options.look || "glow", model: ai.mix.model || null, scenes: ai.mix.scenes.map(({ narration: _n, footage: _f, ...rest }) => rest) },
+      style: "mix", mix: { look: options.look || "glow", model: ai.mix.model || null, scenes: ai.mix.scenes.map(({ narration: _n, footage: _f, ...rest }) => rest),
+        ...(options.video_style === "illustrated" ? { illustrated: true } : {}) },
       hook: { ...(base.hook || {}), enabled: false } } : { style: "classic" }),
   };
   const out = await call("studio", {
@@ -264,7 +266,7 @@ async function chooseClips(projectId, subject, aspect, note, mix = null) {
   const all = (await sceneRows(projectId)).map((s) => ({ ...s, candidates: (s.candidates || []).filter(usable) }));
   // a recipe video: a scene planned on one of the article's own photos shows that photo, with no search and no credit line
   const given = (i) => (mix && mix[i]?.image?.path && mixKind(mix[i], { type: "image" }) !== "drawn" ? mix[i].image : null);
-  const real = (i) => (!mix || mixKind(mix[i], { type: "video" }) !== "drawn") && !given(i);
+  const real = (i) => (!mix || ["footage", "overlay"].includes(mixKind(mix[i], { type: "video" }))) && !given(i);
   if (mix) for (const [i, s] of all.entries()) {
     const photo = given(i);
     if (photo) await rest("PATCH", "project_scenes", `?id=eq.${s.id}`, { clip: { type: "image", path: photo.path, source: "article", id: `article-${photo.n}`, tags: photo.alt || "", trim: 0 }, candidates: [] });
@@ -514,7 +516,7 @@ async function finalChecks(job, project) {
   if (mix) {
     // a Mix: only black inside its real scenes counts (its drawn scenes may be dark on purpose)
     let at = 0;
-    const realSpans = scenes.map((s, i) => { const from = at; at += sceneSeconds(s) + SCENE_GAP + (i === scenes.length - 1 ? TAIL : 0); return [from, at, mixKind(mix[i], s.clip) !== "drawn"]; })
+    const realSpans = scenes.map((s, i) => { const from = at; at += sceneSeconds(s) + SCENE_GAP + (i === scenes.length - 1 ? TAIL : 0); return [from, at, ["footage", "overlay"].includes(mixKind(mix[i], s.clip))]; })
       .filter(([, , isReal]) => isReal);
     blackSeconds = [...black.matchAll(/black_start:([\d.]+) black_end:([\d.]+)/g)].reduce((t, m) => t + realSpans.reduce((u, [a, b]) =>
       u + Math.max(0, Math.min(b, Number(m[2])) - Math.max(a, Number(m[1]))), 0), 0);
@@ -563,7 +565,9 @@ async function main(id) {
   // the network may have a script to keep, or none yet
   let idea = await one("ideas", run.idea_id);
   const storyStyle = options.video_style === "story";
-  const mixStyle = options.video_style === "mix";
+  // Illustrated: painted scenes (Alibaba), coded maps and icon scenes, real photos; rendered by the Mix renderer
+  const illustrated = options.video_style === "illustrated";
+  const mixStyle = options.video_style === "mix" || illustrated;
   const drawn = options.video_style === "explainer" || storyStyle;
   if (storyStyle) {
     // the film belongs to its words: a kept script keeps its film only if that film was made for it
@@ -573,6 +577,13 @@ async function main(id) {
     if (options.keep_script && idea.ai?.story?.code && lines === String(idea.script || "").trim() && (idea.ai?.language || "en") === lang) await skip("script", "Keeping the film already drawn");
     else await step("script", (note) => writeStoryFilm(idea, channel, options, { ROOT, rest, call, log, note, warn }));
     await skip("review", "The story and its film go together");
+  } else if (illustrated) {
+    const said = String(idea.script || "").split("\n").filter((l) => l.startsWith("VO: ")).map((l) => l.slice(4).trim()).join("\n");
+    const ready = idea.ai?.style === "illustrated" && idea.ai?.mix?.scenes?.length && idea.ai.mix.scenes.map((x) => String(x.narration).trim()).join("\n") === said
+      && idea.ai.mix.scenes.every((x) => x.kind !== "footage" || x.image?.path || x.footage?.length);
+    if (options.keep_script && ready) await skip("script", "Keeping the illustrated plan and its paintings");
+    else await step("script", (note) => writeIllustrated(idea, channel, options, { ROOT, rest, call, log, note, warn }));
+    await skip("review", "The plan keeps its own words");
   } else if (drawn || mixStyle) {
     // the drawing belongs to its words: a kept script keeps its plan only if that plan was made for it
     const key = mixStyle ? "mix" : "explainer";
