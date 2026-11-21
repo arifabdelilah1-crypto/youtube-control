@@ -1412,7 +1412,7 @@ VIEWS.animation = async () => {
     const docMin = { doc10: 10, doc14: 14, doc20: 20, doc25: 25 }[f.length.value];
     if (ANIM_LOOKS[animUi.look]?.illustrated) {
       // pictures: 12 in the first minute, then one every ~15 s (normal) or ~21 s (slow); a share of them painted at $0.02, plus the plan
-      const m = docMin || 14, pictures = 12 + (m - 1) * 60 / (f.rhythm.value === "slow" ? 21 : 15);
+      const m = docMin || 14, pictures = 12 + (m - 1) * 60 / (f.rhythm.value === "slow" ? 15 : 10);
       const paints = Math.round(pictures * Number(f.share.value)) + 1;
       cost.textContent = `About $${(paints * 0.02 + 0.02 * m + 0.05).toFixed(2)}: ~${Math.round(pictures)} pictures, ~${paints} of them painted ($0.02 each, with the thumbnail), and Claude's plan. Maps, icons, the narration, the voice and the render cost almost nothing.`;
       return;
