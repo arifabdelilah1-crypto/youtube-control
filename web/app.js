@@ -5141,10 +5141,11 @@ VIEWS.settings = async (route) => {
       msg);
   };
   const keysBox = h("section", { class: "card", id: "ai-keys" },
-    h("div", { class: "card-head" }, h("h2", { text: "AI keys" }), h("span", { class: "muted small", text: "For the Brain. Kept encrypted on the server: once saved, a key can't be shown again, only replaced or removed." })),
+    h("div", { class: "card-head" }, h("h2", { text: "AI keys" }), h("span", { class: "muted small", text: "For the Brain and the illustrated videos. Kept encrypted on the server: once saved, a key can't be shown again, only replaced or removed." })),
     keyRow("deepseek", "DeepSeek", "Paste a DeepSeek key (sk-…)", "https://platform.deepseek.com/api_keys"),
     keyRow("openai", "OpenAI", "Paste an OpenAI key (sk-…)", "https://platform.openai.com/api-keys"),
-    keyRow("anthropic", "Claude", "Paste a Claude key (sk-ant-…)", "https://console.anthropic.com/settings/keys"));
+    keyRow("anthropic", "Claude", "Paste a Claude key (sk-ant-…)", "https://console.anthropic.com/settings/keys"),
+    keyRow("alibaba", "Alibaba images", "Paste an Alibaba Model Studio (DashScope) key (sk-…): it paints the illustrated scenes", "https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key"));
 
   // the AI safety cap (migration 0037): AI calls allowed in 24 h, all tasks together. A video that reaches it waits for room.
   const capRow = (await q(sb.rpc("ai_runs_status")).catch(() => []))?.[0];
