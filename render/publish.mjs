@@ -98,6 +98,12 @@ async function toYouTube(row, sched, file, job) {
       selfDeclaredMadeForKids: false, containsSyntheticMedia: !!sched?.synthetic_media,
     },
   };
+  // over 15 minutes: YouTube only keeps the video if the channel may upload long videos (phone-verified); otherwise it rejects it after upload
+  if (Number(job?.duration_s) > 15 * 60) {
+    const ch = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=status&mine=true", { headers: { Authorization: `Bearer ${access_token}` } })).json().catch(() => ({}));
+    const long = ch.items?.[0]?.status?.longUploadsStatus;
+    if (long && long !== "allowed") throw new Error(`This video is ${Math.round(job.duration_s / 60)} minutes long, and the channel can't upload videos over 15 minutes yet (YouTube: ${long}). Verify the channel by phone at youtube.com/verify, then send it again.`);
+  }
   const size = fs.statSync(file).size;
   const notify = sched?.notify_subscribers === false ? "false" : "true";
   const init = await fetch(`https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status&notifySubscribers=${notify}`, {
