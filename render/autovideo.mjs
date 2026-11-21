@@ -244,17 +244,20 @@ async function buildScenes(idea, channel, options, project) {
 }
 
 /** Rewrites the "m:ss Title" lines of the description with each chapter's real start (scene durations from the voice). */
-async function chapterTimes(idea, projectId) {
+async function chapterTimes(idea, projectId, chapters = idea.ai?.story?.chapters || idea.ai?.chapters || []) {
+  if (chapters.length < 2) return;
   const rows = await sceneRows(projectId);
   const starts = [];
   let t = 0, k = 0;
-  for (const c of idea.ai.story.chapters) { starts.push(t); for (let j = 0; j < c.lines && k < rows.length; j++, k++) t += sceneSeconds(rows[k]) + SCENE_GAP; }
-  const fmt = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
-  const marks = idea.ai.story.chapters.map((c, i) => `${fmt(starts[i])} ${c.title}`).join("\n");
+  for (const c of chapters) { starts.push(t); for (let j = 0; j < c.lines && k < rows.length; j++, k++) t += sceneSeconds(rows[k]) + SCENE_GAP; }
+  const fmt = (x) => { const h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), sec = String(Math.floor(x % 60)).padStart(2, "0"); return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`; };
+  // YouTube makes chapters from these lines: the first at 0:00, each at least 10 s long
+  const marks = chapters.map((c, i) => `${fmt(starts[i])} ${c.title}`).filter((_, i) => i === 0 || starts[i] - starts[i - 1] >= 10).join("\n");
   const desc = String(idea.video_description || "");
-  const block = desc.match(/(^|\n)0:00 [^\n]*(\n\d+:\d\d [^\n]*)*/);
-  if (!block) return;
-  await rest("PATCH", "ideas", `?id=eq.${idea.id}`, { video_description: desc.replace(block[0], `${block[1]}${marks}`) });
+  const block = desc.match(/(^|\n)0:00 [^\n]*(\n\d+:\d\d(:\d\d)? [^\n]*)*/);
+  // no block yet: the chapters go after the first paragraph
+  const next = block ? desc.replace(block[0], `${block[1]}${marks}`) : desc.replace(/^([^\n]*(\n[^\n]+)*)/, `$1\n\n${marks}`);
+  await rest("PATCH", "ideas", `?id=eq.${idea.id}`, { video_description: next });
 }
 const sceneRows = (projectId) => rest("GET", "project_scenes", `?project_id=eq.${projectId}&select=*&order=idx`);
 const clipLine = (c, n) => ({ n, type: c.type, seconds: c.duration ?? null, tags: String(c.tags || "").slice(0, 160) });
@@ -615,6 +618,7 @@ async function main(id) {
   await step("voice", () => waitForVoice(projectId));
   // a long episode's YouTube chapters: the real start of each chapter, from the voice
   if (storyStyle && idea.ai?.story?.chapters?.length > 1) await chapterTimes(idea, projectId).catch((e) => log(`chapter times: ${e.message}`));
+  if (illustrated) await chapterTimes(await one("ideas", idea.id), projectId, (await one("ideas", idea.id)).ai?.chapters || []).catch((e) => log(`chapter times: ${e.message}`));
   const total = (await sceneRows(projectId)).reduce((t, s) => t + sceneSeconds(s), 0);
   if (options.music === false) await skip("music", "You chose no music");
   else await step("music", () => findMusic(projectId, brief, channel.id, total));

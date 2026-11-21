@@ -332,7 +332,7 @@ The episode:
 - Lines are read aloud: no hashtags, emoji, brackets, stage directions or numbers in digits that are hard to read (write them as words when short).
 
 ANSWER FORMAT, exactly:
-<story>{"title": "under 70 characters, with the episode number", "hook_text": "2-4 words", "description": "3-4 sentences", "hashtags": ["#a", "#b", "#c"],
+<story>{"title": "under 70 characters, with the episode number", "hook_text": "2-4 words", "description": "3-4 sentences", "hashtags": ["8 hashtags about this episode's own subject"],
 "tags": ["10-15 search tags"], "thumbnail_words": "2-3 words for the thumbnail", "voice_style": "natural|dark|deep", "voice_gender": "male|female|any",
 "chapters": [{"title": "...", "setting": "where it happens and what we see, in English, for the animator", "lines": ["...", "..."]}]}</story>`;
 
@@ -446,7 +446,9 @@ async function writeLongStory(idea, channel, options, ctx) {
   const check = runCheck(ROOT, code, lines, "16:9", 45);
   if (!check.ok) throw new Error(`The assembled film didn't pass its check: ${check.error}`);
 
-  const hashtags = (Array.isArray(meta.hashtags) ? meta.hashtags : []).map((t) => "#" + String(t).replace(/^#/, "").replace(/\s+/g, "")).slice(0, 3);
+  // a long video: 6 to 8 hashtags about its own subject (the search tags fill in when the model gave fewer)
+  const hashtags = [...(Array.isArray(meta.hashtags) ? meta.hashtags : []), ...(Array.isArray(meta.tags) ? meta.tags : [])]
+    .map((t) => "#" + String(t).replace(/^#/, "").replace(/[\s'’.,:;!?()-]+/g, "")).filter((t, i, a) => t.length > 2 && a.findIndex((x) => x.toLowerCase() === t.toLowerCase()) === i).slice(0, 8);
   const vs = ["natural", "dark", "deep"].includes(meta.voice_style) ? meta.voice_style : "natural";
   const title = String(meta.title || idea.title).replace(/[<>]/g, "").slice(0, 100);
   // YouTube chapters in the description: the time each chapter starts, estimated from its words (~2.4 words a second)

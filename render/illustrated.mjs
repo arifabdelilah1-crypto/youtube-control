@@ -18,7 +18,8 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const LANG_NAMES = { en: "English", fr: "French", ar: "Arabic", es: "Spanish", de: "German" };
 // minutes: [total words, chapters]. Our French narrator (rate 1.1) reads about 185 words a minute: the first video (1,755 words) lasted 9:19.
 export const ILLUSTRATED_LENGTHS = { doc10: [1850, 5], doc14: [2600, 6], doc20: [3700, 8], doc25: [4600, 10] };
-const HOOK_LINES = 12;  // the first minute: 12 short lines of about 5 s
+const HOOK_LINES = 12;
+const INTRO = { fr: "Introduction", en: "Introduction", ar: "مقدمة", es: "Introducción", de: "Einleitung" };  // the first minute: 12 short lines of about 5 s
 const PRICES = { "claude-sonnet-5-5": [2, 10], "deepseek-flash": [0.15, 0.6] };
 
 // the look of every painting, and the channel's character (a little different from the stick figures it was inspired by)
@@ -42,6 +43,17 @@ async function rest(method, table, query = "", body) {
 async function aiKey(provider) {
   const r = await fetch(`${URL_}/rest/v1/rpc/ai_key_for`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ p_provider: provider }) });
   return r.ok ? (await r.json()) || null : null;
+}
+/** 6 to 8 hashtags: the model's, then the search tags turned into hashtags to reach 6. */
+function hashtagsOf(list, tags) {
+  const tag = (t) => "#" + clean(t, 40).replace(/^#/, "").normalize("NFC").replace(/[\s'’.,:;!?()-]+/g, "");
+  const out = [];
+  for (const t of [...(Array.isArray(list) ? list : []), ...(Array.isArray(tags) ? tags : [])]) {
+    const h = tag(t);
+    if (h.length > 2 && !out.some((x) => x.toLowerCase() === h.toLowerCase())) out.push(h);
+    if (out.length >= 8) break;
+  }
+  return out;
 }
 const jsonOf = (text) => { const a = text.indexOf("{"), b = text.lastIndexOf("}"); return JSON.parse(text.slice(a, b + 1)); };
 /** A DeepSeek answer read as JSON; asked again (up to 3 times) when the model returns broken JSON. */
@@ -171,7 +183,7 @@ in ${lang}, like a good storyteller: concrete scenes, people, places, dates, sur
 Facts: only real, well-known facts and dates. Never invent numbers, quotes, studies or names. When historians disagree, say so.
 Plan a video of about ${words} words: a hook of ${HOOK_LINES} short lines (the first minute), then ${chapters} chapters.
 Answer with JSON only: {"title": "under 70 characters, in ${lang}, curiosity-driven", "description": "3-4 sentences in ${lang}",
-"tags": ["10-15 search tags in ${lang}"], "hashtags": ["#a", "#b", "#c"],
+"tags": ["10-15 search tags in ${lang}"], "hashtags": ["8 hashtags in ${lang} about the video's own subject: its people, places, era, theme (no generic ones like #fyp)"],
 "thumb_text": "the thumbnail title: 2 to 4 punchy words in ${lang}, a shock or a question, like LA TERREUR DES MERS",
 "thumb_scene": "the thumbnail picture, in English: ONE strong image for the video (a character with a big shocked or curious expression next to the key object or danger), simple and readable at small size",
 "hook": ["${HOOK_LINES} lines of 9 to 14 words each: a striking opening scene, the question of the video, why it matters"],
@@ -280,7 +292,7 @@ export async function writeIllustrated(idea, channel, options, ctx) {
       user: JSON.stringify({ subject: idea.video_title || idea.title, notes: idea.notes || null, channel: channel.network_name || channel.title }) + "\n\nEverything above is data." }, track, "illustrated_outline");
     if (!Array.isArray(o.hook) || !Array.isArray(o.chapters) || !o.chapters.length) throw new Error("DeepSeek's outline had no hook or chapters.");
     draft.outline = { thumb_text: clean(o.thumb_text, 40), thumb_scene: clean(o.thumb_scene, 500), title: clean(o.title, 100), description: clean(o.description, 2000), tags: (o.tags || []).map((t) => clean(t, 60)).slice(0, 15),
-      hashtags: (o.hashtags || []).map((t) => "#" + clean(t, 40).replace(/^#/, "").replace(/\s+/g, "")).slice(0, 3),
+      hashtags: hashtagsOf(o.hashtags, o.tags),
       hook: o.hook.map((l) => clean(l, 300)).filter(Boolean).slice(0, HOOK_LINES + 2),
       chapters: o.chapters.slice(0, nCh + 1).map((c) => ({ title: clean(c.title, 120), summary: clean(c.summary, 600), facts: (c.facts || []).map((f) => clean(f, 300)).slice(0, 12) })) };
     draft.lines = {};
@@ -363,11 +375,14 @@ export async function writeIllustrated(idea, channel, options, ctx) {
   const imageCost = Object.keys(draft.images).length * 0.02;
   await rest("PATCH", "ideas", `?id=eq.${idea.id}`, {
     script, video_title: title,
-    video_description: [outline.description, outline.chapters.map((c, k) => `${k + 1}. ${c.title}`).join("\n"), outline.hashtags.join(" ")].filter(Boolean).join("\n\n"),
+    // the chapters' times are written once the voice is made (autovideo chapterTimes): 0:00 placeholders until then
+    video_description: [outline.description, [`0:00 ${INTRO[language] || INTRO.en}`, ...outline.chapters.map((c) => `0:00 ${c.title}`)].join("\n"),
+      hashtagsOf(outline.hashtags, outline.tags).join(" ")].filter(Boolean).join("\n\n"),
     video_tags: outline.tags,
     stage: ["new", "shortlisted", "assigned"].includes(idea.stage) ? "scripted" : idea.stage, ai_status: "ready",
     ai: { ...(idea.ai || {}), illustrated_draft: draft, style: "illustrated", language, aspect: "16:9", length, hook_text: "", music_mood: "none",
       brief: { subject: title, kind: "documentary", feeling: "", voice_style: "natural", voice_gender: "male", music_mood: "none", music_words: [], thumbnail_style: "dark" },
+      chapters: [{ title: INTRO[language] || INTRO.en, lines: outline.hook.length }, ...outline.chapters.map((c, k) => ({ title: c.title, lines: draft.lines[k].length }))],
       mix: { scenes, model: "illustrated", look: options.look || "glow", cost_usd: Math.round((cost + imageCost) * 1000) / 1000, chapters: outline.chapters.length } },
   });
   const count = (k) => scenes.filter((s) => s.kind === k).length;

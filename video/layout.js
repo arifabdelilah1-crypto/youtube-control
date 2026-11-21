@@ -60,12 +60,14 @@ export function parseStat(stat = "") {
  * API terms ask for it), or an uploaded file that replaced a YouTube Creative Commons pick (the pick itself has no file
  * yet, so it isn't in the video and isn't credited).
  */
+/** The credit line a clip's licence REQUIRES, or null. Pexels, Pixabay and Unsplash need none, nor public-domain or CC0 pictures:
+ *  only Wikimedia files under an attribution licence (CC BY, CC BY-SA, GFDL…) and clips that carry their own required credit. */
+export const needsAttribution = (license) => /\b(CC[ -]?BY|GFDL|attribution)/i.test(String(license || "")) && !/\b(CC0|public domain|PD)\b/i.test(String(license || ""));
 export function creditOf(c) {
   if (!c) return null;
-  if (c.source === "wikimedia") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Wikimedia Commons" };
-  if (c.source === "pexels") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Pexels" };
-  if (c.source === "unsplash") return { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Unsplash" };
-  return c.credit?.page ? c.credit : null;
+  if (c.source === "wikimedia") return needsAttribution(c.license) ? { tags: c.tags, author: c.author, license: c.license, page: c.page, via: "Wikimedia Commons" } : null;
+  if (c.source === "pexels" || c.source === "unsplash" || c.source === "pixabay") return null;
+  return c.credit?.page && needsAttribution(c.credit.license) ? c.credit : null;
 }
 
 /** The music found by search, if it's on and really from Jamendo (settings can be edited from the browser). */
