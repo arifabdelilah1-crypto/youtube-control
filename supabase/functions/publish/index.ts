@@ -239,6 +239,18 @@ Deno.serve(async (req) => {
     }
     // pg_cron "publish-status": Blotato posts whose slot has passed get their result, YouTube ones are marked live
     if (body.action === "blotato_sync" && isService) return json(await blotatoSync());
+    // how YouTube sees an upload: processing, rejected (and why), private/public
+    if (body.action === "yt_status" && isService) {
+      const { data: row } = UUID.test(body.queue_id || "") ? await db.from("publish_queue").select("*").eq("id", body.queue_id).single() : { data: null };
+      if (!row?.youtube_video_id) return json({ error: "no YouTube video on this row" }, 400);
+      const { data: refresh } = await db.rpc("get_channel_refresh_token", { p_channel_id: row.channel_id });
+      const t = await (await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, refresh_token: refresh || "", grant_type: "refresh_token" }) })).json();
+      if (!t.access_token) return json({ error: `Google token: ${t.error_description || t.error}` }, 400);
+      const v = await (await fetch(`https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails,contentDetails&id=${row.youtube_video_id}`, { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
+      const ch = await (await fetch("https://www.googleapis.com/youtube/v3/channels?part=status&mine=true", { headers: { Authorization: `Bearer ${t.access_token}` } })).json();
+      return json({ video: v.items?.[0] || null, channel_status: ch.items?.[0]?.status || null });
+    }
     // a video already on YouTube gets its idea's current title, description and tags (e.g. the chapters added after the upload)
     if (body.action === "update_meta" && isService) {
       if (!UUID.test(body.queue_id || "")) return json({ error: "queue_id required" }, 400);
