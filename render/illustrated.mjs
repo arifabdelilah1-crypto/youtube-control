@@ -127,6 +127,8 @@ Facts: only real, well-known facts and dates. Never invent numbers, quotes, stud
 Plan a video of about ${words} words: a hook of ${HOOK_LINES} short lines (the first minute), then ${chapters} chapters.
 Answer with JSON only: {"title": "under 70 characters, in ${lang}, curiosity-driven", "description": "3-4 sentences in ${lang}",
 "tags": ["10-15 search tags in ${lang}"], "hashtags": ["#a", "#b", "#c"],
+"thumb_text": "the thumbnail's title: 2 to 4 punchy words in ${lang}, a shock or a question (e.g. \"LA TERREUR DES MERS\", \"ILS ONT TOUT PERDU ?\")",
+"thumb_scene": "the thumbnail picture, in English: ONE strong image for the video (a character with a big shocked or curious expression next to the key object or danger), simple and readable at small size",
 "hook": ["${HOOK_LINES} lines of 9 to 14 words each: a striking opening scene, the question of the video, why it matters"],
 "chapters": [{"title": "chapter title", "summary": "what it tells, in 2-3 sentences", "facts": ["the real facts and dates it uses"]}]}`;
 
@@ -225,7 +227,7 @@ export async function writeIllustrated(idea, channel, options, ctx) {
     await track(out.usage, "illustrated_outline", "deepseek-flash");
     const o = jsonOf(out.text);
     if (!Array.isArray(o.hook) || !Array.isArray(o.chapters) || !o.chapters.length) throw new Error("DeepSeek's outline had no hook or chapters.");
-    draft.outline = { title: clean(o.title, 100), description: clean(o.description, 2000), tags: (o.tags || []).map((t) => clean(t, 60)).slice(0, 15),
+    draft.outline = { thumb_text: clean(o.thumb_text, 40), thumb_scene: clean(o.thumb_scene, 500), title: clean(o.title, 100), description: clean(o.description, 2000), tags: (o.tags || []).map((t) => clean(t, 60)).slice(0, 15),
       hashtags: (o.hashtags || []).map((t) => "#" + clean(t, 40).replace(/^#/, "").replace(/\s+/g, "")).slice(0, 3),
       hook: o.hook.map((l) => clean(l, 300)).filter(Boolean).slice(0, HOOK_LINES + 2),
       chapters: o.chapters.slice(0, nCh + 1).map((c) => ({ title: clean(c.title, 120), summary: clean(c.summary, 600), facts: (c.facts || []).map((f) => clean(f, 300)).slice(0, 12) })) };
@@ -310,4 +312,27 @@ export async function writeIllustrated(idea, channel, options, ctx) {
   });
   const count = (k) => scenes.filter((s) => s.kind === k).length;
   return `${scenes.length} scenes (${paints - missing} paintings, ${count("map")} maps, ${count("icons")} icon scenes, ${scenes.filter((s) => s.kind === "footage" && !s.image).length} photos) · about $${(cost + imageCost).toFixed(2)}`;
+}
+
+/**
+ * The video's thumbnail: a painting made for it (a big expressive character and the key object, room at the top for the title) and
+ * 2 to 4 words of title. Painted once and kept on the idea (ai.thumbnail). Returns {path, text} or null when nothing can be painted.
+ */
+export async function illustratedThumbnail(idea, log) {
+  if (idea.ai?.thumbnail?.path) return idea.ai.thumbnail;
+  const alibaba = await aiKey("alibaba");
+  if (!alibaba) return null;
+  const o = idea.ai?.illustrated_draft?.outline || {};
+  const text = (o.thumb_text || String(idea.video_title || idea.title || "").split(/\s+/).slice(0, 4).join(" ")).toUpperCase().slice(0, 40);
+  const scene = o.thumb_scene || `the most dramatic moment of: ${o.hook?.[0] || idea.video_title || idea.title}`;
+  const prompt = `${STYLE} ${CHARACTER} YouTube thumbnail composition: bold saturated colors, strong contrast, one clear subject, the character large in the frame ` +
+    `with very wide surprised eyes and raised eyebrows, the upper third of the picture kept simple (sky or plain background) for a title. Scene: ${scene}`;
+  try {
+    const buf = await paint(alibaba, prompt, log);
+    const path = `materials/illustrated/${idea.id}/thumb.jpg`;
+    await upload(path, buf);
+    const thumb = { path, text };
+    await rest("PATCH", "ideas", `?id=eq.${idea.id}`, { ai: { ...(idea.ai || {}), thumbnail: thumb } });
+    return thumb;
+  } catch (e) { log(`thumbnail painting: ${e.message}`); return null; }
 }

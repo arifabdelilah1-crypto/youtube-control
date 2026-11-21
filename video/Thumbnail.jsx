@@ -10,6 +10,7 @@ const LOOKS = {
   love: { filter: "saturate(1.1) brightness(.92)", shade: "linear-gradient(180deg, rgba(255,70,120,.16), rgba(90,0,50,.6))", shadow: "0 4px 18px rgba(70,0,35,.9)" },
   funny: { filter: "saturate(1.35) contrast(1.05)", shade: "none", stroke: "#000", shadow: "0 8px 0 #000", tilt: -3 },
   clean: { filter: "none", shade: "none", box: "#FFFFFF" },
+  bold: { filter: "saturate(1.2) contrast(1.06)", shade: "linear-gradient(180deg, rgba(0,0,0,.5) 0%, rgba(0,0,0,0) 40%)", stroke: "#111", strokeWidth: 9, shadow: "0 9px 0 #111", tilt: -2 },
 };
 
 // Vertical apps cover the top and bottom of the picture (buttons, name, caption): the text stays out of those parts.
@@ -33,7 +34,7 @@ export function Thumbnail({ image, text = "", style = "dark", color, accent, siz
         {words.length || last ? (
           <div dir="auto" style={{
             fontFamily: `"${LATIN}", "${ARABIC}", sans-serif`, fontWeight: 800, fontSize: size, lineHeight: 1.02, textAlign: "center", textTransform: "uppercase",
-            color: color || base.color, textShadow: look.shadow || "none", WebkitTextStroke: look.stroke ? `3px ${look.stroke}` : undefined, paintOrder: "stroke fill",
+            color: color || base.color, textShadow: look.shadow || "none", WebkitTextStroke: look.stroke ? `${look.strokeWidth || 3}px ${look.stroke}` : undefined, paintOrder: "stroke fill",
             transform: look.tilt ? `rotate(${look.tilt}deg)` : undefined, background: look.box || undefined, padding: look.box ? "14px 28px" : 0, borderRadius: look.box ? 10 : 0, maxWidth: "100%", overflowWrap: "anywhere",
           }}>
             {words.join(" ")}{last ? " " : ""}{last ? <span style={{ color: accent || base.accent }}>{last}</span> : null}

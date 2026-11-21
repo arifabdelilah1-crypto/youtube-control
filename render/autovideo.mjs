@@ -13,7 +13,7 @@ import { PRESETS, presetFx } from "../web/voicefx.js";
 import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSounds, usable, voiceCoverage, voiceThreshold } from "./autolib.mjs";
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 import { writeStoryFilm } from "./story.mjs";
-import { writeIllustrated } from "./illustrated.mjs";
+import { illustratedThumbnail, writeIllustrated } from "./illustrated.mjs";
 import { deliverToSite } from "./site.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -623,7 +623,15 @@ async function main(id) {
     await rest("PATCH", "project_scenes", `?project_id=eq.${projectId}`, { sounds: [] });
     await skip("sounds", "No sound effects");
   }
-  if (drawn || mixStyle) await skip("thumbnail", "The drawn frames are the cover");
+  if (illustrated) {
+    // a long documentary gets its own painted thumbnail with a big title; it goes up with the video
+    await step("thumbnail", async () => {
+      const t = await illustratedThumbnail(await one("ideas", idea.id), log);
+      if (!t) return "No thumbnail: the painting couldn't be made";
+      await saveSettings(projectId, { thumbnail: { text: t.text, style: "bold", position: "top", size: 130, image: { type: "image", path: t.path } } });
+      return `“${t.text}” on its own painting`;
+    });
+  } else if (drawn || mixStyle) await skip("thumbnail", "The drawn frames are the cover");
   else await step("thumbnail", () => makeThumbnailChoice(projectId, idea, brief, project.aspect));
   let job;
   await step("render", async () => { job = await renderVideo(projectId, idea.id); return `${Math.round(job.duration_s)} s`; });

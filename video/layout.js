@@ -15,6 +15,8 @@ export const THUMBNAIL_STYLES = {
   love: { label: "Love", color: "#FFFFFF", accent: "#FF7AA8" },
   funny: { label: "Funny", color: "#FFE600", accent: "#FFFFFF" },
   clean: { label: "Clean", color: "#111111", accent: "#E10600" },
+  // the Illustrated documentaries: a painted picture, a big yellow title with a thick black outline at the top
+  bold: { label: "Bold storybook", color: "#FFD23F", accent: "#FFFFFF" },
 };
 
 export const DEFAULT_SETTINGS = {
