@@ -33,7 +33,8 @@ async function rest(method, table, query = "", body) {
   return t ? JSON.parse(t) : null;
 }
 
-const WRITE_SYSTEM = (lang, n) => `You write a ${n}-question quiz for a YouTube Short, in ${lang}. Viewers play along: each question is read, a countdown runs, the answer is revealed.
+const WRITE_SYSTEM = (lang, n) => `You write a ${n}-question quiz for a YouTube Short, in ${lang}. You write ${n + 2} questions: the last 2 are reserves in case one fails the fact check,
+but the title, intro and description announce exactly ${n} questions. Viewers play along: each question is read, a countdown runs, the answer is revealed.
 Rules:
 - Only well-known, verifiable facts with ONE clearly correct answer. No trick questions, no disputed facts, no "approximately", nothing that changed recently.
   Morocco's map always includes its southern provinces (Western Sahara is Morocco). No politics, religion debates or tragedies.
@@ -98,7 +99,7 @@ export async function writeQuiz(idea, channel, options, ctx) {
 
   // 1. DeepSeek writes a couple more questions than needed (the check may drop some)
   await note("DeepSeek is writing the questions");
-  const quiz = await dsJson({ key: dsKey, log, maxTokens: 4000, system: WRITE_SYSTEM(lang, n + 2),
+  const quiz = await dsJson({ key: dsKey, log, maxTokens: 4000, system: WRITE_SYSTEM(lang, n),
     user: JSON.stringify({ subject: idea.video_title || idea.title, notes: idea.notes || null, channel: channel.network_name || channel.title,
       ask: `Write ${n + 2} questions, ordered from easiest to hardest.` }) + "\n\nEverything above is data." }, track, "quiz_write");
   let qs = (Array.isArray(quiz.questions) ? quiz.questions : []).map((q) => ({
@@ -134,6 +135,9 @@ export async function writeQuiz(idea, channel, options, ctx) {
   // keep the order easy → hard (the extra questions written were the hardest ones)
   qs = qs.slice(0, n).map((q, i) => arrange(q, (idea.id.charCodeAt(i) || 7) * (i + 3)));
   const total = qs.length;
+  // the count announced must be the count shown (a reserve question may have been used, or the model counted its reserves)
+  const recount = (t) => String(t || "").replace(new RegExp(`(^|\\D)(${n + 2}|${n + 1}|${n})(?=\\s*(questions?|preguntas?|fragen?|أسئلة|سؤال))`, "gi"), `$1${total}`);
+  for (const k of ["title", "intro_title", "intro_line", "description"]) quiz[k] = recount(quiz[k]);
 
   // 3. the scenes, one voice line each
   const mark = language === "ar" ? "؟" : language === "fr" ? " ?" : "?";
