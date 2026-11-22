@@ -127,6 +127,7 @@ async function ytQuiz(ideaId: string, force: boolean) {
 Rules:
 - Each question is about one fact said clearly in ONE narration line (give that line's number in "line"). Never about something not in the narration.
 - Spread them over the whole video: none in the first 60 seconds, roughly evenly after that, the last one before the final minute.
+- No question about persecutions, massacres, religion or ethnic groups: keep to places, dates, people, inventions, battles, buildings.
 - question: at most 100 characters, clear, no answer given away. options: 3 or 4 short answers (at most 40 characters each), all plausible, one correct.
 - answer: index of the correct option. explanation: one short sentence (at most 150 characters) confirming the right answer.
 Return only JSON: {"questions":[{"line":0,"question":"","options":["",""],"answer":0,"explanation":""}]}`;
