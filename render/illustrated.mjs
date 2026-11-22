@@ -45,7 +45,7 @@ async function aiKey(provider) {
   return r.ok ? (await r.json()) || null : null;
 }
 /** 6 to 8 hashtags: the model's, then the search tags turned into hashtags to reach 6. */
-function hashtagsOf(list, tags) {
+export function hashtagsOf(list, tags) {
   const tag = (t) => "#" + clean(t, 40).replace(/^#/, "").normalize("NFC").replace(/[\s'’.,:;!?()-]+/g, "");
   const out = [];
   for (const t of [...(Array.isArray(list) ? list : []), ...(Array.isArray(tags) ? tags : [])]) {
@@ -55,9 +55,9 @@ function hashtagsOf(list, tags) {
   }
   return out;
 }
-const jsonOf = (text) => { const a = text.indexOf("{"), b = text.lastIndexOf("}"); return JSON.parse(text.slice(a, b + 1)); };
+export const jsonOf = (text) => { const a = text.indexOf("{"), b = text.lastIndexOf("}"); return JSON.parse(text.slice(a, b + 1)); };
 /** A DeepSeek answer read as JSON; asked again (up to 3 times) when the model returns broken JSON. */
-async function dsJson(args, track, kind) {
+export async function dsJson(args, track, kind) {
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     const out = await deepseek(args);
@@ -66,9 +66,9 @@ async function dsJson(args, track, kind) {
   }
   throw new Error(`DeepSeek kept answering broken JSON (${kind}): ${lastError?.message}`);
 }
-const clean = (s, n) => String(s ?? "").replace(/[<>#\[\]{}]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
+export const clean = (s, n) => String(s ?? "").replace(/[<>#\[\]{}]/g, "").replace(/\s+/g, " ").trim().slice(0, n);
 
-async function deepseek({ key, system, user, maxTokens = 8000, log }) {
+export async function deepseek({ key, system, user, maxTokens = 8000, log }) {
   let r, data;
   for (let attempt = 0; attempt < 3; attempt++) {
     r = await fetch("https://api.deepseek.com/chat/completions", {
@@ -84,7 +84,7 @@ async function deepseek({ key, system, user, maxTokens = 8000, log }) {
   if (!data) throw new Error(`DeepSeek didn't answer (${r?.status})`);
   return { text: data.choices?.[0]?.message?.content || "", usage: { input_tokens: data.usage?.prompt_tokens || 0, output_tokens: data.usage?.completion_tokens || 0 }, model: "deepseek-flash" };
 }
-async function claude({ key, system, user, maxTokens = 16000, log }) {
+export async function claude({ key, system, user, maxTokens = 16000, log }) {
   const model = "claude-sonnet-5-5";
   for (let attempt = 0; attempt < 2; attempt++) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {

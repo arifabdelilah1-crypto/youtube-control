@@ -15,6 +15,7 @@ import { MUSIC_UNDER_VOICE } from "./layout.js";
 import { Overlay, SceneBody, explainerTheme, setExplainerTheme } from "./Explainer.jsx";
 import { Captions, Clip, NameCard, slots } from "./Main.jsx";
 import { MapView, THEMES, ThemeContext, mapPoint } from "./story/kit.js";
+import { QuizScene } from "./Quiz.jsx";
 
 const XFADE = 6;     // frames of cross-fade between two scenes
 const DRAW_ON = 10;  // frames a drawn scene takes to be drawn on
@@ -85,7 +86,7 @@ export function IconsScene({ d, frame, dur, width: W, height: H, font }) {
   );
 }
 
-function MixScene({ s, i, look, rtl, width, height, captions, font, accent, illustrated }) {
+function MixScene({ s, i, look, rtl, width, height, captions, font, accent, illustrated, assetBase }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const t = frame / fps;
@@ -93,6 +94,7 @@ function MixScene({ s, i, look, rtl, width, height, captions, font, accent, illu
   const theme = explainerTheme(look);
   const drawing = s.kind !== "footage" && s.x ? { ...s.x, i, dur: s.dur } : null;
   const dir = { direction: rtl ? "rtl" : "ltr" };
+  if (s.kind === "quiz") return <AbsoluteFill style={{ opacity: fade }}><QuizScene s={s} frame={frame} fps={fps} width={width} height={height} font={font} rtl={rtl} assetBase={assetBase} /></AbsoluteFill>;
   if (s.kind === "map" || s.kind === "icons") {
     const Scene = s.kind === "map" ? MapScene : IconsScene;
     return <AbsoluteFill style={{ opacity: fade, ...dir }}><Scene d={s.data || {}} frame={frame} dur={s.dur} width={width} height={height} font={font} /></AbsoluteFill>;
@@ -143,8 +145,8 @@ export function Mix(props) {
       {scenes.map((s, i) => (
         // each scene stays XFADE frames longer, under the next one fading in
         <Sequence key={s.id || i} from={s.from} durationInFrames={s.dur + (i < scenes.length - 1 ? XFADE : 0)} name={`Scene ${i + 1} (${s.kind || "footage"})`}>
-          <MixScene s={s} i={i} look={look} rtl={rtl} width={width} height={height} captions={captions} font={font} accent={accent} illustrated={!!props.illustrated} />
-          {captions.enabled ? (
+          <MixScene s={s} i={i} look={look} rtl={rtl} width={width} height={height} captions={captions} font={font} accent={accent} illustrated={!!props.illustrated} assetBase={props.assetBase} />
+          {captions.enabled && s.kind !== "quiz" ? (
             <Sequence from={0} durationInFrames={s.dur} layout="none">
               <Captions groups={s.groups} cfg={cap} rtl={rtl} font={font} height={height} top={capTop} />
             </Sequence>

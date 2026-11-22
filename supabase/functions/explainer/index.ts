@@ -198,20 +198,23 @@ Deno.serve(async (req) => {
       const aspect = o.aspect === "16:9" ? "16:9" : "9:16";
       // the Illustrated style (render/illustrated.mjs): 16:9 documentaries of 10 to 25 minutes, painted scenes, maps, icons and photos
       const illustrated = o.video_style === "illustrated";
+      // the Quiz style (render/quiz.mjs): Shorts of 3 to 5 questions, coded, no music
+      const quiz = o.video_style === "quiz";
       let length = illustrated ? (["doc10", "doc14", "doc20", "doc25"].includes(o.length) ? o.length : "doc14")
         : Object.hasOwn(LENGTHS, o.length || "") ? o.length : null;
       if (length && aspect === "9:16" && !illustrated && !length.startsWith("short")) length = "short120";
       // same options as ai's auto_start, plus the style and the model
       const options = {
-        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: illustrated ? "16:9" : aspect, length,
+        language: /^[a-z]{2}$/.test(o.language || "") ? o.language : null, aspect: illustrated ? "16:9" : quiz ? "9:16" : aspect, length: quiz ? null : length,
         angle: o.angle ? clean(o.angle, 300) : null,
         voice: o.voice ? clean(o.voice, 60) : null, voice_style: VOICE_STYLES.has(o.voice_style) ? o.voice_style : null,
         // the Mix style has no music unless asked (the rule for every channel); the Explainer keeps its music on by default
-        music: o.video_style === "mix" || illustrated ? o.music === true : o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
+        music: o.video_style === "mix" || illustrated || quiz ? (quiz ? false : o.music === true) : o.music !== false, sounds: false, keep_script: !!o.keep_script && !!idea.script?.trim(),
         publish: o.publish === "next" ? "next" : "ask",
-        video_style: illustrated ? "illustrated" : o.video_style === "mix" ? "mix" : "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
+        video_style: illustrated ? "illustrated" : quiz ? "quiz" : o.video_style === "mix" ? "mix" : "explainer", ai_model: Object.hasOwn(MODELS, o.ai_model || "") ? o.ai_model : "claude-opus-5-5",
         look: Object.hasOwn(LOOKS, o.look || "") ? o.look : "glow",
         // Illustrated: share of painted scenes (0.3-0.85) and picture rhythm (normal | slow): the two cost levers
+        ...(quiz ? { questions: Math.max(3, Math.min(5, Math.round(Number(o.questions) || 3))), countdown: Math.max(2, Math.min(5, Math.round(Number(o.countdown) || 3))) } : {}),
         ...(illustrated ? { paint_share: Math.min(0.85, Math.max(0.3, Number(o.paint_share) || 0.75)), rhythm: o.rhythm === "slow" ? "slow" : "normal" } : {}),
       };
       await db.from("ideas").update({ channel_id: channelId }).eq("id", id);

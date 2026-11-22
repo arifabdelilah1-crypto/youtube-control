@@ -101,7 +101,7 @@ Deno.serve(async (req) => {
 
     if (body.action === "make") {
       const count = Math.max(1, Math.min(12, Math.round(Number(body.count) || 3)));
-      const style = ["stock", "mix", "story"].includes(body.style) ? body.style : "stock";
+      const style = ["stock", "mix", "story", "quiz"].includes(body.style) ? body.style : "stock";
       const look = style === "story" ? (STORY_LOOKS.has(body.look) ? body.look : "noir") : style === "mix" ? (MIX_LOOKS.has(body.look) ? body.look : "glow") : null;
       const publish = body.publish === "ask" ? "ask" : "next";
       // 1. the best saved ideas with no video yet (nor one waiting to start)

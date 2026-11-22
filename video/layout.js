@@ -178,7 +178,10 @@ export const EXPLAINER_LOOKS = ["glow", "whiteboard", "kinetic", "blueprint", "c
 const EXPLAINER_KINDS = ["icon", "person", "person_hat", "child"];
 // the Mix style (video/Mix.jsx): settings.mix = {look, scenes: [{kind, layout, heading, items, …}]}, one per scene
 // map and icons: the Illustrated style's coded scenes (a real map with a route and a year; a big word with icons)
-export const MIX_KINDS = ["footage", "drawn", "overlay", "map", "icons"];
+// quiz: the Quiz style's scenes (intro, a question with its countdown, its answer, the outro)
+export const MIX_KINDS = ["footage", "drawn", "overlay", "map", "icons", "quiz"];
+/** Seconds of silence a quiz question keeps after its voice, for the countdown (0 to 6). */
+export const quizHold = (plan) => (plan?.kind === "quiz" && plan.quiz?.phase === "ask" ? Math.max(0, Math.min(6, Number(plan.quiz.hold) || 0)) : 0);
 // the looks a Mix can draw with: the sliding ones (kinetic is a whole different film)
 export const MIX_LOOKS = EXPLAINER_LOOKS.filter((l) => l !== "kinetic");
 /** A Mix scene's kind; a scene without a usable plan shows its clip. */
@@ -233,7 +236,7 @@ export function buildProps(project, scenes, urls = {}) {
   let from = 0;
   const out = ordered.map((s, i) => {
     const voiceOk = !!(s.voice_path && s.voice_text === s.text && urls.voice?.[s.id]);
-    const secs = sceneSeconds(s) + SCENE_GAP + (i === ordered.length - 1 ? TAIL : 0);
+    const secs = sceneSeconds(s) + SCENE_GAP + (mix ? quizHold(mix[i]) : 0) + (i === ordered.length - 1 ? TAIL : 0);
     const dur = Math.max(1, Math.round(secs * FPS));
     const words = voiceOk && Array.isArray(s.words) && s.words.length ? s.words : estimatedWords(s.text, sceneSeconds(s));
     const clip = s.clip || { type: "card" };
@@ -254,6 +257,8 @@ export function buildProps(project, scenes, urls = {}) {
       ...(mix ? (() => {
         const kind = mixKind(mix[i], s.clip);
         if (kind === "map" || kind === "icons") return { kind, data: mix[i][kind] || {} };
+        // a quiz scene: its words (the answers pop in when they're read) and the frame its voice ends (the countdown starts there)
+        if (kind === "quiz") return { kind, data: mix[i].quiz || {}, words: words.map((w) => ({ w: w.w, s: w.s })), voiceFrames: Math.round((sceneSeconds(s) + SCENE_GAP) * FPS) };
         return { kind, ...(kind !== "footage" ? { x: explainerScene(mix[i] || { layout: "title", heading: "" }, words, sceneSeconds(s)) } : {}) };
       })() : {}),
       clip: {
@@ -274,6 +279,7 @@ export function buildProps(project, scenes, urls = {}) {
     look: drawn ? (EXPLAINER_LOOKS.includes(project.settings.explainer?.look) ? project.settings.explainer.look : "glow")
       : mix ? (MIX_LOOKS.includes(project.settings.mix?.look) ? project.settings.mix.look : "glow") : null,
     illustrated: !!(mix && project.settings.mix?.illustrated),
+    quiz: !!(mix && project.settings.mix?.quiz),
     width, height, fps: FPS, totalFrames: Math.max(from, FPS),
     rtl: RTL_LANGS.has(project.language),
     language: project.language,
@@ -310,7 +316,7 @@ export function preRenderCheck(project, scenes) {
   const noFile = ordered.filter((s) => s.clip?.source === "youtube").length;
   if (noFile) issues.push({ level: "warn", text: `${noFile} scene(s) have a YouTube clip picked but no file uploaded. They show a text card until you upload the clip.` });
   if (project.aspect === "16:9") issues.push({ level: "warn", text: "This video is 16:9, so YouTube publishes it as a normal video, not a Short. For a Short, choose 9:16 on its Studio page." });
-  const total = ordered.reduce((t, s) => t + sceneSeconds(s) + SCENE_GAP, 0) + TAIL;
+  const total = ordered.reduce((t, s, i) => t + sceneSeconds(s) + SCENE_GAP + (mix ? quizHold(mix[i]) : 0), 0) + TAIL;
   if (project.aspect === "9:16" && total > 180) issues.push({ level: "block", text: `Video is ${Math.round(total)} s. Shorts can be 3 minutes at most.` });
   else if (project.aspect === "9:16" && total > 60) issues.push({ level: "warn", text: `Video is ${Math.round(total)} s. Allowed, but Shorts under 60 s usually keep viewers better.` });
   if (!project.title || project.title === "Untitled video") issues.push({ level: "warn", text: "No title yet." });

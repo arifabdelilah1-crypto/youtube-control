@@ -382,6 +382,7 @@ const MAKE_STYLES = {
   stock: { label: "Real footage", hint: "Stock video and photos, voice, captions. The cheapest.", cost: 0.02, looks: null },
   mix: { label: "Footage + drawings", hint: "Real footage, with Claude's animated drawings for numbers and ideas.", cost: 0.06,
     looks: [["glow", "Glow"], ["clean", "Clean"], ["comic", "Comic"], ["neon", "Neon"], ["sunset", "Sunset"], ["whiteboard", "Whiteboard"]] },
+  quiz: { label: "Quiz", hint: "3 questions with a countdown and the answer. All coded, every answer checked by Claude.", cost: 0.01, looks: null },
   story: { label: "Story stick", hint: "A stick-figure film Claude draws in code. Best for stories and \"what if\".", cost: 0.3,
     looks: [["noir", "Noir (night, cinematic)"], ["paper", "Storybook"], ["pop", "Pop (bright comic)"], ["atlas", "Talking maps (countries as characters)"]] },
 };
@@ -554,11 +555,11 @@ VIEWS.home = async () => {
   // ----- being made now, and what stopped
   const runRowLite = (r) => h("div", { class: "listrow", style: "align-items:flex-start" },
     h("div", { style: "flex:1;min-width:0" }, h("a", { href: `#/studio/${r.idea_id}`, dir: "auto", text: runTitle(r) }),
-      h("div", { class: "muted small", text: [channelById(r.channel_id)?.title, { story: "Story stick", mix: r.options?.recipe ? "Recipe / product" : "Footage + drawings", explainer: "Animation" }[r.options?.video_style] || "Real footage", ago(r.created_at)].filter(Boolean).join(" · ") }),
+      h("div", { class: "muted small", text: [channelById(r.channel_id)?.title, { story: "Story stick", mix: r.options?.recipe ? "Recipe / product" : "Footage + drawings", explainer: "Animation", illustrated: "Illustrated documentary", quiz: "Quiz" }[r.options?.video_style] || "Real footage", ago(r.created_at)].filter(Boolean).join(" · ") }),
       isActiveRun(r) ? runProgress(r) : h("p", { class: "small idea-error", text: r.error || "It stopped before the end." })),
     isActiveRun(r) ? null : h("button", { class: "btn small", type: "button", text: "Try again", onclick: async (e) => {
       e.currentTarget.disabled = true;
-      const fn = r.options?.video_style === "story" ? "story" : r.options?.recipe ? "recipe" : r.options?.video_style === "mix" || r.options?.video_style === "explainer" ? "explainer" : "ai";
+      const fn = r.options?.video_style === "story" ? "story" : r.options?.recipe ? "recipe" : ["mix", "explainer", "illustrated", "quiz"].includes(r.options?.video_style) ? "explainer" : "ai";
       try {
         if (fn === "ai") await aiCall({ action: "auto_start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } });
         else await aiCall({ action: "start", idea_id: r.idea_id, channel_id: r.channel_id, options: { ...r.options, keep_script: true } }, fn);
@@ -1319,6 +1320,8 @@ const ANIM_LOOKS = {
   atlas: { label: "Story · Talking maps", story: true, text: "Countries are the characters: real maps light up as each country is named, and the countries themselves talk, react and act out the facts (borders, trade, alliances). Best for “A vs B” subjects like Morocco vs Algeria or USA vs China. DeepSeek writes the narration, Claude draws the film." },
   // Illustrated (render/illustrated.mjs): a 10-25 minute documentary of painted scenes (Alibaba), coded maps and icons, real photos
   illustrated: { label: "Illustrated documentary (10-25 min)", illustrated: true, text: "A long YouTube documentary told by a narrator: painted scenes with our stick-figure character (Alibaba paints them), real maps with routes and dates, big-word icon scenes and a few real photos. A new picture every 5 s in the first minute, then every 12-18 s. DeepSeek writes the narration, Claude plans the pictures. 16:9 only. About $2-4 a video, mostly the paintings." },
+  // Quiz (render/quiz.mjs, video/Quiz.jsx): a Short of 3 to 5 questions with a countdown and the answer, all coded
+  quiz: { label: "Quiz Short", quiz: true, text: "A vertical quiz: the question is read with its 3-4 answers and a picture (a real map, an icon or an emoji), a 3 s countdown ticks, then the right answer turns green with a fun fact. Ends on “how many did you get? Tell me in the comments”. DeepSeek writes it, Claude checks every answer. No music. About $0.01 a video." },
   // Mix (video/Mix.jsx): Claude decides scene by scene between real footage, a drawing, or a drawing over a dimmed real picture
   mix: { label: "Mix: animation + real footage", mix: true, text: "About half the scenes are real stock clips and photos (Pexels, Pixabay, Wikimedia Commons), the others are Claude's drawings, some laid over a dimmed real picture. The same captions and colours throughout. Pick the look of the drawn parts below." },
   glow: { label: "Glow", text: "White glowing pictograms on black. The camera slides from scene to scene." },
@@ -1381,6 +1384,13 @@ VIEWS.animation = async () => {
       f.length.replaceChildren(...docs.map(([v, t]) => h("option", { value: v, selected: v === keepDoc, text: t })));
       return;
     }
+    // a Quiz Short: how many questions (3 keeps it under a minute)
+    if (ANIM_LOOKS[animUi.look]?.quiz) {
+      f.aspect.value = "9:16";
+      const qs = [["q3", "3 questions (~50 s)"], ["q4", "4 questions (~65 s)"], ["q5", "5 questions (~80 s)"]];
+      f.length.replaceChildren(...qs.map(([v, t]) => h("option", { value: v, selected: v === (qs.some(([x]) => x === pick) ? pick : "q3"), text: t })));
+      return;
+    }
     // a Mix is planned in one call: 3 minutes at most
     const list = ((ANIM_LOOKS[animUi.look]?.story ? STORY_LENGTHS : ANIM_LENGTHS)[f.aspect.value] || ANIM_LENGTHS["9:16"])
       .filter(([v]) => !ANIM_LOOKS[animUi.look]?.mix || !["long5", "long8", "long10"].includes(v));
@@ -1410,6 +1420,7 @@ VIEWS.animation = async () => {
   const showCost = () => {
     animUi.model = f.model.value; animUi.length = f.length.value;
     const docMin = { doc10: 10, doc14: 14, doc20: 20, doc25: 25 }[f.length.value];
+    if (ANIM_LOOKS[animUi.look]?.quiz) { cost.textContent = "About $0.01: DeepSeek writes the questions, Claude checks the answers. The pictures, the voice and the render cost nothing."; return; }
     if (ANIM_LOOKS[animUi.look]?.illustrated) {
       // pictures: 12 in the first minute, then one every ~15 s (normal) or ~21 s (slow); a share of them painted at $0.02, plus the plan
       const m = docMin || 14, pictures = 12 + (m - 1) * 60 / (f.rhythm.value === "slow" ? 15 : 10);
@@ -1441,12 +1452,12 @@ VIEWS.animation = async () => {
     if (!ANIM_LOOKS[animUi.look]) animUi.look = "glow";
     looks.replaceChildren(...Object.entries(ANIM_LOOKS).map(([k, l]) => h("button", { type: "button", class: "anim-look", role: "radio", "aria-checked": String(animUi.look === k),
       title: l.text, onclick: () => {
-        const kind = (x) => (x?.illustrated ? "illustrated" : x?.story ? "story" : x?.mix ? "mix" : "drawn");
+        const kind = (x) => (x?.quiz ? "quiz" : x?.illustrated ? "illustrated" : x?.story ? "story" : x?.mix ? "mix" : "drawn");
         const was = kind(ANIM_LOOKS[animUi.look]);
         animUi.look = k; paintLooks();
         mixWrap.hidden = !l.mix; docWrap.hidden = !l.illustrated;
         // a story or a Mix has no music by default; switching kinds refreshes the lengths and the price
-        if (was !== kind(l)) { fillLengths(l.illustrated ? "doc14" : l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); f.music.checked = !l.story && !l.mix && !l.illustrated; showCost(); }
+        if (was !== kind(l)) { fillLengths(l.quiz ? "q3" : l.illustrated ? "doc14" : l.story ? "short45" : f.aspect.value === "16:9" ? "long3" : "short45"); f.music.checked = !l.story && !l.mix && !l.illustrated && !l.quiz; showCost(); }
       } },
       h("img", { src: l.img, alt: "", loading: "lazy", width: 120, height: 213 }),
       h("span", { class: "anim-look-name", text: l.label }))));
@@ -1468,6 +1479,12 @@ VIEWS.animation = async () => {
       const id = picked ? picked.id : (await q(sb.from("ideas").insert({ title, channel_id: f.channel.value, sources: [{ type: "manual" }] }).select().single())).id;
       const isMix = !!ANIM_LOOKS[animUi.look]?.mix;
       const isDoc = !!ANIM_LOOKS[animUi.look]?.illustrated;
+      const isQuiz = !!ANIM_LOOKS[animUi.look]?.quiz;
+      if (isQuiz) {
+        await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: { video_style: "quiz", look: "glow", aspect: "9:16", language: f.language.value || null,
+          questions: Number(String(f.length.value).slice(1)) || 3, voice: f.voice.value || null, music: false, keep_script: false, publish: f.next.checked ? "next" : "ask" } }, "explainer");
+        toast("Making your quiz"); f.subject.value = ""; f.idea.value = ""; await reload(); go.disabled = false; go.textContent = "Create animation"; return;
+      }
       await aiCall({ action: "start", idea_id: id, channel_id: f.channel.value, options: {
         look: isMix ? f.mixLook.value : isDoc ? "glow" : animUi.look, ai_model: f.model.value, aspect: isDoc ? "16:9" : f.aspect.value, language: f.language.value || null, length: f.length.value, voice: f.voice.value || null,
         music: isDoc ? false : f.music.checked, keep_script: false, publish: f.next.checked ? "next" : "ask", ...(isMix ? { video_style: "mix" } : isDoc ? { video_style: "illustrated", paint_share: Number(f.share.value), rhythm: f.rhythm.value } : {}) } }, ANIM_LOOKS[animUi.look]?.story ? "story" : "explainer");
@@ -1497,7 +1514,7 @@ VIEWS.animation = async () => {
     if (state.channel !== "all") iq = iq.or(`channel_id.eq.${state.channel},channel_id.is.null`);
     const [rows, all] = await Promise.all([q(iq), q(sb.from("video_runs").select("*, ideas(title, video_title)").order("created_at", { ascending: false }).limit(200))]);
     ideas = rows;
-    runs = all.filter((r) => ["explainer", "story", "mix"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
+    runs = all.filter((r) => ["explainer", "story", "mix", "illustrated", "quiz"].includes(r.options?.video_style) && (state.channel === "all" || r.channel_id === state.channel)).slice(0, 40);
     costs = await runCosts(runs);
     const missing = runs.map((r) => r.contact_sheet).filter((p) => p && !sheets.has(p));
     if (missing.length) {

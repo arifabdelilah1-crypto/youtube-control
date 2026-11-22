@@ -14,6 +14,7 @@ import { applyPicks, checkVideo, chooseVoice, libraryTrack, pickTrack, placeSoun
 import { downloadFromVds, isVds, mediaReady, vdsPath } from "./media.mjs";
 import { writeStoryFilm } from "./story.mjs";
 import { illustratedThumbnail, writeIllustrated } from "./illustrated.mjs";
+import { writeQuiz } from "./quiz.mjs";
 import { deliverToSite } from "./site.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -208,7 +209,7 @@ async function buildScenes(idea, channel, options, project) {
   const ai = idea.ai || {};
   const drawn = options.video_style === "explainer";
   const story = options.video_style === "story" && ai.story?.code;
-  const mix = (options.video_style === "mix" || options.video_style === "illustrated") && ai.mix?.scenes?.length;
+  const mix = ["mix", "illustrated", "quiz"].includes(options.video_style) && ai.mix?.scenes?.length;
   const brief = ai.brief || {};
   const language = options.language || ai.language || style.language || channel.language || "en";
   const voiceStyle = options.voice_style || brief.voice_style || "natural";
@@ -230,8 +231,10 @@ async function buildScenes(idea, channel, options, project) {
       captions: { ...(base.captions || {}), enabled: false } } : mix ? {
       // the Mix style (video/Mix.jsx): each scene's kind and drawing, without the narration (the script) or the footage searches (FOOTAGE lines)
       style: "mix", mix: { look: options.look || "glow", model: ai.mix.model || null, scenes: ai.mix.scenes.map(({ narration: _n, footage: _f, ...rest }) => rest),
-        ...(options.video_style === "illustrated" ? { illustrated: true } : {}) },
-      hook: { ...(base.hook || {}), enabled: false } } : { style: "classic" }),
+        ...(options.video_style === "illustrated" ? { illustrated: true } : {}), ...(options.video_style === "quiz" ? { quiz: true } : {}) },
+      hook: { ...(base.hook || {}), enabled: false },
+      // a quiz has its text on screen: no captions on top
+      ...(options.video_style === "quiz" ? { captions: { ...(base.captions || {}), enabled: false } } : {}) } : { style: "classic" }),
   };
   const out = await call("studio", {
     action: "build", project_id: project?.id || null, idea_id: idea.id, channel_id: channel.id, title: idea.video_title || idea.title, script: idea.script,
@@ -570,7 +573,9 @@ async function main(id) {
   const storyStyle = options.video_style === "story";
   // Illustrated: painted scenes (Alibaba), coded maps and icon scenes, real photos; rendered by the Mix renderer
   const illustrated = options.video_style === "illustrated";
-  const mixStyle = options.video_style === "mix" || illustrated;
+  // Quiz Shorts (render/quiz.mjs): questions, countdowns and answers, all coded; rendered by the Mix renderer
+  const quiz = options.video_style === "quiz";
+  const mixStyle = options.video_style === "mix" || illustrated || quiz;
   const drawn = options.video_style === "explainer" || storyStyle;
   if (storyStyle) {
     // the film belongs to its words: a kept script keeps its film only if that film was made for it
@@ -580,6 +585,12 @@ async function main(id) {
     if (options.keep_script && idea.ai?.story?.code && lines === String(idea.script || "").trim() && (idea.ai?.language || "en") === lang) await skip("script", "Keeping the film already drawn");
     else await step("script", (note) => writeStoryFilm(idea, channel, options, { ROOT, rest, call, log, note, warn }));
     await skip("review", "The story and its film go together");
+  } else if (quiz) {
+    const said = String(idea.script || "").split("\n").filter((l) => l.startsWith("VO: ")).map((l) => l.slice(4).trim()).join("\n");
+    const ready = idea.ai?.style === "quiz" && idea.ai?.mix?.scenes?.length && idea.ai.mix.scenes.map((x) => String(x.narration).trim()).join("\n") === said;
+    if (options.keep_script && ready) await skip("script", "Keeping the quiz already written");
+    else await step("script", (note) => writeQuiz(idea, channel, options, { ROOT, rest, call, log, note, warn }));
+    await skip("review", "Every answer was checked when it was written");
   } else if (illustrated) {
     const said = String(idea.script || "").split("\n").filter((l) => l.startsWith("VO: ")).map((l) => l.slice(4).trim()).join("\n");
     const ready = idea.ai?.style === "illustrated" && idea.ai?.mix?.scenes?.length && idea.ai.mix.scenes.map((x) => String(x.narration).trim()).join("\n") === said
@@ -613,7 +624,7 @@ async function main(id) {
   let projectId;
   await step("scenes", async () => { projectId = await buildScenes(idea, channel, options, earlier); return `Voice style: ${options.voice_style || brief.voice_style || "natural"}`; });
   const project = await one("video_projects", projectId);
-  if (drawn) await skip("clips", "Drawn scenes, no clips");
+  if (drawn || quiz) await skip("clips", "Drawn scenes, no clips");
   else await step("clips", (note) => chooseClips(projectId, brief.subject || idea.video_title || idea.title, project.aspect, note, mixStyle ? project.settings?.mix?.scenes || [] : null));
   await step("voice", () => waitForVoice(projectId));
   // a long episode's YouTube chapters: the real start of each chapter, from the voice
@@ -635,7 +646,7 @@ async function main(id) {
       await saveSettings(projectId, { thumbnail: { text: t.text, style: "bold", position: "top", size: 130, image: { type: "image", path: t.path } } });
       return `“${t.text}” on its own painting`;
     });
-  } else if (drawn || mixStyle) await skip("thumbnail", "The drawn frames are the cover");
+  } else if (drawn || mixStyle) await skip("thumbnail", quiz ? "A Short: the first frame is the cover" : "The drawn frames are the cover");
   else await step("thumbnail", () => makeThumbnailChoice(projectId, idea, brief, project.aspect));
   let job;
   await step("render", async () => { job = await renderVideo(projectId, idea.id); return `${Math.round(job.duration_s)} s`; });
