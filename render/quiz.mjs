@@ -36,6 +36,7 @@ async function rest(method, table, query = "", body) {
 const WRITE_SYSTEM = (lang, n) => `You write a ${n}-question quiz for a YouTube Short, in ${lang}. You write ${n + 2} questions: the last 2 are reserves in case one fails the fact check,
 but the title, intro and description announce exactly ${n} questions. Viewers play along: each question is read, a countdown runs, the answer is revealed.
 Rules:
+- The question must never give its answer away (no word or name of the right answer in the question: not "Which empire had Rome as capital?" → "the Roman Empire").
 - Only well-known, verifiable facts with ONE clearly correct answer. No trick questions, no disputed facts, no "approximately", nothing that changed recently.
   Morocco's map always includes its southern provinces (Western Sahara is Morocco). No politics, religion debates or tragedies.
 - Mix difficulty: the first question is easy (hooks the viewer), then medium, the last one hard. The title promises a challenge.
@@ -106,6 +107,16 @@ export async function writeQuiz(idea, channel, options, ctx) {
     question: clean(q.question, 120), options: (Array.isArray(q.options) ? q.options : []).map((o) => clean(o, 30)).filter(Boolean).slice(0, 4),
     answer: Math.round(Number(q.answer)), fact: clean(q.fact, 120), visual: visualOf(q.visual),
   })).filter((q) => q.question && q.options.length >= 3 && q.answer >= 0 && q.answer < q.options.length && new Set(q.options.map((o) => o.toLowerCase())).size === q.options.length);
+  // a question that holds its own answer (a word only the right answer has, like "Rome" → "the Roman Empire") is dropped
+  const stem = (w) => w.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 4);
+  const wordsOf = (t) => String(t).split(/\s+/).map(stem).filter((w) => w.length >= 4);
+  qs = qs.filter((q) => {
+    const others = new Set(q.options.filter((_, k) => k !== q.answer).flatMap(wordsOf));
+    const own = wordsOf(q.options[q.answer]).filter((w) => !others.has(w));
+    const inQ = new Set(wordsOf(q.question));
+    if (own.some((w) => inQ.has(w))) { log(`dropped (gives its answer away): “${q.question}”`); return false; }
+    return true;
+  });
   if (qs.length < 3) throw new Error("DeepSeek's quiz had fewer than 3 usable questions.");
 
   // 2. Claude checks every answer; what it can't confirm is dropped
