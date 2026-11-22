@@ -630,6 +630,8 @@ async function main(id) {
   // a long episode's YouTube chapters: the real start of each chapter, from the voice
   if (storyStyle && idea.ai?.story?.chapters?.length > 1) await chapterTimes(idea, projectId).catch((e) => log(`chapter times: ${e.message}`));
   if (illustrated) await chapterTimes(await one("ideas", idea.id), projectId, (await one("ideas", idea.id)).ai?.chapters || []).catch((e) => log(`chapter times: ${e.message}`));
+  // the questions for YouTube Studio's Quizzes (pasted by hand), timed on the voice just made
+  if (illustrated) await call("story", { action: "yt_quiz", idea_id: idea.id, force: true }).then((o) => log(o.error ? `yt quiz: ${o.error}` : `YouTube quiz: ${o.quiz.questions.length} questions`)).catch((e) => log(`yt quiz: ${e.message}`));
   const total = (await sceneRows(projectId)).reduce((t, s) => t + sceneSeconds(s), 0);
   if (options.music === false) await skip("music", "You chose no music");
   else await step("music", () => findMusic(projectId, brief, channel.id, total));

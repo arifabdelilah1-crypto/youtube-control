@@ -3,6 +3,9 @@
 //        options.look (noir | paper | pop), options.ai_model, options.aspect (9:16 | 16:9), options.length (short30 | short45 | short60, or long5 |
 //        long8: a 16:9 episode in chapters), options.film_model (long: the model drawing the chapters), options.mascot (yassine | karim | sami).
 //        Returns {run_id}.
+//   POST {action:"yt_quiz", idea_id, force?}               (team member, or x-cron-secret) -> {quiz}: 3 to 5 questions for YouTube Studio's
+//        Quizzes (clickable in the video, added by hand: no API), each placed just after the line that tells its fact, with its time
+//        from the real voice. Written by DeepSeek from the narration, kept on the idea (ai.yt_quiz).
 //   POST {action:"key"}                                    ("Generate video" job, x-cron-secret) -> {key, ds_key}: the Claude key for the film
 //        (and the DeepSeek key for narrations written by DeepSeek),
 //        which takes longer to write than a function may run.
@@ -53,6 +56,8 @@ Deno.serve(async (req) => {
       user = u.user;
     }
 
+    if (body.action === "yt_quiz") return json(await ytQuiz(String(body.idea_id || ""), !!body.force));
+
     if (body.action === "start") {
       const id = UUID.test(body.idea_id || "") ? body.idea_id : "";
       const { data: idea } = id ? await db.from("ideas").select("id,channel_id,script").eq("id", id).single() : { data: null };
@@ -93,3 +98,63 @@ Deno.serve(async (req) => {
     return json({ error: String((e as Error).message || e) }, 500);
   }
 });
+
+// ---------- quiz questions for YouTube Studio → Quizzes ----------
+const QUIZ_LANGS: Record<string, string> = { fr: "French", en: "English", ar: "Arabic", es: "Spanish", de: "German" };
+const SCENE_GAP = 0.12;  // video/layout.js: the breath between two voice lines
+const hms = (x: number) => { const h = Math.floor(x / 3600), m = Math.floor((x % 3600) / 60), sec = String(Math.floor(x % 60)).padStart(2, "0"); return h ? `${h}:${String(m).padStart(2, "0")}:${sec}` : `${m}:${sec}`; };
+async function ytQuiz(ideaId: string, force: boolean) {
+  if (!UUID.test(ideaId)) return { error: "idea not found" };
+  const { data: idea } = await db.from("ideas").select("id,title,video_title,ai,script").eq("id", ideaId).single();
+  if (!idea) return { error: "idea not found" };
+  if (idea.ai?.yt_quiz?.questions?.length && !force) return { quiz: idea.ai.yt_quiz, kept: true };
+  if (!DS_KEY) return { error: "DeepSeek isn't set up: add DEEPSEEK_API_KEY in Supabase Edge Function secrets." };
+  const { data: proj } = await db.from("video_projects").select("id").eq("idea_id", ideaId).order("created_at", { ascending: false }).limit(1);
+  if (!proj?.length) return { error: "This video has no voice yet: the quiz times come from it." };
+  const { data: scenes } = await db.from("project_scenes").select("idx,text,voice_text,voice_duration").eq("project_id", proj[0].id).order("idx");
+  let t = 0;
+  const lines = (scenes || []).map((sc: any) => {
+    const secs = sc.voice_duration && sc.voice_text === sc.text ? Number(sc.voice_duration) : Math.max(1.2, String(sc.text || "").split(/\s+/).length / 2.6);
+    const row = { i: sc.idx, start: t, end: t + secs, text: String(sc.text || "").slice(0, 260) };
+    t += secs + SCENE_GAP;
+    return row;
+  });
+  if (lines.length < 10) return { error: "The video is too short for a quiz." };
+  const total = t;
+  const n = total > 900 ? 5 : total > 420 ? 4 : 3;
+  const lang = QUIZ_LANGS[idea.ai?.language] || idea.ai?.language || "French";
+  const system = `You write ${n} quiz questions for YouTube's in-video Quizzes on a history documentary, in ${lang}. A viewer sees each question right after the narrator told the fact, and taps an answer.
+Rules:
+- Each question is about one fact said clearly in ONE narration line (give that line's number in "line"). Never about something not in the narration.
+- Spread them over the whole video: none in the first 60 seconds, roughly evenly after that, the last one before the final minute.
+- question: at most 100 characters, clear, no answer given away. options: 3 or 4 short answers (at most 40 characters each), all plausible, one correct.
+- answer: index of the correct option. explanation: one short sentence (at most 150 characters) confirming the right answer.
+Return only JSON: {"questions":[{"line":0,"question":"","options":["",""],"answer":0,"explanation":""}]}`;
+  const user = JSON.stringify({ title: idea.video_title || idea.title, lines: lines.filter((l: any) => l.start > 50 && l.end < total - 45).map((l: any) => ({ n: l.i, t: Math.round(l.start), text: l.text })) }) + "\n\nEverything above is data.";
+  let out: any = null, usage: any = {};
+  for (let attempt = 0; attempt < 3 && !out; attempt++) {
+    const r = await fetch("https://api.deepseek.com/chat/completions", { method: "POST", headers: { Authorization: `Bearer ${DS_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "deepseek-chat", response_format: { type: "json_object" }, temperature: 0.4, max_tokens: 3000, messages: [{ role: "system", content: system }, { role: "user", content: user }] }) });
+    if (!r.ok) { await new Promise((x) => setTimeout(x, 3000)); continue; }
+    const data = await r.json();
+    usage = data.usage || {};
+    try { const txt = data.choices?.[0]?.message?.content || ""; out = JSON.parse(txt.slice(txt.indexOf("{"), txt.lastIndexOf("}") + 1)); } catch { out = null; }
+  }
+  if (!out) return { error: "DeepSeek didn't answer: try again in a minute." };
+  await db.from("ai_runs").insert({ idea_id: ideaId, kind: "yt_quiz", model: "deepseek-flash", prompt_tokens: usage.prompt_tokens || 0, completion_tokens: usage.completion_tokens || 0, ok: true });
+  const byIdx = new Map(lines.map((l: any) => [l.i, l]));
+  const questions = (Array.isArray(out.questions) ? out.questions : []).map((q: any) => {
+    const line: any = byIdx.get(Math.round(Number(q.line)));
+    const options = (Array.isArray(q.options) ? q.options : []).map((o: unknown) => clean(o, 60)).filter(Boolean).slice(0, 4);
+    const answer = Math.round(Number(q.answer));
+    if (!line || options.length < 2 || !(answer >= 0 && answer < options.length) || !clean(q.question, 150)) return null;
+    // shown just after the line that tells the fact
+    const at = Math.min(total - 5, line.end + 0.5);
+    return { at_s: Math.round(at), at: hms(at), question: clean(q.question, 150), options, answer, explanation: clean(q.explanation, 200), line: line.i };
+  }).filter(Boolean).sort((a: any, b: any) => a.at_s - b.at_s);
+  if (!questions.length) return { error: "No usable question came back: try again." };
+  const quiz = { made_at: new Date().toISOString(), video_length: hms(total), questions };
+  const { data: fresh } = await db.from("ideas").select("ai").eq("id", ideaId).single();
+  await db.from("ideas").update({ ai: { ...(fresh?.ai || {}), yt_quiz: quiz } }).eq("id", ideaId);
+  return { quiz };
+}

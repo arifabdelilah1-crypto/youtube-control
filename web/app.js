@@ -973,6 +973,38 @@ VIEWS.keyword = async (route) => {
 // ==================================================================
 // AI pipeline (DeepSeek): outlier snapshot -> format blueprint -> new script for the channel
 // ==================================================================
+/** YouTube Studio → Quizzes (clickable in the video): no API, so the questions are written here with their time, to paste by hand. */
+function ytQuizCard(idea) {
+  const long = idea.ai?.style === "illustrated" || idea.ai?.aspect === "16:9" || idea.ai?.yt_quiz;
+  if (!long) return null;
+  const box = h("div");
+  const copy = async (text, what) => { try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { toast("Copy isn't allowed here: select the text instead"); } };
+  const draw = (quiz) => {
+    const qs = quiz?.questions || [];
+    box.replaceChildren(...(qs.length ? qs.map((q, k) => h("div", { class: "listrow", style: "align-items:flex-start;gap:12px" },
+      h("strong", { text: q.at, style: "min-width:58px;font-variant-numeric:tabular-nums" }),
+      h("div", { style: "flex:1;min-width:0", dir: "auto" },
+        h("div", { style: "display:flex;gap:8px;align-items:center" }, h("strong", { text: q.question, style: "flex:1" }),
+          h("button", { class: "btn small ghost", type: "button", text: "Copy", "aria-label": `Copy question ${k + 1}`, onclick: () => copy(q.question, "Question") })),
+        h("ol", { style: "margin:6px 0;padding-inline-start:20px" }, q.options.map((o, j) => h("li", { style: j === q.answer ? "font-weight:700;color:var(--ok, #1a8f4c)" : "" },
+          h("span", { text: j === q.answer ? `${o}  ✓ right answer` : o }), " ",
+          h("button", { class: "btn small ghost", type: "button", text: "Copy", "aria-label": `Copy answer ${j + 1}`, onclick: () => copy(o, "Answer") })))),
+        q.explanation ? h("p", { class: "muted small", style: "margin:0", text: q.explanation }) : null)))
+      : [h("p", { class: "muted small", text: "No quiz questions yet." })]));
+  };
+  draw(idea.ai?.yt_quiz);
+  const make = h("button", { class: "btn small", type: "button", text: idea.ai?.yt_quiz ? "Write new questions" : "Write quiz questions", onclick: async () => {
+    make.disabled = true; make.textContent = "Writing…";
+    try { const out = await aiCall({ action: "yt_quiz", idea_id: idea.id, force: !!idea.ai?.yt_quiz }, "story"); idea.ai = { ...(idea.ai || {}), yt_quiz: out.quiz }; draw(out.quiz); toast("Quiz questions ready"); }
+    catch (e) { toast(e.message); }
+    make.disabled = false; make.textContent = "Write new questions";
+  } });
+  return h("section", { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "YouTube quiz" }), make),
+    h("p", { class: "muted small", text: "In YouTube Studio: open the video → Editor → Quizzes → Add quiz. For each question, move the playhead to its time, paste the question and the answers, and tick the right one. YouTube doesn't let tools add quizzes, so this part is by hand (about a minute)." }),
+    box);
+}
+
 async function aiCall(body, fn = "ai") {
   const { data, error } = await sb.functions.invoke(fn, { body });
   if (error) { let msg = error.message; try { msg = (await error.context.json()).error || msg; } catch { /* keep */ } throw new Error(msg); }
@@ -2470,6 +2502,7 @@ async function studioEditor(ideaId) {
       h("span", { class: "muted small", text: project ? "Rebuilding keeps the voice and clip of every line you didn't change." : "Next: scenes, style, render and publish." }),
       h("div", { class: "row" }, h("button", { class: "btn", type: "button", text: "Save", onclick: () => save(false) }),
         project ? h("a", { class: "btn", href: `#/edit/${project.id}`, text: "Open editor" }) : null, buildBtn)),
+    ytQuizCard(idea),
     jobs.length ? h("section", { class: "card" }, h("h2", { text: "Earlier quick renders" }), jobs.map((j) => renderRow(j))) : null,
   ];
 }
