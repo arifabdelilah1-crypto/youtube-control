@@ -108,8 +108,8 @@ export async function writeQuiz(idea, channel, options, ctx) {
     answer: Math.round(Number(q.answer)), fact: clean(q.fact, 120), visual: visualOf(q.visual),
   })).filter((q) => q.question && q.options.length >= 3 && q.answer >= 0 && q.answer < q.options.length && new Set(q.options.map((o) => o.toLowerCase())).size === q.options.length);
   // a question that holds its own answer (a word only the right answer has, like "Rome" → "the Roman Empire") is dropped
-  const stem = (w) => w.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "").slice(0, 4);
-  const wordsOf = (t) => String(t).split(/\s+/).map(stem).filter((w) => w.length >= 4);
+  const stem = (w) => w.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]/gu, "");
+  const wordsOf = (t) => String(t).split(/[\s'’-]+/).map(stem).filter((w) => w.length >= 4).map((w) => w.slice(0, 3));
   qs = qs.filter((q) => {
     const others = new Set(q.options.filter((_, k) => k !== q.answer).flatMap(wordsOf));
     const own = wordsOf(q.options[q.answer]).filter((w) => !others.has(w));
