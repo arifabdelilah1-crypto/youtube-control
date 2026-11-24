@@ -15,6 +15,7 @@
 // Dashboard users (JWT + am_i_allowed), or jobs with x-cron-secret. Secrets: DEEPSEEK_API_KEY, optional DEEPSEEK_MODEL.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
+const dateNote = () => `Today is ${new Date().toISOString().slice(0, 10)}. Write as of today: earlier years are the past (never present them as current or upcoming), say "this year" only for ${new Date().getUTCFullYear()}, and never invent events after today.`;
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -52,7 +53,7 @@ async function deepseek(kind: string, system: string, user: string, ownerId: str
         method: "POST", signal: AbortSignal.timeout(110_000),
         headers: { Authorization: `Bearer ${DS_KEY}`, "Content-Type": "application/json" },
         body: JSON.stringify({ model: DS_MODEL, response_format: { type: "json_object" }, temperature: 0.2, max_tokens: 6000,
-          thinking: { type: "disabled" }, messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+          thinking: { type: "disabled" }, messages: [{ role: "system", content: system }, { role: "user", content: `${dateNote()}\n\n${user}` }] }),
       });
       if (!r.ok) { last = `DeepSeek ${r.status}: ${(await r.text()).slice(0, 300)}`; if (r.status < 500 && r.status !== 429) break; continue; }
       const data = await r.json();

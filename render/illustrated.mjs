@@ -10,6 +10,8 @@
 // What an earlier try already made (the text, the plan, each painting) is kept on the idea (ai.illustrated_draft) and reused.
 import { GEO } from "../video/story/geo.js";
 import { ICONS } from "../video/explainer-icons.js";
+// the writers know today's date (else they write about 2022 as if it were now)
+const dateNote = () => `Today is ${new Date().toISOString().slice(0, 10)}. Write as of today: earlier years are the past (never present them as current or upcoming), say "this year" only for ${new Date().getUTCFullYear()}, and never invent events after today.`;
 
 const URL_ = process.env.SUPABASE_URL;
 const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -74,7 +76,7 @@ export async function deepseek({ key, system, user, maxTokens = 8000, log }) {
     r = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: process.env.DEEPSEEK_MODEL || "deepseek-chat", response_format: { type: "json_object" }, temperature: 0.7, max_tokens: maxTokens,
-        messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+        messages: [{ role: "system", content: system }, { role: "user", content: `${dateNote()}\n\n${user}` }] }),
       signal: AbortSignal.timeout(300000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
     if (r.ok) { data = await r.json(); break; }
@@ -89,7 +91,7 @@ export async function claude({ key, system, user, maxTokens = 16000, log }) {
   for (let attempt = 0; attempt < 2; attempt++) {
     const r = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST", headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }), signal: AbortSignal.timeout(600000),
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: `${dateNote()}\n\n${user}` }] }), signal: AbortSignal.timeout(600000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
     if (r.ok) {
       const data = await r.json();

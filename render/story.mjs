@@ -6,6 +6,8 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+// the writers know today's date (else they write about 2022 as if it were now)
+const dateNote = () => `Today is ${new Date().toISOString().slice(0, 10)}. Write as of today: earlier years are the past (never present them as current or upcoming), say "this year" only for ${new Date().getUTCFullYear()}, and never invent events after today.`;
 
 const PRICES = { "claude-opus-5-5": [4, 20], "claude-fable-5-2": [8, 40], "claude-sonnet-5-5": [2, 10], "deepseek-flash": [0.15, 0.6] };
 // words of narration for each length (second-person stories are told fast: ~2.6 words a second)
@@ -123,7 +125,7 @@ async function deepseek({ key, system, user, maxTokens = 8000, log }) {
     r = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST", headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: process.env.DEEPSEEK_MODEL || "deepseek-chat", response_format: { type: "json_object" }, temperature: 0.7, max_tokens: maxTokens,
-        messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+        messages: [{ role: "system", content: system }, { role: "user", content: `${dateNote()}\n\n${user}` }] }),
       signal: AbortSignal.timeout(300000),
     }).catch((e) => ({ ok: false, status: 0, text: async () => e.message }));
     if (r.ok) { data = await r.json(); break; }
@@ -141,7 +143,7 @@ const writerOf = (options) => (["claude", "deepseek"].includes(options.writer) ?
 async function claude({ key, model, system, user, maxTokens = 32000, log, cache = false }) {
   // cache: the long system part (rules, kit, example) is written once and read back cheaply by the next calls (5 minutes)
   const sys = cache ? [{ type: "text", text: system, cache_control: { type: "ephemeral" } }] : system;
-  const body = { model, max_tokens: maxTokens, system: sys, stream: true, messages: [{ role: "user", content: user }] };
+  const body = { model, max_tokens: maxTokens, system: sys, stream: true, messages: [{ role: "user", content: `${dateNote()}\n\n${user}` }] };
   let r;
   for (let attempt = 0; attempt < 3; attempt++) {
     r = await fetch("https://api.anthropic.com/v1/messages", {

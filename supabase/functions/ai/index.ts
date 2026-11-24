@@ -74,7 +74,7 @@ async function deepseek(db: any, ideaId: string | null, kind: string, system: st
           ...(opts.pro
             ? { thinking: { type: "enabled" }, reasoning_effort: opts.effort || "high", max_tokens: 16000 }  // the thinking counts in max_tokens
             : { temperature: kind === "script" ? 0.9 : 0.4, max_tokens: 6000, ...(opts.think === false ? { thinking: { type: "disabled" } } : {}) }),
-          messages: [{ role: "system", content: system }, { role: "user", content }],
+          messages: [{ role: "system", content: system }, { role: "user", content: `${dateNote()}\n\n${content}` }],
         }),
       });
       if (!r.ok) { lastErr = `DeepSeek ${r.status}: ${(await r.text()).slice(0, 300)}`; if (r.status < 500 && r.status !== 429) break; continue; }
@@ -125,6 +125,9 @@ function cleanBrief(b: any) {
 const clean = (s: unknown, n = 200) => String(s ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, n);
 const term = (s: unknown) => clean(s, 80).replace(/[|;,[\]]/g, " ").replace(/\s+/g, " ").trim();
 const HEX = /^#[0-9A-Fa-f]{6}$/;
+// the writers know today's date (else they write about 2022 as if it were now)
+const dateNote = () => `Today is ${new Date().toISOString().slice(0, 10)}. Write as of today: earlier years are the past (never present them as current or upcoming), say "this year" only for ${new Date().getUTCFullYear()}, and never invent events after today.`;
+
 // a voice line never keeps a block label or [footage words]: they would be read aloud (likelier when improving a draft that has them)
 const voice = (s: unknown) => clean(s, 600).replace(/\[[^\]]*\]/g, " ").replace(/\s+/g, " ").replace(/\s+([.,!?…])/g, "$1")
   .replace(/^(TITLE|VO|VOICE|FOOTAGE|CARD)\s*:\s*/i, "").trim();

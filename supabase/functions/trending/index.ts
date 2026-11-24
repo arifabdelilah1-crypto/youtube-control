@@ -6,6 +6,7 @@
 // Signed-in users on the allow-list only (jobs with the cron secret may list, read news and get proposals: nothing they can save). The "Trending now" page isn't an official API: if Google changes it, list says so.
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { aiRunsStatus, capMessage } from "../_shared/ai_cap.ts";
+const dateNote = () => `Today is ${new Date().toISOString().slice(0, 10)}. Write as of today: earlier years are the past (never present them as current or upcoming), say "this year" only for ${new Date().getUTCFullYear()}, and never invent events after today.`;
 
 const URL_ = Deno.env.get("SUPABASE_URL")!;
 const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -134,7 +135,7 @@ async function ds(system: string, user: string, kind: string): Promise<any> {
     const r = await fetch("https://api.deepseek.com/chat/completions", {
       method: "POST", headers: { Authorization: `Bearer ${DS_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: DS_MODEL, response_format: { type: "json_object" }, temperature: 0.6, max_tokens: 3000,
-        messages: [{ role: "system", content: system }, { role: "user", content: user }] }),
+        messages: [{ role: "system", content: system }, { role: "user", content: `${dateNote()}\n\n${user}` }] }),
       signal: AbortSignal.timeout(110_000),
     }).catch((e) => { last = String(e.message || e); return null; });
     if (!r) continue;

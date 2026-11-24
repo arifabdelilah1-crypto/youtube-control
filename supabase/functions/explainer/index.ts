@@ -40,6 +40,9 @@ const cors = {
 };
 const json = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { ...cors, "Content-Type": "application/json" } });
 const UUID = /^[0-9a-f-]{36}$/;
+// the writers know today's date (else they write about 2022 as if it were now)
+const dateNote = () => `Today is ${new Date().toISOString().slice(0, 10)}. Write as of today: earlier years are the past (never present them as current or upcoming), say "this year" only for ${new Date().getUTCFullYear()}, and never invent events after today.`;
+
 class Fail extends Error {
   status: number;
   extra: Record<string, unknown>;
@@ -57,7 +60,7 @@ async function ask(db: any, ctx: any, kind: string, schema: any, sys: string, us
   let res;
   try {
     res = await client.messages.parse({
-      model: ctx.model, max_tokens: 16000, system: sys, messages: [{ role: "user", content: user }],
+      model: ctx.model, max_tokens: 16000, system: sys, messages: [{ role: "user", content: `${dateNote()}\n\n${user}` }],
       output_config: { format: zodOutputFormat(schema), ...(ctx.effort ? { effort: ctx.effort } : {}) },
     });
   } catch (e) {
